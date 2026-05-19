@@ -38,6 +38,12 @@ pub trait StoreFactory: Send + Sync {
     fn connection_token_store(&self) -> Option<Arc<dyn ConnectionTokenStore>> {
         None
     }
+    /// Optional provider settings store. Diesel backends serve `/v1/providers`
+    /// from a `server_settings`-backed store; the multi-tenant cloud leaves
+    /// this `None` and registers a workspace-scoped store separately.
+    fn provider_store(&self) -> Option<Arc<dyn ProviderStore>> {
+        None
+    }
 }
 
 impl<Conn> StoreFactory for DieselStoreBuilder<Conn>
@@ -96,6 +102,10 @@ where
 
     fn note_store(&self) -> Arc<dyn NoteStore> {
         Arc::new(DieselStoreBuilder::note_store(self)) as Arc<dyn NoteStore>
+    }
+
+    fn provider_store(&self) -> Option<Arc<dyn ProviderStore>> {
+        Some(Arc::new(DieselStoreBuilder::provider_store(self)) as Arc<dyn ProviderStore>)
     }
 }
 
@@ -368,6 +378,7 @@ impl StoreBuilder {
             provider_registry: None,
             span_store: None,
             note_store,
+            provider_store: metadata_factory.provider_store(),
         })
     }
 }
@@ -480,6 +491,7 @@ pub async fn create_ephemeral_execution_stores(
         provider_registry: base_stores.provider_registry.clone(),
         span_store: base_stores.span_store.clone(),
         note_store: base_stores.note_store.clone(),
+        provider_store: base_stores.provider_store.clone(),
     })
 }
 
@@ -527,5 +539,6 @@ pub async fn prepare_stores_for_execution(
         provider_registry: base_stores.provider_registry.clone(),
         span_store: base_stores.span_store.clone(),
         note_store: base_stores.note_store.clone(),
+        provider_store: base_stores.provider_store.clone(),
     })
 }

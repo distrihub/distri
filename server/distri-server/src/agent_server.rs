@@ -150,11 +150,18 @@ impl DistriAgentServer {
                     crate::openapi::ServerApiDoc::openapi(),
                 ))
                 .configure(|cfg| {
-                    cfg.app_data(web::Data::new(executor))
-                        .app_data(web::Data::new(verbose))
-                        .configure(|cfg| {
-                            cfg.service(web::scope("/v1").configure(routes::distri));
-                        });
+                    cfg.app_data(web::Data::new(verbose));
+                    // Provider routes (`/v1/providers`) delegate to a
+                    // `ProviderStore`. The standalone server's store is backed
+                    // by the `server_settings` table (built by the store
+                    // factory); the multi-tenant cloud registers its own
+                    // workspace-scoped `ProviderStore` separately.
+                    if let Some(provider_store) = executor.stores.provider_store.clone() {
+                        cfg.app_data(web::Data::new(provider_store));
+                    }
+                    cfg.app_data(web::Data::new(executor)).configure(|cfg| {
+                        cfg.service(web::scope("/v1").configure(routes::distri));
+                    });
                 });
 
             // Serve UI files if they exist

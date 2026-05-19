@@ -3,6 +3,8 @@
 #[cfg(test)]
 mod cancel_task_test;
 #[cfg(test)]
+mod provider_store_test;
+#[cfg(test)]
 mod thread_tokens_test;
 use std::{collections::HashMap, fmt::Display, sync::Arc};
 
@@ -38,10 +40,10 @@ use distri_types::stores::{
     AgentStatsInfo, AgentStore, AgentUsageInfo, ConnectionStore, ConnectionTokenStore,
     ExternalToolCallsStore, FilterMessageType, MemoryStore, MessageFilter, MessageReadStatus,
     MessageVote, MessageVoteSummary, NewPromptTemplate, NewSecret, NewSkill, NoteStore,
-    PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord, SecretStore,
-    SessionMemory, SessionStore, SkillRecord, SkillStore, TaskStore, ThreadListFilter,
-    ThreadListResponse, ThreadStore, UpdatePromptTemplate, UpdateSkill, VoteMessageRequest,
-    VoteType,
+    PromptTemplateRecord, PromptTemplateStore, ProviderStore, ScratchpadStore, SecretRecord,
+    SecretStore, ServerSettings, SessionMemory, SessionStore, SkillRecord, SkillStore, TaskStore,
+    ThreadListFilter, ThreadListResponse, ThreadStore, UpdatePromptTemplate, UpdateSkill,
+    UpsertProviderRequest, UpsertProviderResponse, VoteMessageRequest, VoteType,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -1778,8 +1780,8 @@ where
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let status = input.status.unwrap_or(TaskStatus::Pending);
         let now = Utc::now().timestamp_millis();
-        let invocation_text = serde_json::to_string(&input.invocation)
-            .context("failed to serialize invocation")?;
+        let invocation_text =
+            serde_json::to_string(&input.invocation).context("failed to serialize invocation")?;
 
         let new_task = NewTaskModel {
             id: &task_id,
@@ -3322,6 +3324,10 @@ where
         DieselSecretStore::new(self.pool.clone_store_pool())
     }
 
+    pub fn provider_store(&self) -> DieselServerSettingsProviderStore<Conn> {
+        DieselServerSettingsProviderStore::new(self.pool.clone_store_pool())
+    }
+
     pub fn skill_store(&self) -> DieselSkillStore<Conn> {
         DieselSkillStore::new(self.pool.clone_store_pool())
     }
@@ -3466,6 +3472,251 @@ where
             .execute(&mut conn)
             .await?;
         Ok(())
+    }
+}
+
+// ========== Provider Store (server_settings-backed) ==========
+
+/// Reserved id of the single `server_settings` row.
+const SERVER_SETTINGS_ROW_ID: &str = "default";
+
+/// `ProviderStore` for the single-tenant standalone server.
+///
+/// Provider API keys go to the `secrets` table; the provider settings
+/// (default model, custom providers/models, connection providers) go to the
+/// single `server_settings` row — the standalone analogue of the cloud's
+/// `workspaces.settings`. This mirrors the cloud's `PgProviderStore`, minus
+/// the per-workspace scoping (the standalone server has exactly one tenant).
+pub struct DieselServerSettingsProviderStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselServerSettingsProviderStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for provider store")
+    }
+
+    /// Load the single `server_settings` row, or a default if it doesn't exist yet.
+    async fn load_settings(&self) -> Result<ServerSettings> {
+        use crate::schema::server_settings::dsl::*;
+        let mut conn = self.conn().await?;
+        let row = server_settings
+            .filter(id.eq(SERVER_SETTINGS_ROW_ID))
+            .select(ServerSettingsModel::as_select())
+            .first::<ServerSettingsModel>(&mut conn)
+            .await
+            .optional()?;
+        match row {
+            Some(model) => Ok(serde_json::from_str(&model.config_json)
+                .context("failed to deserialize server_settings.config_json")?),
+            None => Ok(ServerSettings::default()),
+        }
+    }
+
+    /// Persist the single `server_settings` row (insert on first write).
+    async fn save_settings(&self, settings: &ServerSettings) -> Result<()> {
+        use crate::schema::server_settings::dsl::*;
+        let json =
+            serde_json::to_string(settings).context("failed to serialize server settings")?;
+        let now = Utc::now().naive_utc();
+        let mut conn = self.conn().await?;
+        let updated = diesel::update(server_settings.filter(id.eq(SERVER_SETTINGS_ROW_ID)))
+            .set(ServerSettingsChangeset {
+                config_json: &json,
+                updated_at: now,
+            })
+            .execute(&mut conn)
+            .await?;
+        if updated == 0 {
+            diesel::insert_into(server_settings)
+                .values(NewServerSettingsModel {
+                    id: SERVER_SETTINGS_ROW_ID,
+                    config_json: &json,
+                    created_at: now,
+                    updated_at: now,
+                })
+                .execute(&mut conn)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Upsert a single secret by key (update when present, insert otherwise).
+    async fn upsert_secret(&self, secret_key: &str, secret_value: &str) -> Result<()> {
+        use crate::schema::secrets::dsl::*;
+        let now = Utc::now().naive_utc();
+        let mut conn = self.conn().await?;
+        let updated = diesel::update(secrets.filter(key.eq(secret_key)))
+            .set((value.eq(secret_value), updated_at.eq(now)))
+            .execute(&mut conn)
+            .await?;
+        if updated == 0 {
+            let new_id = Uuid::new_v4().to_string();
+            diesel::insert_into(secrets)
+                .values(NewSecretModel {
+                    id: &new_id,
+                    key: secret_key,
+                    value: secret_value,
+                    created_at: now,
+                    updated_at: now,
+                })
+                .execute(&mut conn)
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl<Conn> ProviderStore for DieselServerSettingsProviderStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn upsert_provider(&self, req: UpsertProviderRequest) -> Result<UpsertProviderResponse> {
+        // 1. Persist provider API keys to the `secrets` table.
+        for (key, value) in &req.secrets {
+            self.upsert_secret(key, value).await?;
+        }
+        let secrets_saved = req.secrets.len();
+
+        // 2. Merge any provided settings fields into the `server_settings` row.
+        let needs_settings_update = req.config.is_some()
+            || req.custom_models.is_some()
+            || req.default_model.is_some()
+            || req.connection_provider.is_some();
+
+        let config_saved = if needs_settings_update {
+            let mut settings = self.load_settings().await?;
+
+            if let Some(config) = req.config {
+                match settings
+                    .custom_providers
+                    .iter()
+                    .position(|p| p.id == config.id)
+                {
+                    Some(pos) => settings.custom_providers[pos] = config,
+                    None => settings.custom_providers.push(config),
+                }
+            }
+            if let Some(models) = req.custom_models {
+                settings.custom_models = models;
+            }
+            // Some("provider/model") sets, Some("") clears, None leaves untouched.
+            if let Some(ref dm) = req.default_model {
+                settings.default_model = if dm.is_empty() {
+                    None
+                } else {
+                    Some(dm.clone())
+                };
+            }
+            if let Some(cp) = req.connection_provider {
+                match settings
+                    .connection_providers
+                    .iter()
+                    .position(|p| p.id == cp.id)
+                {
+                    Some(pos) => settings.connection_providers[pos] = cp,
+                    None => settings.connection_providers.push(cp),
+                }
+            }
+
+            self.save_settings(&settings).await?;
+            true
+        } else {
+            false
+        };
+
+        Ok(UpsertProviderResponse {
+            provider_id: req.provider_id,
+            secrets_saved,
+            config_saved,
+        })
+    }
+
+    async fn delete_provider(&self, provider_id: &str) -> Result<()> {
+        // Delete the provider's secrets (all keys prefixed `{PROVIDER_ID}_`).
+        {
+            use crate::schema::secrets::dsl::*;
+            let pattern = format!("{}_%", provider_id.to_uppercase());
+            let mut conn = self.conn().await?;
+            diesel::delete(secrets.filter(key.like(pattern)))
+                .execute(&mut conn)
+                .await?;
+        }
+
+        // Drop the provider (and its models / connection config) from settings,
+        // and clear default_model if it pointed at this provider.
+        let mut settings = self.load_settings().await?;
+        let mut changed = false;
+
+        let before = settings.custom_providers.len();
+        settings.custom_providers.retain(|p| p.id != provider_id);
+        changed |= settings.custom_providers.len() != before;
+
+        let before = settings.custom_models.len();
+        settings.custom_models.retain(|m| m.provider != provider_id);
+        changed |= settings.custom_models.len() != before;
+
+        let before = settings.connection_providers.len();
+        settings
+            .connection_providers
+            .retain(|p| p.id != provider_id);
+        changed |= settings.connection_providers.len() != before;
+
+        let prefix = format!("{}/", provider_id);
+        if settings
+            .default_model
+            .as_deref()
+            .is_some_and(|dm| dm.starts_with(&prefix))
+        {
+            settings.default_model = None;
+            changed = true;
+        }
+
+        if changed {
+            self.save_settings(&settings).await?;
+        }
+        Ok(())
+    }
+
+    async fn get_default_model(&self) -> Result<Option<String>> {
+        Ok(self.load_settings().await?.default_model)
+    }
+
+    async fn resolve_provider_endpoint(
+        &self,
+        provider_id: &str,
+    ) -> Result<distri_types::stores::ResolvedProviderEndpoint> {
+        let settings = self.load_settings().await?;
+        let secret_store = DieselSecretStore::new(self.pool.clone_store_pool());
+        distri_types::stores::resolve_provider_test_endpoint(
+            provider_id,
+            &secret_store,
+            &settings.custom_providers,
+        )
+        .await
     }
 }
 
@@ -4046,8 +4297,8 @@ fn to_connection(model: ConnectionModel) -> anyhow::Result<Connection> {
     // model now carries `ConnectionAuth` on the Connection — OSS rows default
     // to `ConnectionAuth::None` (cloud uses `PgConnectionStore` which reads
     // the proper jsonb `auth` column).
-    let auth: ConnectionAuth = serde_json::from_str(&model.auth_type)
-        .unwrap_or(ConnectionAuth::None);
+    let auth: ConnectionAuth =
+        serde_json::from_str(&model.auth_type).unwrap_or(ConnectionAuth::None);
     let config: serde_json::Value = serde_json::from_str(&model.config)
         .map_err(|e| anyhow::anyhow!("invalid config: {}", e))?;
     let id = uuid::Uuid::parse_str(&model.id).map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
@@ -4072,7 +4323,9 @@ fn to_connection(model: ConnectionModel) -> anyhow::Result<Connection> {
         connected_by,
         auth_scope,
         auth,
-        kind: distri_types::connections::ConnectionKind::Default { skill_content: None },
+        kind: distri_types::connections::ConnectionKind::Default {
+            skill_content: None,
+        },
         is_system: model.is_system != 0,
         created_at: from_naive(model.created_at),
         updated_at: from_naive(model.updated_at),
@@ -4222,11 +4475,7 @@ where
         Ok(())
     }
 
-    async fn update(
-        &self,
-        conn_id: &str,
-        new_name: Option<String>,
-    ) -> anyhow::Result<Connection> {
+    async fn update(&self, conn_id: &str, new_name: Option<String>) -> anyhow::Result<Connection> {
         use crate::schema::connections::dsl::*;
         let mut conn = self.conn().await?;
         let now = Utc::now().naive_utc();

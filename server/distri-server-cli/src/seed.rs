@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use distri_core::AgentOrchestrator;
 use distri_types::configuration::AgentConfig;
-use distri_types::stores::{NewSkill, SkillFrontmatter, SkillStore};
+use distri_types::stores::{NewSkill, SkillFrontmatter};
 
 /// Bundled agent markdown from `distri/server/agents/*.md` (compile-time embedded).
 const BUNDLED_AGENTS: &[(&str, &str)] = &[

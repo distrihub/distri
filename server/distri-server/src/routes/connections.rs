@@ -52,54 +52,6 @@ pub struct ConnectionWithSkill {
     pub skill_content: Option<String>,
 }
 
-// ── Helper ────────────────────────────────────────────────────────────────
-
-fn extract_state_from_url(url: &str) -> Option<String> {
-    let query = url.split('?').nth(1)?;
-    for pair in query.split('&') {
-        let mut kv = pair.splitn(2, '=');
-        if let (Some(key), Some(value)) = (kv.next(), kv.next()) {
-            if key == "state" {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn connection_skill_name(connection_name: &str) -> String {
-    let mut out = String::with_capacity(connection_name.len() + 12);
-    out.push_str("connection-");
-    let mut prev_dash = false;
-    for ch in connection_name.chars() {
-        let ok = ch.is_ascii_lowercase() || ch.is_ascii_digit();
-        let mapped = if ok {
-            ch
-        } else if ch.is_ascii_uppercase() {
-            ch.to_ascii_lowercase()
-        } else {
-            '-'
-        };
-        if mapped == '-' {
-            if !prev_dash {
-                out.push('-');
-            }
-            prev_dash = true;
-        } else {
-            out.push(mapped);
-            prev_dash = false;
-        }
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    if out == "connection" {
-        "connection-skill".to_string()
-    } else {
-        out
-    }
-}
-
 // ── Route registration ────────────────────────────────────────────────────
 
 pub fn configure_connection_routes(cfg: &mut web::ServiceConfig) {
