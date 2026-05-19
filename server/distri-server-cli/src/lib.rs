@@ -28,13 +28,12 @@ pub async fn init_orchestrator(
     std::fs::create_dir_all(&distri_dir)?;
 
     // `distri.yaml` — the OSS declarative seed config. Provider/model
-    // extensions must be registered before the server serves the catalog,
-    // so this happens up front; the default-model and agent seeds are
-    // applied after the orchestrator is built.
+    // extensions (from distri.yaml, a `providers/` directory, or
+    // DISTRI_MODEL_CATALOG) must be registered before the server serves the
+    // catalog, so this happens up front; the default-model and agent seeds
+    // are applied after the orchestrator is built.
     let distri_config = distri_yaml::load(workspace_path)?;
-    if let Some(config) = &distri_config {
-        distri_yaml::register_extensions(config);
-    }
+    distri_yaml::register_extensions(workspace_path, distri_config.as_ref());
 
     let mut store_config = StoreConfig::default();
     store_config.session.ephemeral = false;

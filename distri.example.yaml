@@ -5,32 +5,32 @@
 # provider/model definitions on top of the built-in basics (openai,
 # anthropic, gemini) without editing the distri source tree.
 #
-# All three sections are optional.
+# All sections are optional.
 
 # ── Provider/model extensions (layer 2 of the provider registry) ──────────
-# Each entry is a ModelProviderDefinition. A plain OpenAI-compatible endpoint
-# needs only a config entry — no code. A provider whose `id` matches a
-# built-in one overrides it.
+# Each provider lists its models grouped by capability: `completion`, `tts`,
+# `stt`. A plain OpenAI-compatible endpoint needs only a config entry — no
+# code. A provider whose `id` matches a built-in one overrides it.
 model_providers:
   - id: azure_ai_foundry
     label: Azure AI Foundry
     keys:
       # `url_template` tells the UI to render this field as the editable
       # resource segment of the full endpoint URL.
-      - key: AZURE_AI_FOUNDRY_RESOURCE
-        label: Resource name
-        placeholder: my-resource
-        sensitive: false
-        url_template: "https://{}.openai.azure.com/openai/v1"
-      - key: AZURE_AI_FOUNDRY_API_KEY
-        label: API key
-        sensitive: true
-    models:
+      - { key: AZURE_AI_FOUNDRY_RESOURCE, label: Resource name, sensitive: false,
+          url_template: "https://{}.openai.azure.com/openai/v1" }
+      - { key: AZURE_AI_FOUNDRY_API_KEY, label: API key, sensitive: true }
+    completion:
       - id: gpt-5.4
         name: GPT-5.4
-        capability: completion
         context_window: 128000
         pricing: { type: completion, input: 5.0, output: 15.0, cached_input: 2.5 }
+
+# Instead of (or in addition to) inline `model_providers`, point at a
+# directory of per-provider catalog files, or a single combined file such as
+# a GitHub-release artifact. Relative paths resolve against this directory.
+# A `providers/` directory here is also picked up automatically.
+model_providers_path: providers
 
 # ── Default model ─────────────────────────────────────────────────────────
 # In `provider/model` form. Seeded into the runtime store only when no

@@ -77,6 +77,8 @@ pub mod resolve;
 pub mod models;
 pub use models::*;
 
+pub mod model_catalog;
+
 pub mod tool_result_store;
 pub use tool_result_store::{
     CacheCheck, ContentFormat, ContentReplacementState, FILE_UNCHANGED_STUB, FileReadCache,

@@ -3,31 +3,42 @@
 //! It is the OSS equivalent of cloud workspace settings + seed data, layered
 //! on top of the built-in basics in `default_models.json`:
 //!
-//! - `model_providers` — provider/model extensions (layer 2 of the provider
-//!   registry). Folded in via [`distri_types::register_provider_extensions`].
+//! - `model_providers` — provider/model extensions inline, in the catalog
+//!   section format (`completion` / `tts` / `stt`).
+//! - `model_providers_path` — a directory of per-provider catalog files, or
+//!   a single combined file (e.g. a GitHub-release artifact).
 //! - `default_model` — seeded into the runtime store when none is set yet.
 //! - `agents` — agent definition files to load and register on startup.
 //!
-//! The file is optional; an absent `distri.yaml` leaves the server on the
-//! built-in basics (`openai`, `anthropic`, `gemini`).
+//! Provider extensions are also picked up, with no `distri.yaml` needed,
+//! from a `providers/` directory in the workspace and from the
+//! `DISTRI_MODEL_CATALOG` env var (a directory or combined file). All
+//! sources fold into layer 2 of the provider registry.
 
 use anyhow::{Context, Result};
 use distri_core::AgentOrchestrator;
 use distri_types::configuration::AgentConfig;
+use distri_types::model_catalog::{self, ProviderCatalogEntry};
 use distri_types::stores::UpsertProviderRequest;
-use distri_types::ModelProviderDefinition;
 use serde::Deserialize;
 use std::path::Path;
 
 /// File name looked up in the workspace directory.
 const DISTRI_YAML: &str = "distri.yaml";
+/// Directory of per-provider catalog files, auto-loaded from the workspace.
+const PROVIDERS_DIR: &str = "providers";
+/// Env var pointing to an extra catalog (directory or combined file).
+const CATALOG_ENV: &str = "DISTRI_MODEL_CATALOG";
 
 /// Parsed `distri.yaml`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct DistriYamlConfig {
-    /// Provider/model definitions layered onto the built-in basics.
-    pub model_providers: Vec<ModelProviderDefinition>,
+    /// Provider/model definitions inline, in the catalog section format.
+    pub model_providers: Vec<ProviderCatalogEntry>,
+    /// A directory of per-provider catalog files, or a single combined file.
+    /// Relative paths resolve against the workspace directory.
+    pub model_providers_path: Option<String>,
     /// Default model in `provider/model` form. Seeded only when the runtime
     /// store has no default model yet.
     pub default_model: Option<String>,
@@ -52,22 +63,57 @@ pub fn load(workspace_path: &Path) -> Result<Option<DistriYamlConfig>> {
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let config: DistriYamlConfig =
         serde_yaml::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-    tracing::info!(
-        "loaded {} ({} provider extension(s), {} agent seed(s))",
-        path.display(),
-        config.model_providers.len(),
-        config.agents.len(),
-    );
+    tracing::info!("loaded {}", path.display());
     Ok(Some(config))
 }
 
-/// Fold `distri.yaml`'s provider extensions into the global provider
-/// registry. Call once, before the server serves the model/provider catalog.
-pub fn register_extensions(config: &DistriYamlConfig) {
-    if config.model_providers.is_empty() {
+/// Gather provider/model extensions from every source and fold them into the
+/// global provider registry. Call once, before the server serves the
+/// catalog. Sources, lowest-to-highest precedence on `id` collisions:
+/// the workspace `providers/` directory, `distri.yaml`'s inline
+/// `model_providers`, its `model_providers_path`, and `DISTRI_MODEL_CATALOG`.
+pub fn register_extensions(workspace_path: &Path, config: Option<&DistriYamlConfig>) {
+    let mut entries: Vec<ProviderCatalogEntry> = Vec::new();
+
+    let providers_dir = workspace_path.join(PROVIDERS_DIR);
+    if providers_dir.is_dir() {
+        match model_catalog::load_provider_dir(&providers_dir) {
+            Ok(loaded) => entries.extend(loaded),
+            Err(e) => tracing::warn!("failed to load {}: {e}", providers_dir.display()),
+        }
+    }
+
+    if let Some(config) = config {
+        entries.extend(config.model_providers.iter().cloned());
+
+        if let Some(path) = config
+            .model_providers_path
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+        {
+            let resolved = workspace_path.join(path);
+            match model_catalog::load_catalog_path(&resolved) {
+                Ok(loaded) => entries.extend(loaded),
+                Err(e) => tracing::warn!("failed to load {}: {e}", resolved.display()),
+            }
+        }
+    }
+
+    if let Ok(path) = std::env::var(CATALOG_ENV) {
+        let path = path.trim();
+        if !path.is_empty() {
+            match model_catalog::load_catalog_path(Path::new(path)) {
+                Ok(loaded) => entries.extend(loaded),
+                Err(e) => tracing::warn!("failed to load {CATALOG_ENV}={path}: {e}"),
+            }
+        }
+    }
+
+    if entries.is_empty() {
         return;
     }
-    distri_types::register_provider_extensions(config.model_providers.clone());
+    tracing::info!("registering {} provider extension(s)", entries.len());
+    model_catalog::register(entries);
 }
 
 /// Apply the runtime-mutable seeds (default model, agents) after the
@@ -156,8 +202,8 @@ async fn seed_agents(
 mod tests {
     use super::*;
 
-    /// A full `distri.yaml` deserializes into all three sections, and a
-    /// model entry that omits `name` is accepted (backfilled downstream).
+    /// A full `distri.yaml` deserializes into all sections, including the
+    /// catalog section format for inline providers.
     #[test]
     fn parses_full_distri_yaml() {
         let yaml = r#"
@@ -165,17 +211,15 @@ model_providers:
   - id: azure_ai_foundry
     label: Azure AI Foundry
     keys:
-      - key: AZURE_AI_FOUNDRY_RESOURCE
-        label: Resource name
-        sensitive: false
-        url_template: "https://{}.openai.azure.com/openai/v1"
-      - key: AZURE_AI_FOUNDRY_API_KEY
-        label: API key
-        sensitive: true
-    models:
-      - id: gpt-5.4
-        capability: completion
-        context_window: 128000
+      - { key: AZURE_AI_FOUNDRY_RESOURCE, label: Resource name, sensitive: false,
+          url_template: "https://{}.openai.azure.com/openai/v1" }
+      - { key: AZURE_AI_FOUNDRY_API_KEY, label: API key, sensitive: true }
+    completion:
+      - { id: gpt-5.4, name: GPT-5.4, context_window: 128000,
+          pricing: { type: completion, input: 5.0, output: 15.0 } }
+    tts:
+      - { id: gpt-4o-mini-tts, pricing: { type: tts, per_1m_chars: 12.0 } }
+model_providers_path: providers
 default_model: openai/gpt-4.1-mini
 agents:
   - file: agents/coder.md
@@ -183,7 +227,9 @@ agents:
         let config: DistriYamlConfig = serde_yaml::from_str(yaml).expect("distri.yaml parses");
         assert_eq!(config.model_providers.len(), 1);
         assert_eq!(config.model_providers[0].id, "azure_ai_foundry");
-        assert_eq!(config.model_providers[0].keys.len(), 2);
+        assert_eq!(config.model_providers[0].completion.len(), 1);
+        assert_eq!(config.model_providers[0].tts.len(), 1);
+        assert_eq!(config.model_providers_path.as_deref(), Some("providers"));
         assert_eq!(config.default_model.as_deref(), Some("openai/gpt-4.1-mini"));
         assert_eq!(config.agents.len(), 1);
         assert_eq!(config.agents[0].file, "agents/coder.md");
@@ -194,6 +240,7 @@ agents:
     fn parses_empty_distri_yaml() {
         let config: DistriYamlConfig = serde_yaml::from_str("{}").expect("empty config parses");
         assert!(config.model_providers.is_empty());
+        assert!(config.model_providers_path.is_none());
         assert!(config.default_model.is_none());
         assert!(config.agents.is_empty());
     }
