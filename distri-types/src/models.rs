@@ -109,6 +109,9 @@ pub enum ModelPricing {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
     pub id: String,
+    /// Human-readable name. Optional in config sources — when omitted it is
+    /// backfilled from `id` by `register_provider_extensions`.
+    #[serde(default)]
     pub name: String,
     pub capability: ModelCapability,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -138,6 +141,7 @@ pub struct ModelWithProvider {
 pub struct ProviderKeyDefinition {
     pub key: String,
     pub label: String,
+    #[serde(default)]
     pub placeholder: String,
     #[serde(default = "default_true")]
     pub required: bool,

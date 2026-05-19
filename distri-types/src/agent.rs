@@ -1079,6 +1079,7 @@ pub struct SecretKeyDefinition {
     /// Human-readable label
     pub label: String,
     /// Placeholder for UI input
+    #[serde(default)]
     pub placeholder: String,
     /// Whether this secret is required (vs optional)
     #[serde(default = "default_required")]
@@ -1136,6 +1137,92 @@ fn load_default_providers() -> &'static [DefaultProviderEntry] {
             serde_json::from_str(json).expect("Failed to parse default_models.json");
         file.providers
     })
+}
+
+impl From<crate::models::ProviderKeyDefinition> for SecretKeyDefinition {
+    fn from(k: crate::models::ProviderKeyDefinition) -> Self {
+        SecretKeyDefinition {
+            key: k.key,
+            label: k.label,
+            placeholder: k.placeholder,
+            required: k.required,
+            sensitive: k.sensitive,
+            url_template: k.url_template,
+        }
+    }
+}
+
+impl From<crate::models::ModelProviderDefinition> for DefaultProviderEntry {
+    fn from(d: crate::models::ModelProviderDefinition) -> Self {
+        let models = d
+            .models
+            .into_iter()
+            .map(|mut m| {
+                // Config sources may omit `name`; backfill it from `id` so
+                // the catalog never surfaces a blank label.
+                if m.name.trim().is_empty() {
+                    m.name = m.id.clone();
+                }
+                m
+            })
+            .collect();
+        DefaultProviderEntry {
+            id: d.id,
+            label: d.label,
+            keys: d.keys.into_iter().map(SecretKeyDefinition::from).collect(),
+            models,
+        }
+    }
+}
+
+/// Provider/model definitions contributed by a deployment, layered on top of
+/// the built-in basics in `default_models.json`. Populated once at startup —
+/// the OSS server folds in `distri.yaml`, the cloud folds in its own config
+/// file. See [`register_provider_extensions`].
+static PROVIDER_EXTENSIONS: std::sync::OnceLock<Vec<DefaultProviderEntry>> =
+    std::sync::OnceLock::new();
+
+/// Register deployment-owned provider/model definitions — layer 2 of the
+/// provider registry. Call once, at process startup, before any
+/// provider/model catalog is served.
+///
+/// An extension whose `id` matches a built-in provider overrides it; a new
+/// `id` is appended. Calling more than once logs a warning and keeps the
+/// first registration.
+pub fn register_provider_extensions(extensions: Vec<crate::models::ModelProviderDefinition>) {
+    let entries: Vec<DefaultProviderEntry> = extensions
+        .into_iter()
+        .map(DefaultProviderEntry::from)
+        .collect();
+    let count = entries.len();
+    if PROVIDER_EXTENSIONS.set(entries).is_err() {
+        tracing::warn!("provider extensions already registered; ignoring {count} new entries");
+    } else {
+        tracing::info!("registered {count} provider extension(s)");
+    }
+}
+
+/// Merge built-in providers with extension providers — extensions override
+/// built-ins by `id`, new ids are appended. Pure: no global state.
+fn merge_provider_layers(
+    builtin: &[DefaultProviderEntry],
+    extensions: &[DefaultProviderEntry],
+) -> Vec<DefaultProviderEntry> {
+    let mut merged: Vec<DefaultProviderEntry> = builtin.to_vec();
+    for ext in extensions {
+        match merged.iter_mut().find(|p| p.id == ext.id) {
+            Some(slot) => *slot = ext.clone(),
+            None => merged.push(ext.clone()),
+        }
+    }
+    merged
+}
+
+/// Built-in providers plus any registered extensions — the full layered
+/// registry, lowest-to-highest precedence.
+fn merged_providers() -> Vec<DefaultProviderEntry> {
+    let extensions = PROVIDER_EXTENSIONS.get().map(Vec::as_slice).unwrap_or(&[]);
+    merge_provider_layers(load_default_providers(), extensions)
 }
 
 /// Models grouped by provider, with configuration status
@@ -1412,27 +1499,29 @@ impl ModelProvider {
         }
     }
 
-    /// Returns all provider secret definitions, loaded from default_models.json.
+    /// Returns all provider secret definitions — the built-in basics from
+    /// `default_models.json` merged with any registered extensions.
     pub fn all_provider_definitions() -> Vec<ProviderSecretDefinition> {
-        load_default_providers()
-            .iter()
+        merged_providers()
+            .into_iter()
             .map(|p| ProviderSecretDefinition {
-                id: p.id.clone(),
-                label: p.label.clone(),
-                keys: p.keys.clone(),
+                id: p.id,
+                label: p.label,
+                keys: p.keys,
             })
             .collect()
     }
 
-    /// Returns the well-known models grouped by provider, loaded from default_models.json.
+    /// Returns the well-known models grouped by provider — the built-in
+    /// basics from `default_models.json` merged with registered extensions.
     pub fn well_known_models() -> Vec<ProviderModels> {
-        load_default_providers()
-            .iter()
+        merged_providers()
+            .into_iter()
             .filter(|p| !p.models.is_empty())
             .map(|p| ProviderModels {
-                provider_id: p.id.clone(),
-                provider_label: p.label.clone(),
-                models: p.models.clone(),
+                provider_id: p.id,
+                provider_label: p.label,
+                models: p.models,
             })
             .collect()
     }
@@ -2821,6 +2910,10 @@ tool_format = "json_l"
     /// `*_API_KEY` entry MUST equal what `ModelProvider::api_key_secret()`
     /// returns — otherwise the UI will tell users to enter a secret name
     /// that the backend won't look up. This test catches drift.
+    ///
+    /// Only the OSS basics live in `default_models.json`; bespoke providers
+    /// (Azure AI Foundry, Bedrock, …) ship as deployment extensions and are
+    /// covered by `test_api_key_secret` above plus the cloud's config test.
     #[test]
     fn test_api_key_secret_matches_default_models_json() {
         let providers = ModelProvider::all_provider_definitions();
@@ -2837,35 +2930,6 @@ tool_format = "json_l"
                 "gemini",
                 ModelProvider::Gemini {
                     base_url: ModelProvider::gemini_base_url(),
-                    api_key: None,
-                },
-            ),
-            (
-                "azure_ai_foundry",
-                ModelProvider::AzureAiFoundry {
-                    resource: String::new(),
-                    api_key: None,
-                },
-            ),
-            (
-                "aws_bedrock",
-                ModelProvider::AwsBedrock {
-                    base_url: String::new(),
-                    api_key: None,
-                },
-            ),
-            (
-                "google_vertex",
-                ModelProvider::GoogleVertex {
-                    base_url: String::new(),
-                    api_key: None,
-                    project_id: None,
-                },
-            ),
-            (
-                "alibaba_cloud",
-                ModelProvider::AlibabaCloud {
-                    base_url: ModelProvider::alibaba_cloud_base_url(),
                     api_key: None,
                 },
             ),
@@ -2896,5 +2960,65 @@ tool_format = "json_l"
                 variant.api_key_secret(),
             );
         }
+    }
+
+    fn entry(id: &str, label: &str) -> DefaultProviderEntry {
+        DefaultProviderEntry {
+            id: id.to_string(),
+            label: label.to_string(),
+            keys: vec![],
+            models: vec![],
+        }
+    }
+
+    /// Layer 2 (extensions) overrides built-ins by `id` and appends new ones.
+    #[test]
+    fn test_merge_provider_layers_overrides_and_appends() {
+        let builtin = vec![entry("openai", "OpenAI"), entry("anthropic", "Anthropic")];
+        let extensions = vec![
+            entry("anthropic", "Anthropic (override)"),
+            entry("azure_ai_foundry", "Azure AI Foundry"),
+        ];
+        let merged = merge_provider_layers(&builtin, &extensions);
+
+        assert_eq!(merged.len(), 3);
+        assert_eq!(
+            merged.iter().find(|p| p.id == "openai").unwrap().label,
+            "OpenAI",
+            "untouched built-in is preserved"
+        );
+        assert_eq!(
+            merged.iter().find(|p| p.id == "anthropic").unwrap().label,
+            "Anthropic (override)",
+            "extension overrides the built-in with the same id"
+        );
+        assert!(
+            merged.iter().any(|p| p.id == "azure_ai_foundry"),
+            "extension with a new id is appended"
+        );
+    }
+
+    /// `register_provider_extensions` accepts `ModelProviderDefinition` and
+    /// backfills an empty model `name` from `id`.
+    #[test]
+    fn test_model_provider_definition_conversion_backfills_name() {
+        use crate::models::{Model, ModelCapability, ModelProviderDefinition};
+        let def = ModelProviderDefinition {
+            id: "acme".to_string(),
+            label: "Acme".to_string(),
+            keys: vec![],
+            models: vec![Model {
+                id: "acme-large".to_string(),
+                name: String::new(),
+                capability: ModelCapability::Completion,
+                context_window: None,
+                pricing: None,
+                voices: vec![],
+                formats: vec![],
+            }],
+            is_custom: false,
+        };
+        let converted = DefaultProviderEntry::from(def);
+        assert_eq!(converted.models[0].name, "acme-large");
     }
 }
