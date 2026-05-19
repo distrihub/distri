@@ -3704,6 +3704,20 @@ where
     async fn get_default_model(&self) -> Result<Option<String>> {
         Ok(self.load_settings().await?.default_model)
     }
+
+    async fn resolve_provider_endpoint(
+        &self,
+        provider_id: &str,
+    ) -> Result<distri_types::stores::ResolvedProviderEndpoint> {
+        let settings = self.load_settings().await?;
+        let secret_store = DieselSecretStore::new(self.pool.clone_store_pool());
+        distri_types::stores::resolve_provider_test_endpoint(
+            provider_id,
+            &secret_store,
+            &settings.custom_providers,
+        )
+        .await
+    }
 }
 
 fn to_prompt_template_record(model: PromptTemplateModel) -> PromptTemplateRecord {

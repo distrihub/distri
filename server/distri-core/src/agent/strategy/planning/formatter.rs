@@ -4,7 +4,7 @@ use chrono::Utc;
 use distri_parsers;
 use distri_types::{
     ContextBudget, ExecutionResult, MessageRole, Part, ScratchpadEntry, ScratchpadEntryType,
-    ToolCall, ToolCallFormat,
+    ToolCallFormat,
 };
 use tracing::warn;
 

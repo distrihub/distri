@@ -143,6 +143,12 @@ pub struct ProviderKeyDefinition {
     pub required: bool,
     #[serde(default = "default_true")]
     pub sensitive: bool,
+    /// When set, the UI renders this field as a resource segment embedded in
+    /// the URL template (`{}` marks the editable segment), showing the full
+    /// endpoint read-only around it. Azure AI Foundry uses this: the user
+    /// edits only the resource name and that is all we store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_template: Option<String>,
 }
 
 /// A provider definition with its keys and available models.

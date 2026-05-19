@@ -75,8 +75,10 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 query_params: vec![],
                 send_api_key_header: false,
             },
-            ModelProvider::AzureAiFoundry { base_url, api_key } => Self {
-                base_url: format!("{}/openai/v1", base_url.trim_end_matches('/')),
+            ModelProvider::AzureAiFoundry { resource, api_key } => Self {
+                // `resource` is an Azure resource name, not a URL — the
+                // OpenAI-compatible endpoint is derived from it.
+                base_url: ModelProvider::azure_ai_foundry_base_url(resource),
                 api_key_secret,
                 inline_api_key: api_key.clone(),
                 project_id: None,
@@ -217,28 +219,29 @@ mod tests {
     #[test]
     fn test_azure_ai_foundry_config() {
         let provider = ModelProvider::AzureAiFoundry {
-            base_url: "https://myproject.services.ai.azure.com".to_string(),
+            resource: "myproject".to_string(),
             api_key: None,
         };
         let config = ProviderClientConfig::from(&provider);
         assert_eq!(
             config.base_url,
-            "https://myproject.services.ai.azure.com/openai/v1"
+            "https://myproject.openai.azure.com/openai/v1"
         );
         assert_eq!(config.api_key_secret, "AZURE_AI_FOUNDRY_API_KEY");
         assert!(config.send_api_key_header);
     }
 
     #[test]
-    fn test_azure_ai_foundry_config_trailing_slash() {
+    fn test_azure_ai_foundry_config_trims_resource() {
+        // Stray whitespace/slashes in the stored resource still resolve.
         let provider = ModelProvider::AzureAiFoundry {
-            base_url: "https://myproject.services.ai.azure.com/".to_string(),
+            resource: " myproject/ ".to_string(),
             api_key: None,
         };
         let config = ProviderClientConfig::from(&provider);
         assert_eq!(
             config.base_url,
-            "https://myproject.services.ai.azure.com/openai/v1"
+            "https://myproject.openai.azure.com/openai/v1"
         );
     }
 

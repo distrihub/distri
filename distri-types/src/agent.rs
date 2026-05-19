@@ -1036,7 +1036,10 @@ pub enum ModelProvider {
     },
     #[serde(rename = "azure_ai_foundry")]
     AzureAiFoundry {
-        base_url: String,
+        /// Azure resource name (e.g. `distri-tts-resource`), **not** a URL.
+        /// Every endpoint URL is derived from this — see
+        /// [`ModelProvider::completion_url`] / [`ModelProvider::tts_url`].
+        resource: String,
         api_key: Option<String>,
     },
     #[serde(rename = "aws_bedrock")]
@@ -1084,6 +1087,12 @@ pub struct SecretKeyDefinition {
     /// Defaults to true. Set to false for non-sensitive config like URLs, project IDs.
     #[serde(default = "default_sensitive")]
     pub sensitive: bool,
+    /// When set, the UI renders this field as a resource segment embedded in
+    /// the URL template (`{}` marks the editable segment), showing the full
+    /// endpoint read-only around it. Azure AI Foundry uses this: the user
+    /// edits only the resource name and that is all we store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_template: Option<String>,
 }
 
 fn default_required() -> bool {
@@ -1202,8 +1211,11 @@ impl ModelProvider {
     /// endpoint secret. Plain OpenAI has no base_url field.
     pub fn base_url_slot_mut(&mut self) -> Option<&mut String> {
         match self {
+            // Azure AI Foundry hydrates a *resource name* (not a URL) into
+            // this slot from the `AZURE_AI_FOUNDRY_RESOURCE` secret; the URL
+            // is derived later via `completion_url()` / `tts_url()`.
+            Self::AzureAiFoundry { resource, .. } => Some(resource),
             Self::AzureOpenAI { base_url, .. }
-            | Self::AzureAiFoundry { base_url, .. }
             | Self::AwsBedrock { base_url, .. }
             | Self::GoogleVertex { base_url, .. }
             | Self::Gemini { base_url, .. }
@@ -1282,7 +1294,8 @@ impl ModelProvider {
     pub fn endpoint_secret(&self) -> Option<&'static str> {
         match self {
             ModelProvider::AzureOpenAI { .. } => Some("AZURE_OPENAI_ENDPOINT"),
-            ModelProvider::AzureAiFoundry { .. } => Some("AZURE_AI_FOUNDRY_ENDPOINT"),
+            // Holds the Azure resource name, not a URL — see the variant doc.
+            ModelProvider::AzureAiFoundry { .. } => Some("AZURE_AI_FOUNDRY_RESOURCE"),
             ModelProvider::AwsBedrock { .. } => Some("AWS_BEDROCK_ENDPOINT"),
             ModelProvider::GoogleVertex { .. } => Some("GOOGLE_VERTEX_ENDPOINT"),
             ModelProvider::OpenAI {}
@@ -1290,6 +1303,89 @@ impl ModelProvider {
             | ModelProvider::Anthropic { .. }
             | ModelProvider::Gemini { .. }
             | ModelProvider::AlibabaCloud { .. } => None,
+        }
+    }
+
+    /// OpenAI-compatible API base URL for an Azure AI Foundry resource name.
+    ///
+    /// Azure AI Foundry exposes the OpenAI v1 API at
+    /// `https://<resource>.openai.azure.com/openai/v1` — one endpoint serving
+    /// chat completions and OpenAI-style audio (TTS/STT). The Foundry
+    /// *project* endpoint (`*.services.ai.azure.com/api/projects/...`) is the
+    /// Agents SDK surface and is deliberately not used for model calls.
+    pub fn azure_ai_foundry_base_url(resource: &str) -> String {
+        let r = resource.trim().trim_matches('/');
+        format!("https://{r}.openai.azure.com/openai/v1")
+    }
+
+    /// Azure AI Foundry resource name, if this is that provider.
+    pub fn azure_ai_foundry_resource(&self) -> Option<&str> {
+        match self {
+            ModelProvider::AzureAiFoundry { resource, .. } => Some(resource.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Resolved chat-completions base URL for providers whose endpoint is
+    /// *derived* from config (Azure AI Foundry) rather than user-supplied.
+    /// `None` means the caller should fall back to the provider's own
+    /// `base_url`/default.
+    pub fn completion_url(&self) -> Option<String> {
+        match self {
+            ModelProvider::AzureAiFoundry { resource, .. } if !resource.trim().is_empty() => {
+                Some(Self::azure_ai_foundry_base_url(resource))
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolved TTS base URL. Azure AI Foundry serves TTS on the same
+    /// OpenAI-compatible endpoint as chat today; kept as a separate method so
+    /// a future non-OpenAI surface (e.g. Azure Speech) changes only here.
+    pub fn tts_url(&self) -> Option<String> {
+        self.completion_url()
+    }
+
+    /// Resolved STT base URL — see [`ModelProvider::tts_url`].
+    pub fn stt_url(&self) -> Option<String> {
+        self.completion_url()
+    }
+
+    /// `(base_url, api_key)` for this provider — call after `hydrate_creds`.
+    /// `base_url` is the OpenAI-compatible endpoint to probe; used by the
+    /// `/providers/test` validation flow.
+    pub fn resolved_endpoint(&self) -> (Option<String>, Option<String>) {
+        match self {
+            ModelProvider::OpenAI {} => (Some(Self::openai_base_url()), None),
+            ModelProvider::AzureAiFoundry { api_key, .. } => {
+                (self.completion_url(), api_key.clone())
+            }
+            ModelProvider::Anthropic { base_url, api_key } => (
+                Some(
+                    base_url
+                        .clone()
+                        .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
+                ),
+                api_key.clone(),
+            ),
+            ModelProvider::Gemini { base_url, api_key } => {
+                (Some(base_url.clone()), api_key.clone())
+            }
+            ModelProvider::OpenAICompatible {
+                base_url, api_key, ..
+            } => (Some(base_url.clone()), api_key.clone()),
+            ModelProvider::AlibabaCloud { base_url, api_key } => {
+                (Some(base_url.clone()), api_key.clone())
+            }
+            ModelProvider::AzureOpenAI {
+                base_url, api_key, ..
+            } => (Some(base_url.clone()), api_key.clone()),
+            ModelProvider::AwsBedrock { base_url, api_key } => {
+                (Some(base_url.clone()), api_key.clone())
+            }
+            ModelProvider::GoogleVertex {
+                base_url, api_key, ..
+            } => (Some(base_url.clone()), api_key.clone()),
         }
     }
 
@@ -1530,7 +1626,7 @@ impl ModelSettings {
                 api_key: None,
             },
             "azure_ai_foundry" => ModelProvider::AzureAiFoundry {
-                base_url: String::new(),
+                resource: String::new(),
                 api_key: None,
             },
             "aws_bedrock" => ModelProvider::AwsBedrock {
@@ -2502,12 +2598,12 @@ tool_format = "json_l"
     }
 
     #[test]
-    fn merge_azure_ai_foundry_base_url_preserved() {
+    fn merge_azure_ai_foundry_resource_preserved() {
         let base = ModelSettings {
             model: "gpt-5.4".into(),
             inner: ModelSettingsInner {
                 provider: ModelProvider::AzureAiFoundry {
-                    base_url: "https://myresource.openai.azure.com".into(),
+                    resource: "myresource".into(),
                     api_key: Some("test-key".into()),
                 },
                 ..Default::default()
@@ -2521,9 +2617,33 @@ tool_format = "json_l"
             result.inner.provider,
             ModelProvider::AzureAiFoundry { .. }
         ));
-        if let ModelProvider::AzureAiFoundry { base_url, .. } = result.inner.provider {
-            assert_eq!(base_url, "https://myresource.openai.azure.com");
+        if let ModelProvider::AzureAiFoundry { resource, .. } = &result.inner.provider {
+            assert_eq!(resource, "myresource");
         }
+        assert_eq!(
+            result.inner.provider.completion_url().as_deref(),
+            Some("https://myresource.openai.azure.com/openai/v1"),
+        );
+    }
+
+    #[test]
+    fn azure_ai_foundry_resource_resolves_openai_url() {
+        let p = ModelProvider::AzureAiFoundry {
+            resource: "distri-tts-resource".into(),
+            api_key: None,
+        };
+        assert_eq!(
+            p.completion_url().as_deref(),
+            Some("https://distri-tts-resource.openai.azure.com/openai/v1"),
+        );
+        // TTS rides the same OpenAI-compatible endpoint today.
+        assert_eq!(p.tts_url(), p.completion_url());
+        // An empty resource yields no URL — the caller must hydrate it first.
+        let empty = ModelProvider::AzureAiFoundry {
+            resource: String::new(),
+            api_key: None,
+        };
+        assert_eq!(empty.completion_url(), None);
     }
 
     #[test]
@@ -2654,7 +2774,7 @@ tool_format = "json_l"
         );
         assert_eq!(
             ModelProvider::AzureAiFoundry {
-                base_url: String::new(),
+                resource: String::new(),
                 api_key: None,
             }
             .api_key_secret(),
@@ -2723,7 +2843,7 @@ tool_format = "json_l"
             (
                 "azure_ai_foundry",
                 ModelProvider::AzureAiFoundry {
-                    base_url: String::new(),
+                    resource: String::new(),
                     api_key: None,
                 },
             ),
@@ -2762,7 +2882,10 @@ tool_format = "json_l"
                 .map(|k| k.key.as_str())
                 .find(|k| k.ends_with("_API_KEY") || *k == "AWS_ACCESS_KEY_ID")
                 .unwrap_or_else(|| {
-                    panic!("provider '{}' has no API key entry in default_models.json", id)
+                    panic!(
+                        "provider '{}' has no API key entry in default_models.json",
+                        id
+                    )
                 });
             assert_eq!(
                 first_api_key_in_json,

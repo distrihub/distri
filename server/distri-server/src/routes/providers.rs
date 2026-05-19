@@ -1,7 +1,9 @@
-use actix_web::{web, HttpResponse};
-use distri_types::stores::{ProviderStore, UpsertProviderRequest};
-use distri_types::{models::Model, ModelProvider, SecretKeyDefinition};
-use serde::Serialize;
+use actix_web::{HttpResponse, web};
+use distri_types::stores::{
+    ProviderStore, TestProviderRequest, TestProviderResponse, UpsertProviderRequest,
+};
+use distri_types::{ModelProvider, SecretKeyDefinition, models::Model};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -12,6 +14,9 @@ pub fn configure_provider_routes(cfg: &mut web::ServiceConfig) {
             .route(web::post().to(upsert_provider)),
     )
     .service(web::resource("/providers/default-model").route(web::get().to(get_default_model)))
+    // `/providers/test` must be registered before `/providers/{provider_id}`
+    // so the literal segment is matched first.
+    .service(web::resource("/providers/test").route(web::post().to(test_provider)))
     .service(web::resource("/providers/{provider_id}").route(web::delete().to(delete_provider)));
 }
 
@@ -131,4 +136,87 @@ async fn get_default_model(store: web::Data<Arc<dyn ProviderStore>>) -> HttpResp
                 .json(json!({"error": "Failed to get default model"}))
         }
     }
+}
+
+/// Minimal shape of an OpenAI-style `GET /models` response.
+#[derive(Debug, Deserialize)]
+struct ModelsListResponse {
+    #[serde(default)]
+    data: Vec<ModelsListEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelsListEntry {
+    id: String,
+}
+
+/// Probe `GET {base_url}/models` to validate a URL + key combination.
+/// Sends the key as both `Authorization: Bearer` (OpenAI) and `api-key`
+/// (Azure) so one request works for any OpenAI-compatible endpoint.
+async fn probe_models(base_url: &str, api_key: &str) -> Result<Vec<String>, String> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("api-key", api_key)
+        .send()
+        .await
+        .map_err(|e| format!("request to {url} failed: {e}"))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        let detail: String = body.chars().take(300).collect();
+        return Err(format!("endpoint returned {status}: {detail}"));
+    }
+
+    let parsed: ModelsListResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("invalid /models response: {e}"))?;
+    Ok(parsed.data.into_iter().map(|m| m.id).collect())
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/providers/test",
+    tag = "Providers",
+    request_body = TestProviderRequest,
+    responses(
+        (status = 200, description = "Test result", body = TestProviderResponse),
+        (status = 400, description = "Bad request"),
+    )
+)]
+async fn test_provider(
+    store: web::Data<Arc<dyn ProviderStore>>,
+    payload: web::Json<TestProviderRequest>,
+) -> HttpResponse {
+    let provider_id = payload.into_inner().provider_id;
+
+    // The store resolves the endpoint URL + API key from stored config —
+    // the caller never sends credentials.
+    let endpoint = match store.resolve_provider_endpoint(&provider_id).await {
+        Ok(ep) => ep,
+        Err(err) => {
+            return HttpResponse::Ok().json(TestProviderResponse {
+                ok: false,
+                models: vec![],
+                error: Some(format!("{err}")),
+            });
+        }
+    };
+
+    let result = match probe_models(&endpoint.base_url, &endpoint.api_key).await {
+        Ok(models) => TestProviderResponse {
+            ok: true,
+            models,
+            error: None,
+        },
+        Err(error) => TestProviderResponse {
+            ok: false,
+            models: vec![],
+            error: Some(error),
+        },
+    };
+    HttpResponse::Ok().json(result)
 }

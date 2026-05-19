@@ -25,6 +25,7 @@ pub fn build_provider_definitions() -> Vec<ModelProviderDefinition> {
                     placeholder: k.placeholder.clone(),
                     required: k.required,
                     sensitive: k.sensitive,
+                    url_template: k.url_template.clone(),
                 })
                 .collect();
 

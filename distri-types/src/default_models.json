@@ -360,11 +360,12 @@
       "label": "Azure AI Foundry",
       "keys": [
         {
-          "key": "AZURE_AI_FOUNDRY_ENDPOINT",
-          "label": "Endpoint URL",
-          "placeholder": "https://<project>.services.ai.azure.com/v1",
+          "key": "AZURE_AI_FOUNDRY_RESOURCE",
+          "label": "Resource name",
+          "placeholder": "distri-tts-resource",
           "required": true,
-          "sensitive": false
+          "sensitive": false,
+          "url_template": "https://{}.openai.azure.com/openai/v1"
         },
         {
           "key": "AZURE_AI_FOUNDRY_API_KEY",

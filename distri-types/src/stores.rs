@@ -968,6 +968,36 @@ pub struct UpsertProviderResponse {
     pub config_saved: bool,
 }
 
+/// Request to validate an already-configured provider — `POST
+/// /v1/providers/test`. Credentials are resolved from stored config
+/// server-side; nothing sensitive is sent over the wire.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+pub struct TestProviderRequest {
+    /// Built-in provider id (e.g. `azure_ai_foundry`) or a custom provider id.
+    pub provider_id: String,
+}
+
+/// A provider's resolved probe target — the OpenAI-compatible base URL and
+/// API key from stored config. Internal (store → route), not a wire type.
+#[derive(Debug, Clone)]
+pub struct ResolvedProviderEndpoint {
+    pub base_url: String,
+    pub api_key: String,
+}
+
+/// Result of a `POST /v1/providers/test` probe.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+pub struct TestProviderResponse {
+    /// True when the endpoint answered `GET /models` successfully.
+    pub ok: bool,
+    /// Model ids the endpoint reported, when reachable.
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// Failure detail when `ok == false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[async_trait]
 pub trait ProviderStore: Send + Sync {
     async fn upsert_provider(
@@ -978,6 +1008,54 @@ pub trait ProviderStore: Send + Sync {
     async fn delete_provider(&self, provider_id: &str) -> anyhow::Result<()>;
 
     async fn get_default_model(&self) -> anyhow::Result<Option<String>>;
+
+    /// Resolve a provider's probe target (base URL + API key) from stored
+    /// config, for the `POST /v1/providers/test` validation endpoint.
+    async fn resolve_provider_endpoint(
+        &self,
+        provider_id: &str,
+    ) -> anyhow::Result<ResolvedProviderEndpoint>;
+}
+
+/// Resolve a provider's `(base_url, api_key)` for the `/providers/test`
+/// probe. Built-in providers hydrate from their canonical secret keys;
+/// custom providers take `base_url` from `custom_providers` and the key
+/// from `{PROVIDER_ID}_API_KEY`. Shared by the cloud and standalone stores.
+pub async fn resolve_provider_test_endpoint(
+    provider_id: &str,
+    secret_store: &dyn SecretStore,
+    custom_providers: &[CustomProviderConfig],
+) -> anyhow::Result<ResolvedProviderEndpoint> {
+    use crate::agent::ModelSettings;
+    // Built-in provider: build its ModelProvider and hydrate from secrets.
+    if let Ok(Some(mut ms)) = ModelSettings::from_provider_model_str(&format!("{provider_id}/_")) {
+        ms.hydrate_creds(secret_store)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        let (base_url, api_key) = ms.inner.provider.resolved_endpoint();
+        let base_url = base_url.filter(|u| !u.trim().is_empty()).ok_or_else(|| {
+            anyhow::anyhow!("provider '{provider_id}' has no endpoint configured")
+        })?;
+        return Ok(ResolvedProviderEndpoint {
+            base_url,
+            api_key: api_key.unwrap_or_default(),
+        });
+    }
+    // Custom OpenAI-compatible provider.
+    let cp = custom_providers
+        .iter()
+        .find(|p| p.id == provider_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown provider '{provider_id}'"))?;
+    let api_key = secret_store
+        .get(&format!("{}_API_KEY", provider_id.to_uppercase()))
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?
+        .map(|s| s.value)
+        .unwrap_or_default();
+    Ok(ResolvedProviderEndpoint {
+        base_url: cp.base_url.clone(),
+        api_key,
+    })
 }
 
 /// Provider-related settings for the single-tenant standalone server.

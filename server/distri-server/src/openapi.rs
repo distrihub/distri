@@ -94,6 +94,7 @@ use utoipa::OpenApi;
         crate::routes::providers::upsert_provider,
         crate::routes::providers::delete_provider,
         crate::routes::providers::get_default_model,
+        crate::routes::providers::test_provider,
         // Models
         crate::routes::models::list_models,
         // Prompt Templates
