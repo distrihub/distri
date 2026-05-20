@@ -70,6 +70,13 @@ pub struct AgentOrchestrator {
     /// `None` when not wired (OSS tests etc.); the cloud sets an
     /// `InMemoryWorkflowStore`/`RedisWorkflowStore` here.
     pub workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
+    /// Routing index from declared `WorkflowTrigger`s back to
+    /// `(agent_id, entry_point_id)`. Built on boot from every
+    /// `WorkflowAgentDefinition`; what the cloud's webhook route,
+    /// scheduler tick, event bus, and workflow-as-tool A2A dispatch
+    /// consult to find the workflow run a stimulus targets.
+    pub workflow_trigger_registry:
+        Option<Arc<dyn distri_workflow::WorkflowTriggerRegistry>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -116,6 +123,8 @@ pub struct AgentOrchestratorBuilder {
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
     workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
+    workflow_trigger_registry:
+        Option<Arc<dyn distri_workflow::WorkflowTriggerRegistry>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -248,6 +257,18 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Attach the workflow trigger registry — the routing index from
+    /// declared triggers (webhook path / cron / event topic / tool
+    /// name) back to `(agent_id, entry_point_id)`. The cloud builds
+    /// it on boot from every `WorkflowAgentDefinition`.
+    pub fn with_workflow_trigger_registry(
+        mut self,
+        registry: Arc<dyn distri_workflow::WorkflowTriggerRegistry>,
+    ) -> Self {
+        self.workflow_trigger_registry = Some(registry);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let browser_config = self.browser_config.unwrap_or_default();
 
@@ -326,6 +347,7 @@ impl AgentOrchestratorBuilder {
             oauth_handler: self.oauth_handler,
             mcp_pool_provider: self.mcp_pool_provider,
             workflow_store: self.workflow_store,
+            workflow_trigger_registry: self.workflow_trigger_registry,
         };
 
         // Sync system prompts to the store
@@ -879,6 +901,29 @@ impl AgentOrchestrator {
                 let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
                     crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
                 );
+
+                // Populate the trigger registry from this workflow's
+                // entry-point triggers so webhook/cron/event/tool
+                // dispatch can route back to it. Best-effort; logs
+                // and continues on failure (the registry is the
+                // orchestration index, not the source of truth).
+                if let Some(registry) = self.workflow_trigger_registry.clone() {
+                    if let Ok(workflow_def) = serde_json::from_value::<
+                        distri_workflow::WorkflowDefinition,
+                    >(definition.definition.clone())
+                    {
+                        if let Err(e) =
+                            registry.register(&definition.name, &workflow_def).await
+                        {
+                            tracing::warn!(
+                                error = %e,
+                                agent_id = %definition.name,
+                                "workflow_trigger_registry register failed"
+                            );
+                        }
+                    }
+                }
+
                 let agent = crate::agent::WorkflowAgent::new(definition, hooks);
                 Ok(Box::new(agent))
             }
