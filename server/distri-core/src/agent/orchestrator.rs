@@ -1716,19 +1716,19 @@ impl AgentOrchestrator {
     ///
     ///   - **Workflow wait** — the id is a `wait_task_id` on some
     ///     parked workflow run (the workflow's `ContextEventSink`
-    ///     created a child Task for it). Record the result on the
-    ///     step row, mark the wait task `Completed`, flip the run
-    ///     task back to `Running`. The workflow resumes when an
-    ///     external A2A `message/send` (or any orchestrator invoke)
-    ///     hits the run task — `WorkflowAgent::run_workflow`'s resume
-    ///     detection picks up the stored state from there.
+    ///     created a child Task for it). Synchronously record the
+    ///     result, mark the wait task `Completed`, flip the run task
+    ///     `Running`, then **spawn a background re-invocation** of
+    ///     the workflow agent on the run task — `run_workflow`'s
+    ///     resume detection picks up the stored state and continues
+    ///     from the parked frontier.
     ///
     ///   - **Legacy external tool call** — the id is a oneshot
-    ///     registered via `ExternalToolCallsStore`. Existing path:
-    ///     fire the oneshot. (Slated for deletion once external tool
-    ///     calls migrate to the wait-task model.)
+    ///     registered via `ExternalToolCallsStore`. Fire the oneshot.
+    ///     (Slated for deletion once external tool calls migrate to
+    ///     the wait-task model.)
     pub async fn complete_tool(
-        &self,
+        self: Arc<Self>,
         tool_call_id: &str,
         tool_response: distri_types::ToolResponse,
     ) -> Result<(), String> {
@@ -1771,14 +1771,13 @@ impl AgentOrchestrator {
         outcome
     }
 
-    /// Complete a workflow wait synchronously: record the tool
-    /// response onto the step row, mark the wait task `Completed`,
-    /// flip the run task back to `Running`. Does not re-invoke the
-    /// workflow agent — the caller (or any later A2A `message/send`)
-    /// re-enters the workflow run task, which goes through resume
-    /// detection.
+    /// Complete a workflow wait: synchronously record the result on
+    /// the step row + flip the wait task `Completed` + flip the run
+    /// task `Running`, then spawn the workflow re-drive in the
+    /// background. The agent's resume detection hydrates from
+    /// `workflow_store` and continues from the parked frontier.
     async fn complete_workflow_wait(
-        &self,
+        self: Arc<Self>,
         run_task_id: &str,
         wait_task_id: &str,
         tool_response: distri_types::ToolResponse,
@@ -1792,9 +1791,7 @@ impl AgentOrchestrator {
             .into_iter()
             .find(|s| s.wait_task_id.as_deref() == Some(wait_task_id))
             .ok_or_else(|| {
-                format!(
-                    "no step with wait_task_id={wait_task_id} on run {run_task_id}"
-                )
+                format!("no step with wait_task_id={wait_task_id} on run {run_task_id}")
             })?;
 
         let result = serde_json::to_value(&tool_response).map_err(|e| e.to_string())?;
@@ -1830,9 +1827,84 @@ impl AgentOrchestrator {
             run_task_id = %run_task_id,
             wait_task_id = %wait_task_id,
             step_id = %step.step_id,
-            "workflow wait completed; run task flipped to Running"
+            "workflow wait completed; spawning re-drive"
         );
+
+        // Spawn the re-drive — fresh task-local user/workspace
+        // context, register_task → spawn_task_relay →
+        // spawn_background_execution. The run_workflow path detects
+        // the existing WorkflowExecutionState and resumes.
+        let self_for_spawn = self.clone();
+        let run_task_id_owned = run_task_id.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = self_for_spawn.resume_workflow_run(run_task_id_owned).await {
+                tracing::warn!(error = %e, "workflow auto re-drive failed");
+            }
+        });
+
         Ok(())
+    }
+
+    /// Spawn a background execution that re-enters a parked workflow
+    /// run. Reads `thread_id` / `user_id` / `workspace_id` from the
+    /// snapshotted `WorkflowExecutionState`, builds a minimal
+    /// `ExecutorContext`, and routes through the standard
+    /// `register_task` + `spawn_task_relay` + `spawn_background_execution`
+    /// pipeline so the rest of the system sees this exactly like an
+    /// A2A `message/send` continuation.
+    async fn resume_workflow_run(self: Arc<Self>, run_task_id: String) -> Result<(), String> {
+        let workflow_store = self
+            .workflow_store
+            .as_ref()
+            .ok_or("workflow_store not configured")?
+            .clone();
+        let state = workflow_store
+            .get_run(&run_task_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("no workflow_run for {run_task_id}"))?;
+
+        let workspace_uuid = state
+            .workspace_id
+            .as_ref()
+            .and_then(|w| uuid::Uuid::parse_str(w).ok());
+        let user_id = state.user_id.clone();
+        let agent_id = state.agent_id.clone();
+        let thread_id = state.thread_id.clone();
+        let workspace_str = state.workspace_id.clone();
+        let self_inner = self.clone();
+        let run_task_id_for_ctx = run_task_id.clone();
+
+        distri_types::context::with_user_and_workspace(user_id.clone(), workspace_uuid, async move {
+            let exec_ctx = crate::agent::ExecutorContext {
+                thread_id: thread_id.clone(),
+                task_id: run_task_id_for_ctx.clone(),
+                agent_id: agent_id.clone(),
+                user_id: user_id.clone(),
+                workspace_id: workspace_str,
+                session_id: thread_id.clone(),
+                orchestrator: Some(self_inner.clone()),
+                ..Default::default()
+            };
+
+            let (registered_ctx, event_rx) = self_inner
+                .register_task(&run_task_id_for_ctx, &thread_id, exec_ctx)
+                .await
+                .map_err(|e| format!("register_task: {e}"))?;
+            self_inner.spawn_task_relay(run_task_id_for_ctx.clone(), event_rx);
+            crate::a2a::stream::spawn_background_execution(
+                self_inner.clone(),
+                agent_id,
+                distri_types::Message::default(),
+                registered_ctx,
+                None,
+                run_task_id_for_ctx,
+                user_id,
+                workspace_uuid,
+            );
+            Ok::<(), String>(())
+        })
+        .await
     }
 
     pub async fn complete_inline_hook(

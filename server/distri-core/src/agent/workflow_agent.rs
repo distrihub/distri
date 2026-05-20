@@ -833,15 +833,20 @@ impl WorkflowAgent {
             }
 
             // Persist initial WorkflowExecutionState (definition
-            // snapshot + entry point + input + initial context). Done
-            // on the fresh path only — on resume the row already
-            // exists and we don't want to overwrite step results.
+            // snapshot + entry point + input + initial context +
+            // tenant context). The tenant fields (user_id,
+            // workspace_id) are snapshotted at run start so resume
+            // can rebuild an ExecutorContext without an upstream
+            // task-store lookup.
             if let Some(store) = workflow_store.as_ref() {
                 let state = WorkflowExecutionState::new(
                     &context.task_id,
                     &context.agent_id,
+                    &context.thread_id,
+                    &context.user_id,
                     run.definition.clone(),
                 )
+                .with_workspace_id(context.workspace_id.clone())
                 .with_entry_point(entry_point_for_record)
                 .with_input(input_for_record)
                 .with_context(run.context.clone());

@@ -34,10 +34,19 @@ use std::collections::HashMap;
 
 /// Run-level state for one workflow execution. Keyed by `run_task_id`
 /// (the run's root `Task` id).
+///
+/// `thread_id` / `user_id` / `workspace_id` are snapshotted at run
+/// start so resume re-builds an `ExecutorContext` without any task
+/// store lookup (which would itself need tenant context — a chicken
+/// and egg).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowExecutionState {
     pub run_task_id: String,
     pub agent_id: String,
+    pub thread_id: String,
+    pub user_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     /// Workflow definition snapshotted at run start. Later edits to
     /// the agent config cannot corrupt an in-flight run.
     pub definition: WorkflowDefinition,
@@ -57,12 +66,17 @@ impl WorkflowExecutionState {
     pub fn new(
         run_task_id: impl Into<String>,
         agent_id: impl Into<String>,
+        thread_id: impl Into<String>,
+        user_id: impl Into<String>,
         definition: WorkflowDefinition,
     ) -> Self {
         let now = Utc::now();
         Self {
             run_task_id: run_task_id.into(),
             agent_id: agent_id.into(),
+            thread_id: thread_id.into(),
+            user_id: user_id.into(),
+            workspace_id: None,
             definition,
             entry_point: None,
             input: serde_json::json!({}),
@@ -70,6 +84,11 @@ impl WorkflowExecutionState {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    pub fn with_workspace_id(mut self, workspace_id: Option<String>) -> Self {
+        self.workspace_id = workspace_id;
+        self
     }
 
     pub fn with_entry_point(mut self, entry_point: Option<String>) -> Self {
@@ -256,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn create_get_roundtrip() {
         let store = InMemoryWorkflowStore::new();
-        let state = WorkflowExecutionState::new("run-1", "agent-1", sample_def())
+        let state = WorkflowExecutionState::new("run-1", "agent-1", "thread-test", "user-test", sample_def())
             .with_entry_point(Some("main".into()))
             .with_input(serde_json::json!({"x": 1}));
         store.create_run(state).await.unwrap();
@@ -271,7 +290,7 @@ mod tests {
         let store = InMemoryWorkflowStore::new();
         store
             .create_run(
-                WorkflowExecutionState::new("run-1", "agent-1", sample_def())
+                WorkflowExecutionState::new("run-1", "agent-1", "thread-test", "user-test", sample_def())
                     .with_input(serde_json::json!({"x": 1})),
             )
             .await
@@ -347,7 +366,7 @@ mod tests {
     async fn delete_run_cascades_to_steps() {
         let store = InMemoryWorkflowStore::new();
         store
-            .create_run(WorkflowExecutionState::new("run-1", "agent-1", sample_def()))
+            .create_run(WorkflowExecutionState::new("run-1", "agent-1", "thread-test", "user-test", sample_def()))
             .await
             .unwrap();
         store
