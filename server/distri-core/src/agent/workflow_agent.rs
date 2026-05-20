@@ -54,9 +54,11 @@ impl WorkflowAgent {
     }
 }
 
-/// Event bridge: forwards WorkflowEvents to ExecutorContext event channel.
+/// Event bridge: translates `WorkflowEvent`s into `AgentEventType`s and
+/// emits them through the executor context so workflow step progress
+/// rides the same broadcaster + A2A SSE path agent runs do (no
+/// workflow-specific stream).
 struct ContextEventSink {
-    #[allow(dead_code)]
     context: Arc<ExecutorContext>,
 }
 
@@ -64,6 +66,47 @@ struct ContextEventSink {
 impl EventSink for ContextEventSink {
     async fn emit(&self, event: WorkflowEvent) {
         tracing::debug!(?event, "workflow event");
+        match event {
+            WorkflowEvent::StepStarted {
+                step_id,
+                step_index,
+                ..
+            } => {
+                self.context
+                    .emit(distri_types::AgentEventType::StepStarted {
+                        step_id,
+                        step_index,
+                    })
+                    .await;
+            }
+            WorkflowEvent::StepCompleted { step_id, .. } => {
+                self.context
+                    .emit(distri_types::AgentEventType::StepCompleted {
+                        step_id,
+                        success: true,
+                        context_budget: None,
+                        usage: None,
+                    })
+                    .await;
+            }
+            WorkflowEvent::StepFailed { step_id, .. } => {
+                self.context
+                    .emit(distri_types::AgentEventType::StepCompleted {
+                        step_id,
+                        success: false,
+                        context_budget: None,
+                        usage: None,
+                    })
+                    .await;
+            }
+            // WorkflowStarted/Completed are subsumed by the agent run's
+            // RunStarted (emitted by hooks) and RunFinished (emitted by
+            // `WorkflowAgent::invoke_stream`). StepWaiting will be
+            // surfaced once the per-step child-task projection lands —
+            // for now the run's task transitions to InputRequired
+            // through `context.update_status`.
+            _ => {}
+        }
     }
 }
 

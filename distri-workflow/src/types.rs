@@ -1273,6 +1273,11 @@ impl WorkflowRunSummary {
 // ============================================================================
 
 /// Events emitted during workflow execution.
+///
+/// `step_index` is the step's position in `WorkflowDefinition.steps`
+/// (and `WorkflowRun.step_runs`), threaded through so a translating
+/// sink can map directly to `distri_types::AgentEventType::StepStarted`
+/// / `StepCompleted` without re-deriving the index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum WorkflowEvent {
@@ -1286,12 +1291,14 @@ pub enum WorkflowEvent {
         workflow_id: String,
         step_id: String,
         step_label: String,
+        step_index: usize,
     },
     /// A step completed successfully
     StepCompleted {
         workflow_id: String,
         step_id: String,
         step_label: String,
+        step_index: usize,
         result: Option<serde_json::Value>,
     },
     /// A step failed
@@ -1299,6 +1306,7 @@ pub enum WorkflowEvent {
         workflow_id: String,
         step_id: String,
         step_label: String,
+        step_index: usize,
         error: String,
     },
     /// A step is waiting for external/human input
@@ -1306,6 +1314,7 @@ pub enum WorkflowEvent {
         workflow_id: String,
         step_id: String,
         step_label: String,
+        step_index: usize,
         message: String,
         schema: Option<serde_json::Value>,
     },

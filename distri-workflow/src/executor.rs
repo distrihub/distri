@@ -246,6 +246,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                     workflow_id: workflow_id.to_string(),
                     step_id: step_id.clone(),
                     step_label: step.label.clone(),
+                            step_index: *idx,
                     message,
                     schema,
                 })
@@ -274,6 +275,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                         workflow_id: workflow_id.to_string(),
                         step_id: step_id.clone(),
                         step_label: step.label.clone(),
+                            step_index: *idx,
                     })
                     .await;
 
@@ -287,6 +289,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                                 workflow_id: workflow_id.to_string(),
                                 step_id: step_id.clone(),
                                 step_label: step.label.clone(),
+                            step_index: *idx,
                                 error: error.clone(),
                             })
                             .await;
@@ -299,6 +302,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                                 workflow_id: workflow_id.to_string(),
                                 step_id: step_id.clone(),
                                 step_label: step.label.clone(),
+                            step_index: *idx,
                                 result: r.result.clone(),
                             })
                             .await;
@@ -311,6 +315,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                                 workflow_id: workflow_id.to_string(),
                                 step_id: step_id.clone(),
                                 step_label: step.label.clone(),
+                            step_index: *idx,
                                 error: e.clone(),
                             })
                             .await;
@@ -339,6 +344,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                     workflow_id: workflow_id.to_string(),
                     step_id: step_id.clone(),
                     step_label: step.label.clone(),
+                            step_index: *idx,
                 })
                 .await;
 
@@ -352,6 +358,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                             workflow_id: workflow_id.to_string(),
                             step_id: step_id.clone(),
                             step_label: step.label.clone(),
+                            step_index: *idx,
                             error: error.clone(),
                         })
                         .await;
@@ -364,6 +371,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                             workflow_id: workflow_id.to_string(),
                             step_id: step_id.clone(),
                             step_label: step.label.clone(),
+                            step_index: *idx,
                             result: r.result.clone(),
                         })
                         .await;
@@ -376,6 +384,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                             workflow_id: workflow_id.to_string(),
                             step_id: step_id.clone(),
                             step_label: step.label.clone(),
+                            step_index: *idx,
                             error: e.clone(),
                         })
                         .await;
