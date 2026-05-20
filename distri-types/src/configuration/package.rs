@@ -51,32 +51,6 @@ pub enum AgentConfig {
     WorkflowAgent(WorkflowAgentDefinition),
 }
 
-/// How a workflow agent is triggered.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Trigger {
-    /// Manual invocation (implicit default when triggers is empty)
-    OnCall {},
-    /// Cron-based scheduled execution
-    Schedule {
-        /// Cron expression, e.g. "0 * * * *" (every hour)
-        cron: String,
-        /// IANA timezone, e.g. "America/Los_Angeles". Defaults to UTC.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        timezone: Option<String>,
-        /// Whether this schedule is active. Defaults to true.
-        #[serde(default = "default_true")]
-        enabled: bool,
-        /// Default input passed to the workflow on each scheduled run.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        input: Option<serde_json::Value>,
-    },
-}
-
-fn default_true() -> bool {
-    true
-}
-
 /// Definition for a workflow-based agent.
 /// The workflow definition is stored as JSON to avoid crate dependency on distri-workflow.
 /// Deserialize to `distri_workflow::WorkflowDefinition` at execution time.
@@ -91,9 +65,12 @@ pub struct WorkflowAgentDefinition {
     /// JSON Schema for required inputs (validated before execution).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_schema: Option<serde_json::Value>,
-    /// How this workflow is triggered. Defaults to on_call if empty.
+    /// Agent-level triggers — applied to the default entry point.
+    /// Empty = `Manual` only (direct API/UI invocation). Entry-point
+    /// triggers (in `WorkflowDefinition.entry_points[*].triggers`)
+    /// take precedence per-entry-point.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub triggers: Vec<Trigger>,
+    pub triggers: Vec<crate::WorkflowTrigger>,
     /// Channel chrome when this workflow agent backs a bot. Optional.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channels: Option<crate::channel_commands::ChannelBindings>,
@@ -137,14 +114,17 @@ impl AgentConfig {
         }
     }
 
-    /// Get schedule triggers for this agent (only workflow agents can have them).
-    pub fn get_schedule_triggers(&self) -> Vec<&Trigger> {
+    /// Get schedule triggers for this agent (only workflow agents
+    /// can have them). Walks both the agent-level `triggers` and
+    /// each entry point's `triggers` since both layers may declare
+    /// `Schedule`.
+    pub fn get_schedule_triggers(&self) -> Vec<&crate::WorkflowTrigger> {
         match self {
             AgentConfig::StandardAgent(_) => vec![],
             AgentConfig::WorkflowAgent(def) => def
                 .triggers
                 .iter()
-                .filter(|t| matches!(t, Trigger::Schedule { .. }))
+                .filter(|t| matches!(t, crate::WorkflowTrigger::Schedule { .. }))
                 .collect(),
         }
     }

@@ -54,16 +54,172 @@ impl WorkflowAgent {
     }
 }
 
-/// Event bridge: forwards WorkflowEvents to ExecutorContext event channel.
+/// Event bridge: forwards workflow step progress through the **two**
+/// paths the rest of the system already consumes.
+///
+/// 1. `context.emit(AgentEventType::Step…)` — the live event stream
+///    (broadcaster → A2A SSE → `tasks/resubscribe`). Same path agent
+///    runs use; no workflow-specific transport.
+/// 2. `workflow_store.upsert_step(...)` — the durable per-step row in
+///    the workflow store. So `list_steps(run_task_id)` returns real
+///    `WorkflowStepState` rows queryable for debugging / UI / future
+///    resume.
+///
+/// Each `merge_step` call read-modify-writes the existing row so a
+/// `StepCompleted` doesn't clobber the `started_at` set on
+/// `StepStarted`.
 struct ContextEventSink {
-    #[allow(dead_code)]
     context: Arc<ExecutorContext>,
+    workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
+    run_task_id: String,
+}
+
+impl ContextEventSink {
+    async fn merge_step<F>(&self, step_id: &str, apply: F)
+    where
+        F: FnOnce(&mut distri_workflow::WorkflowStepState) + Send,
+    {
+        let Some(store) = self.workflow_store.as_ref() else {
+            return;
+        };
+        let mut state = match store.get_step(&self.run_task_id, step_id).await {
+            Ok(Some(s)) => s,
+            _ => distri_workflow::WorkflowStepState {
+                step_id: step_id.to_string(),
+                ..Default::default()
+            },
+        };
+        apply(&mut state);
+        if let Err(e) = store.upsert_step(&self.run_task_id, state).await {
+            tracing::warn!(
+                error = %e,
+                run_task_id = %self.run_task_id,
+                step_id,
+                "workflow_store upsert_step failed"
+            );
+        }
+    }
+
+    /// Create a child `Task` under the run task representing a parked
+    /// wait-style step (`WaitForInput`, and later `ExternalToolCall`
+    /// / `WaitForEvent`). The returned `task_id` becomes the step
+    /// row's `wait_task_id`, and is what an external party uses to
+    /// resume the workflow via `/complete-tool` or A2A `message/send`
+    /// with `taskId`.
+    async fn create_wait_task(&self) -> Option<String> {
+        use distri_types::stores::{CreateTaskInput, TaskStore};
+        let orchestrator = self.context.orchestrator.as_ref()?;
+        let task_store = orchestrator.stores.task_store.clone();
+        let wait_task_id = uuid::Uuid::new_v4().to_string();
+        let input = CreateTaskInput::local(&self.context.thread_id)
+            .with_id(&wait_task_id)
+            .with_status(distri_types::TaskStatus::InputRequired);
+        if let Err(e) = task_store.create_task(input).await {
+            tracing::warn!(
+                error = %e,
+                run_task_id = %self.run_task_id,
+                "wait-task create_task failed"
+            );
+            return None;
+        }
+        if let Err(e) = task_store
+            .update_parent_task(&wait_task_id, Some(&self.run_task_id))
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                run_task_id = %self.run_task_id,
+                wait_task_id = %wait_task_id,
+                "wait-task update_parent_task failed"
+            );
+        }
+        Some(wait_task_id)
+    }
 }
 
 #[async_trait]
 impl EventSink for ContextEventSink {
     async fn emit(&self, event: WorkflowEvent) {
         tracing::debug!(?event, "workflow event");
+        match event {
+            WorkflowEvent::StepStarted {
+                step_id,
+                step_index,
+                ..
+            } => {
+                self.context
+                    .emit(distri_types::AgentEventType::StepStarted {
+                        step_id: step_id.clone(),
+                        step_index,
+                    })
+                    .await;
+                let now = chrono::Utc::now();
+                self.merge_step(&step_id, |s| {
+                    s.status = distri_types::TaskStatus::Running;
+                    s.started_at = Some(now);
+                    s.completed_at = None;
+                    s.error = None;
+                })
+                .await;
+            }
+            WorkflowEvent::StepCompleted { step_id, result, .. } => {
+                self.context
+                    .emit(distri_types::AgentEventType::StepCompleted {
+                        step_id: step_id.clone(),
+                        success: true,
+                        context_budget: None,
+                        usage: None,
+                    })
+                    .await;
+                let now = chrono::Utc::now();
+                self.merge_step(&step_id, move |s| {
+                    s.status = distri_types::TaskStatus::Completed;
+                    s.result = result;
+                    s.completed_at = Some(now);
+                    s.error = None;
+                })
+                .await;
+            }
+            WorkflowEvent::StepFailed { step_id, error, .. } => {
+                self.context
+                    .emit(distri_types::AgentEventType::StepCompleted {
+                        step_id: step_id.clone(),
+                        success: false,
+                        context_budget: None,
+                        usage: None,
+                    })
+                    .await;
+                let now = chrono::Utc::now();
+                self.merge_step(&step_id, move |s| {
+                    s.status = distri_types::TaskStatus::Failed;
+                    s.error = Some(error);
+                    s.completed_at = Some(now);
+                })
+                .await;
+            }
+            WorkflowEvent::StepWaiting { step_id, .. } => {
+                // Park the step as InputRequired in the workflow store
+                // AND create a child Task that is A2A-addressable. The
+                // wait_task_id is what external parties POST to
+                // /complete-tool or A2A message/send with `taskId` to
+                // resume the workflow (the coordinator re-drive on
+                // child terminal lands as the next step).
+                let now = chrono::Utc::now();
+                let wait_task_id = self.create_wait_task().await;
+                self.merge_step(&step_id, move |s| {
+                    s.status = distri_types::TaskStatus::InputRequired;
+                    s.wait_task_id = wait_task_id;
+                    if s.started_at.is_none() {
+                        s.started_at = Some(now);
+                    }
+                })
+                .await;
+            }
+            // WorkflowStarted/Completed are subsumed by the agent
+            // run's RunStarted (hooks) and RunFinished
+            // (`WorkflowAgent::invoke_stream`).
+            _ => {}
+        }
     }
 }
 
@@ -430,7 +586,7 @@ impl StepExecutor for ContextStepExecutor {
                 // This should be intercepted by the executor before reaching here,
                 // but handle defensively.
                 Ok(StepResult {
-                    status: StepStatus::WaitingForInput,
+                    status: TaskStatus::InputRequired,
                     result: Some(serde_json::json!({
                         "waiting": true,
                         "message": message,
@@ -573,50 +729,142 @@ impl BaseAgent for WorkflowAgent {
     }
 }
 
+/// Hydrate an in-memory `WorkflowRun` from the persisted
+/// `WorkflowExecutionState` + per-step rows. Used on resume so the
+/// runner picks up exactly where the previous invocation parked.
+///
+/// `WorkflowRun.status` is forced to `Running` (the resume itself
+/// flips the parked run back) and each `step_run` is populated from
+/// the corresponding stored `WorkflowStepState` by `step_id`. Steps
+/// with no stored row are left at their fresh defaults (`Pending`).
+fn hydrate_run(state: WorkflowExecutionState, step_states: Vec<WorkflowStepState>) -> WorkflowRun {
+    let mut run = WorkflowRun::new(state.definition);
+    run.context = state.context;
+    run.status = distri_types::TaskStatus::Running;
+    for (i, step) in run.definition.steps.iter().enumerate() {
+        if let Some(saved) = step_states.iter().find(|s| s.step_id == step.id) {
+            run.step_runs[i].status = saved.status.clone();
+            run.step_runs[i].result = saved.result.clone();
+            run.step_runs[i].error = saved.error.clone();
+            run.step_runs[i].started_at = saved.started_at;
+            run.step_runs[i].completed_at = saved.completed_at;
+        }
+    }
+    run
+}
+
 impl WorkflowAgent {
     /// Core workflow execution logic, instrumented under the OTel agent span.
+    ///
+    /// Two paths:
+    ///   - **Fresh run** — no `WorkflowExecutionState` for this task
+    ///     id. Parse the message as `WorkflowInput`, validate, apply
+    ///     entry point, persist the new state, drive the runner.
+    ///   - **Resume** — `WorkflowExecutionState` already exists for
+    ///     this task id (set by a previous invocation that parked).
+    ///     Hydrate `WorkflowRun` from it + the stored step rows and
+    ///     drive the runner from the parked frontier. Input parsing
+    ///     is skipped — the resume trigger is allowed to send an
+    ///     empty message.
     async fn run_workflow(
         &self,
         message: Message,
         context: Arc<ExecutorContext>,
     ) -> Result<InvokeResult, AgentError> {
-        // Parse the workflow definition (template) from the agent config
-        // and build a fresh `WorkflowRun` to mutate during execution.
-        let definition: WorkflowDefinition =
-            serde_json::from_value(self.definition.definition.clone()).map_err(|e| {
-                AgentError::Execution(format!("Invalid workflow definition: {}", e))
-            })?;
-        let mut run = WorkflowRun::new(definition);
-
-        // Parse typed input from message (first text part as JSON, or defaults)
-        let workflow_input: WorkflowInput = message
-            .parts
-            .iter()
-            .find_map(|p| {
-                if let distri_types::Part::Text(text) = p {
-                    serde_json::from_str::<WorkflowInput>(text).ok()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-
         // Save user message to thread (like StandardAgent does)
         context.save_message(&message).await;
 
-        // Validate and merge the user data (everything except workflow control fields)
-        run = run
-            .with_input(workflow_input.data)
-            .map_err(AgentError::Validation)?;
+        let workflow_store = context
+            .orchestrator
+            .as_ref()
+            .and_then(|o| o.workflow_store.clone());
 
-        // Apply entry point if specified
-        if let Some(entry_id) = workflow_input.entry_point {
+        // Resume detection: a stored state for this task id means the
+        // previous invocation parked. Hydrate from it.
+        let saved_state = match workflow_store.as_ref() {
+            Some(store) => store.get_run(&context.task_id).await.ok().flatten(),
+            None => None,
+        };
+
+        let mut run = if let Some(saved) = saved_state {
+            tracing::info!(
+                task_id = %context.task_id,
+                "resuming workflow from workflow_store"
+            );
+            let step_states = workflow_store
+                .as_ref()
+                .map(|s| {
+                    s.list_steps(&context.task_id)
+                })
+                .unwrap()
+                .await
+                .unwrap_or_default();
+            hydrate_run(saved, step_states)
+        } else {
+            // Fresh run: parse input + apply entry point.
+            let definition: WorkflowDefinition =
+                serde_json::from_value(self.definition.definition.clone()).map_err(|e| {
+                    AgentError::Execution(format!("Invalid workflow definition: {}", e))
+                })?;
+            let workflow_input: WorkflowInput = message
+                .parts
+                .iter()
+                .find_map(|p| {
+                    if let distri_types::Part::Text(text) = p {
+                        serde_json::from_str::<WorkflowInput>(text).ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+
+            let entry_point_for_record = workflow_input.entry_point.clone();
+            let input_for_record = workflow_input.data.clone();
+
+            let mut run = WorkflowRun::new(definition);
             run = run
-                .apply_entry_point(&entry_id)
+                .with_input(workflow_input.data)
                 .map_err(AgentError::Validation)?;
-        }
 
-        // Populate env namespace from executor context env vars
+            if let Some(entry_id) = workflow_input.entry_point {
+                run = run
+                    .apply_entry_point(&entry_id)
+                    .map_err(AgentError::Validation)?;
+            }
+
+            // Persist initial WorkflowExecutionState (definition
+            // snapshot + entry point + input + initial context +
+            // tenant context). The tenant fields (user_id,
+            // workspace_id) are snapshotted at run start so resume
+            // can rebuild an ExecutorContext without an upstream
+            // task-store lookup.
+            if let Some(store) = workflow_store.as_ref() {
+                let state = WorkflowExecutionState::new(
+                    &context.task_id,
+                    &context.agent_id,
+                    &context.thread_id,
+                    &context.user_id,
+                    run.definition.clone(),
+                )
+                .with_workspace_id(context.workspace_id.clone())
+                .with_entry_point(entry_point_for_record)
+                .with_input(input_for_record)
+                .with_context(run.context.clone());
+                if let Err(e) = store.create_run(state).await {
+                    tracing::warn!(
+                        error = %e,
+                        task_id = %context.task_id,
+                        "workflow_store create_run failed; continuing without persistence"
+                    );
+                }
+            }
+
+            run
+        };
+
+        // Refresh env namespace from current executor context — fresh
+        // values on every invocation (resume picks up any new env
+        // vars set since the previous park).
         if let Some(ctx_obj) = run.context.as_object_mut() {
             let env: &mut serde_json::Map<String, serde_json::Value> = ctx_obj
                 .entry("env")
@@ -636,6 +884,11 @@ impl WorkflowAgent {
 
         let event_sink = ContextEventSink {
             context: context.clone(),
+            workflow_store: context
+                .orchestrator
+                .as_ref()
+                .and_then(|o| o.workflow_store.clone()),
+            run_task_id: context.task_id.clone(),
         };
         let executor = ContextStepExecutor {
             context: context.clone(),
@@ -654,6 +907,26 @@ impl WorkflowAgent {
             .await
             .map_err(AgentError::Execution)?
             .ok_or_else(|| AgentError::Execution("Workflow state lost".to_string()))?;
+
+        // Persist the final accumulated context back so the workflow
+        // store reflects the terminal state (useful for debugging +
+        // future resume).
+        if let Some(workflow_store) = context
+            .orchestrator
+            .as_ref()
+            .and_then(|o| o.workflow_store.clone())
+        {
+            if let Err(e) = workflow_store
+                .update_context(&context.task_id, final_state.context.clone())
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    task_id = %context.task_id,
+                    "workflow_store update_context failed"
+                );
+            }
+        }
 
         let summary = serde_json::to_value(WorkflowRunSummary::from_run(&final_state, status))
             .map_err(|e| AgentError::Execution(format!("summary serialize: {e}")))?;

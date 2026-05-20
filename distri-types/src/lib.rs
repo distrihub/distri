@@ -2,6 +2,8 @@ pub mod a2a {
     // Re-export distri-a2a
     pub use distri_a2a::*;
 }
+pub mod workflow_triggers;
+pub use workflow_triggers::{WebhookAuth, WebhookResponse, WorkflowTrigger};
 mod agent;
 pub mod api_error;
 pub use api_error::{ApiError, ApiResult};

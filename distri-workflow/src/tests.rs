@@ -109,14 +109,14 @@ mod tests {
         let runner = WorkflowRunner::new(store, executor);
 
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         let final_state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(final_state.status, WorkflowStatus::Completed);
+        assert_eq!(final_state.status, TaskStatus::Completed);
         assert!(final_state
             .step_runs
             .iter()
-            .all(|s| s.status == StepStatus::Done));
+            .all(|s| s.status == TaskStatus::Completed));
     }
 
     #[tokio::test]
@@ -205,12 +205,12 @@ mod tests {
         let runner = WorkflowRunner::new(store, executor);
 
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Failed);
+        assert_eq!(status, TaskStatus::Failed);
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Done);
-        assert_eq!(state.step_runs[1].status, StepStatus::Failed);
-        assert_eq!(state.step_runs[2].status, StepStatus::Pending);
+        assert_eq!(state.step_runs[0].status, TaskStatus::Completed);
+        assert_eq!(state.step_runs[1].status, TaskStatus::Failed);
+        assert_eq!(state.step_runs[2].status, TaskStatus::Pending);
     }
 
     #[tokio::test]
@@ -343,7 +343,7 @@ mod tests {
         assert!(results.is_empty());
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Blocked);
+        assert_eq!(state.step_runs[0].status, TaskStatus::Failed);
         assert!(state.step_runs[0]
             .error
             .as_ref()
@@ -392,7 +392,7 @@ mod tests {
         assert_eq!(results[0].0, "net_step");
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(state.step_runs[1].status, StepStatus::Blocked);
+        assert_eq!(state.step_runs[1].status, TaskStatus::Failed);
     }
 
     #[tokio::test]
@@ -409,7 +409,7 @@ mod tests {
         let runner = WorkflowRunner::new(store, executor);
 
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Blocked);
+        assert_eq!(status, TaskStatus::Failed);
     }
 
     #[tokio::test]
@@ -428,12 +428,12 @@ mod tests {
         let runner = WorkflowRunner::new(store, executor);
 
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Blocked);
+        assert_eq!(status, TaskStatus::Failed);
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Blocked);
+        assert_eq!(state.step_runs[0].status, TaskStatus::Failed);
         // Step waiting on blocked is still pending but workflow is stuck
-        assert_eq!(state.step_runs[1].status, StepStatus::Pending);
+        assert_eq!(state.step_runs[1].status, TaskStatus::Pending);
         assert!(state.is_stuck());
     }
 
@@ -449,7 +449,7 @@ mod tests {
         let runner = WorkflowRunner::new(store, executor);
 
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
     }
 
     // ========================================================================
@@ -472,7 +472,7 @@ mod tests {
         let runner = WorkflowRunner::new(store, executor);
 
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
     }
 
     #[tokio::test]
@@ -694,7 +694,7 @@ mod tests {
     async fn not_stuck_when_all_done() {
         let mut workflow =
             WorkflowRun::from_steps(vec![WorkflowStep::api_call("s", "Step", "GET", "/")]);
-        workflow.step_runs[0].status = StepStatus::Done;
+        workflow.step_runs[0].status = TaskStatus::Completed;
         assert!(!workflow.is_stuck());
     }
 
@@ -704,8 +704,8 @@ mod tests {
             WorkflowStep::api_call("s1", "Step 1", "GET", "/1"),
             WorkflowStep::api_call("s2", "Step 2", "GET", "/2"),
         ]);
-        workflow.step_runs[0].status = StepStatus::Done;
-        workflow.step_runs[1].status = StepStatus::Blocked;
+        workflow.step_runs[0].status = TaskStatus::Completed;
+        workflow.step_runs[1].status = TaskStatus::Failed;
         assert!(workflow.is_stuck());
     }
 
@@ -739,10 +739,10 @@ mod tests {
         let runner = WorkflowRunner::new(store, executor);
 
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert!(state.step_runs.iter().all(|s| s.status == StepStatus::Done));
+        assert!(state.step_runs.iter().all(|s| s.status == TaskStatus::Completed));
     }
 
     #[tokio::test]
@@ -891,7 +891,7 @@ mod tests {
         assert!(result.is_ok());
         let w = result.unwrap();
         assert_eq!(w.context["file_id"], "abc123");
-        assert_eq!(w.status, WorkflowStatus::Running);
+        assert_eq!(w.status, TaskStatus::Running);
     }
 
     #[tokio::test]
@@ -1052,7 +1052,7 @@ mod tests {
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, executor);
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         let caps = captured.lock().await;
         assert_eq!(caps.len(), 3);
@@ -1264,7 +1264,7 @@ mod tests {
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, executor);
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         let caps = captured.lock().await;
         assert_eq!(caps.len(), 4);
@@ -1310,10 +1310,10 @@ mod tests {
         assert!(definition.steps[0].input.is_some());
 
         let run = WorkflowRun::new(definition);
-        assert_eq!(run.status, WorkflowStatus::Pending);
+        assert_eq!(run.status, TaskStatus::Pending);
         assert_eq!(run.current_step, 0);
         assert!(run.notes.is_empty());
-        assert_eq!(run.step_runs[0].status, StepStatus::Pending);
+        assert_eq!(run.step_runs[0].status, TaskStatus::Pending);
         assert!(run.step_runs[0].result.is_none());
     }
 
@@ -1343,16 +1343,16 @@ mod tests {
                 serde_json::json!({"rubric_id": "r1"}),
             )]),
             required_inputs: vec!["activity_id".to_string()],
-            trigger: None,
+            triggers: vec![],
         }]);
 
         let applied = workflow.apply_entry_point("grade_only").unwrap();
 
         // detect, create_content, configure_eval should be skipped
-        assert_eq!(applied.step_runs[0].status, StepStatus::Skipped); // detect
-        assert_eq!(applied.step_runs[1].status, StepStatus::Skipped); // create_content
-        assert_eq!(applied.step_runs[2].status, StepStatus::Skipped); // configure_eval
-        assert_eq!(applied.step_runs[3].status, StepStatus::Pending); // grade — should run
+        assert_eq!(applied.step_runs[0].status, TaskStatus::Canceled); // detect
+        assert_eq!(applied.step_runs[1].status, TaskStatus::Canceled); // create_content
+        assert_eq!(applied.step_runs[2].status, TaskStatus::Canceled); // configure_eval
+        assert_eq!(applied.step_runs[3].status, TaskStatus::Pending); // grade — should run
 
         // configure_eval should have preset result
         assert_eq!(
@@ -1380,14 +1380,14 @@ mod tests {
             starts_at: "eval".to_string(),
             preset_results: HashMap::new(),
             required_inputs: vec![],
-            trigger: None,
+            triggers: vec![],
         }]);
 
         let applied = workflow.apply_entry_point("existing_activity").unwrap();
-        assert_eq!(applied.step_runs[0].status, StepStatus::Skipped); // detect
-        assert_eq!(applied.step_runs[1].status, StepStatus::Skipped); // content
-        assert_eq!(applied.step_runs[2].status, StepStatus::Pending); // eval
-        assert_eq!(applied.step_runs[3].status, StepStatus::Pending); // grade
+        assert_eq!(applied.step_runs[0].status, TaskStatus::Canceled); // detect
+        assert_eq!(applied.step_runs[1].status, TaskStatus::Canceled); // content
+        assert_eq!(applied.step_runs[2].status, TaskStatus::Pending); // eval
+        assert_eq!(applied.step_runs[3].status, TaskStatus::Pending); // grade
     }
 
     #[test]
@@ -1415,7 +1415,7 @@ mod tests {
                 serde_json::json!({"questions": [1, 2, 3]}),
             )]),
             required_inputs: vec![],
-            trigger: None,
+            triggers: vec![],
         }]);
 
         let applied = workflow.apply_entry_point("grade_only").unwrap();
@@ -1447,7 +1447,7 @@ mod tests {
                 starts_at: "eval".to_string(),
                 preset_results: HashMap::new(),
                 required_inputs: vec![],
-                trigger: None,
+                triggers: vec![],
             }]);
 
         let applied = workflow.apply_entry_point("from_eval").unwrap();
@@ -1457,7 +1457,7 @@ mod tests {
         let runner = WorkflowRunner::new(store, MockExecutor::new());
         let status = runner.run_all("ep-test").await.unwrap();
 
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
     }
 
     // ========================================================================
@@ -1483,10 +1483,10 @@ mod tests {
         let runner = WorkflowRunner::new(store, MockExecutor::new());
         let status = runner.run_all("skip-test").await.unwrap();
 
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
         let final_wf = runner.get_state("skip-test").await.unwrap().unwrap();
-        assert_eq!(final_wf.step_runs[0].status, StepStatus::Skipped);
-        assert_eq!(final_wf.step_runs[1].status, StepStatus::Done);
+        assert_eq!(final_wf.step_runs[0].status, TaskStatus::Canceled);
+        assert_eq!(final_wf.step_runs[1].status, TaskStatus::Completed);
     }
 
     #[tokio::test]
@@ -1508,10 +1508,10 @@ mod tests {
         let runner = WorkflowRunner::new(store, MockExecutor::new());
         let status = runner.run_all("no-skip-test").await.unwrap();
 
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
         let final_wf = runner.get_state("no-skip-test").await.unwrap().unwrap();
-        assert_eq!(final_wf.step_runs[0].status, StepStatus::Done);
-        assert_eq!(final_wf.step_runs[1].status, StepStatus::Done);
+        assert_eq!(final_wf.step_runs[0].status, TaskStatus::Completed);
+        assert_eq!(final_wf.step_runs[1].status, TaskStatus::Completed);
     }
 
     #[test]
@@ -1580,7 +1580,7 @@ mod tests {
             starts_at: "s2".to_string(),
             preset_results: HashMap::from([("s1".to_string(), serde_json::json!({"done": true}))]),
             required_inputs: vec!["data".to_string()],
-            trigger: None,
+            triggers: vec![],
         }]);
 
         let json = serde_json::to_value(&workflow).unwrap();
@@ -1624,12 +1624,12 @@ mod tests {
 
         // Run all — should execute step1 then pause at human_review
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Paused);
+        assert_eq!(status, TaskStatus::InputRequired);
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Done);
-        assert_eq!(state.step_runs[1].status, StepStatus::WaitingForInput);
-        assert_eq!(state.step_runs[2].status, StepStatus::Pending);
+        assert_eq!(state.step_runs[0].status, TaskStatus::Completed);
+        assert_eq!(state.step_runs[1].status, TaskStatus::InputRequired);
+        assert_eq!(state.step_runs[2].status, TaskStatus::Pending);
     }
 
     #[tokio::test]
@@ -1648,7 +1648,7 @@ mod tests {
 
         // Run until paused
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Paused);
+        assert_eq!(status, TaskStatus::InputRequired);
 
         // Resume with human input
         let status = runner
@@ -1659,12 +1659,12 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Done);
-        assert_eq!(state.step_runs[1].status, StepStatus::Done);
-        assert_eq!(state.step_runs[2].status, StepStatus::Done);
+        assert_eq!(state.step_runs[0].status, TaskStatus::Completed);
+        assert_eq!(state.step_runs[1].status, TaskStatus::Completed);
+        assert_eq!(state.step_runs[2].status, TaskStatus::Completed);
 
         // Verify human input was stored in context for downstream steps
         let ctx = state.context.as_object().unwrap();
@@ -1686,7 +1686,7 @@ mod tests {
         let runner = WorkflowRunner::new(store, MockExecutor::new());
 
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Paused);
+        assert_eq!(status, TaskStatus::InputRequired);
 
         let err = runner
             .resume(&workflow.id(), "wrong_id", serde_json::json!({}))
@@ -1743,7 +1743,7 @@ mod tests {
                     m
                 },
                 required_inputs: vec![],
-                trigger: None,
+                triggers: vec![],
             }])
             .apply_entry_point("review_only")
             .unwrap();
@@ -1754,11 +1754,11 @@ mod tests {
 
         // detect should be skipped, should pause at confirm_import
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Paused);
+        assert_eq!(status, TaskStatus::InputRequired);
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Skipped); // detect
-        assert_eq!(state.step_runs[1].status, StepStatus::WaitingForInput); // confirm_import
+        assert_eq!(state.step_runs[0].status, TaskStatus::Canceled); // detect
+        assert_eq!(state.step_runs[1].status, TaskStatus::InputRequired); // confirm_import
 
         // Resume
         let status = runner
@@ -1769,7 +1769,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
     }
 
     #[tokio::test]
@@ -1792,18 +1792,18 @@ mod tests {
 
         // Pause at first review
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Paused);
+        assert_eq!(status, TaskStatus::InputRequired);
 
         // Resume first review — should run step2 then pause at second review
         let status = runner
             .resume(&workflow.id(), "review1", serde_json::json!({"ok": true}))
             .await
             .unwrap();
-        assert_eq!(status, WorkflowStatus::Paused);
+        assert_eq!(status, TaskStatus::InputRequired);
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(state.step_runs[2].status, StepStatus::Done); // step2 ran
-        assert_eq!(state.step_runs[3].status, StepStatus::WaitingForInput); // review2
+        assert_eq!(state.step_runs[2].status, TaskStatus::Completed); // step2 ran
+        assert_eq!(state.step_runs[3].status, TaskStatus::InputRequired); // review2
 
         // Resume second review — should complete
         let status = runner
@@ -1814,7 +1814,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
     }
 
     #[tokio::test]
@@ -1891,7 +1891,7 @@ mod tests {
                         ("review".to_string(), serde_json::json!({"approved": true})),
                     ]),
                     required_inputs: vec!["activity_id".to_string()],
-                    trigger: None,
+                    triggers: vec![],
                 },
                 EntryPoint {
                     id: "review_and_grade".to_string(),
@@ -1904,7 +1904,7 @@ mod tests {
                         ("configure_eval".to_string(), serde_json::json!({"rubric_id": "r1"})),
                     ]),
                     required_inputs: vec![],
-                    trigger: None,
+                    triggers: vec![],
                 },
             ])
     }
@@ -1919,15 +1919,15 @@ mod tests {
         let status = runner.run_all("grading-pipeline").await.unwrap();
 
         // Should pause at the review checkpoint
-        assert_eq!(status, WorkflowStatus::Paused);
+        assert_eq!(status, TaskStatus::InputRequired);
 
         let state = runner.get_state("grading-pipeline").await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Done); // detect
-        assert_eq!(state.step_runs[1].status, StepStatus::Done); // create_content
-        assert_eq!(state.step_runs[2].status, StepStatus::Done); // configure_eval
-        assert_eq!(state.step_runs[3].status, StepStatus::WaitingForInput); // review
-        assert_eq!(state.step_runs[4].status, StepStatus::Pending); // grade
-        assert_eq!(state.step_runs[5].status, StepStatus::Pending); // report
+        assert_eq!(state.step_runs[0].status, TaskStatus::Completed); // detect
+        assert_eq!(state.step_runs[1].status, TaskStatus::Completed); // create_content
+        assert_eq!(state.step_runs[2].status, TaskStatus::Completed); // configure_eval
+        assert_eq!(state.step_runs[3].status, TaskStatus::InputRequired); // review
+        assert_eq!(state.step_runs[4].status, TaskStatus::Pending); // grade
+        assert_eq!(state.step_runs[5].status, TaskStatus::Pending); // report
     }
 
     #[tokio::test]
@@ -1940,7 +1940,7 @@ mod tests {
 
         // Run to checkpoint
         let status = runner.run_all("grading-pipeline").await.unwrap();
-        assert_eq!(status, WorkflowStatus::Paused);
+        assert_eq!(status, TaskStatus::InputRequired);
 
         // Resume past checkpoint
         let status = runner
@@ -1951,10 +1951,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         let state = runner.get_state("grading-pipeline").await.unwrap().unwrap();
-        assert!(state.step_runs.iter().all(|s| s.status == StepStatus::Done));
+        assert!(state.step_runs.iter().all(|s| s.status == TaskStatus::Completed));
 
         // Verify review input is in context
         let steps_ctx = state.context.get("steps").unwrap();
@@ -1973,15 +1973,15 @@ mod tests {
         let status = runner.run_all(&workflow.id()).await.unwrap();
 
         // Should complete — no checkpoint in the way (review is pre-filled)
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Skipped); // detect
-        assert_eq!(state.step_runs[1].status, StepStatus::Skipped); // create_content
-        assert_eq!(state.step_runs[2].status, StepStatus::Skipped); // configure_eval
-        assert_eq!(state.step_runs[3].status, StepStatus::Skipped); // review (preset)
-        assert_eq!(state.step_runs[4].status, StepStatus::Done); // grade
-        assert_eq!(state.step_runs[5].status, StepStatus::Done); // report
+        assert_eq!(state.step_runs[0].status, TaskStatus::Canceled); // detect
+        assert_eq!(state.step_runs[1].status, TaskStatus::Canceled); // create_content
+        assert_eq!(state.step_runs[2].status, TaskStatus::Canceled); // configure_eval
+        assert_eq!(state.step_runs[3].status, TaskStatus::Canceled); // review (preset)
+        assert_eq!(state.step_runs[4].status, TaskStatus::Completed); // grade
+        assert_eq!(state.step_runs[5].status, TaskStatus::Completed); // report
 
         // Preset results should be in context
         let steps_ctx = state.context.get("steps").unwrap();
@@ -2002,13 +2002,13 @@ mod tests {
         let status = runner.run_all(&workflow.id()).await.unwrap();
 
         // Should pause at review checkpoint
-        assert_eq!(status, WorkflowStatus::Paused);
+        assert_eq!(status, TaskStatus::InputRequired);
 
         let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Skipped); // detect
-        assert_eq!(state.step_runs[1].status, StepStatus::Skipped); // create_content
-        assert_eq!(state.step_runs[2].status, StepStatus::Skipped); // configure_eval
-        assert_eq!(state.step_runs[3].status, StepStatus::WaitingForInput); // review
+        assert_eq!(state.step_runs[0].status, TaskStatus::Canceled); // detect
+        assert_eq!(state.step_runs[1].status, TaskStatus::Canceled); // create_content
+        assert_eq!(state.step_runs[2].status, TaskStatus::Canceled); // configure_eval
+        assert_eq!(state.step_runs[3].status, TaskStatus::InputRequired); // review
 
         // Resume and complete
         let status = runner
@@ -2019,7 +2019,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
     }
 
     #[tokio::test]
@@ -2040,7 +2040,7 @@ mod tests {
         let captured = executor.captured();
         let runner = WorkflowRunner::new(store, executor);
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         // Verify input was available to executed steps
         let caps = captured.lock().await;
@@ -2078,7 +2078,7 @@ mod tests {
                     ),
                 ]),
                 required_inputs: vec!["activity_id".to_string()],
-                trigger: None,
+                triggers: vec![],
             }]);
 
         workflow = workflow
@@ -2095,7 +2095,7 @@ mod tests {
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, executor);
         let status = runner.run_all("data-flow-ep").await.unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         // The grade step should have received resolved preset data
         let caps = captured.lock().await;
@@ -2122,7 +2122,7 @@ mod tests {
         let status = runner.run_all(&workflow.id()).await.unwrap();
 
         // Checkpoint kind goes through executor, should complete
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
     }
 
     #[tokio::test]
@@ -2140,12 +2140,12 @@ mod tests {
         let skipped1: Vec<_> = ep1
             .step_runs
             .iter()
-            .filter(|s| s.status == StepStatus::Skipped)
+            .filter(|s| s.status == TaskStatus::Canceled)
             .collect();
         let pending1: Vec<_> = ep1
             .step_runs
             .iter()
-            .filter(|s| s.status == StepStatus::Pending)
+            .filter(|s| s.status == TaskStatus::Pending)
             .collect();
         assert_eq!(skipped1.len(), 4);
         assert_eq!(pending1.len(), 2);
@@ -2154,12 +2154,12 @@ mod tests {
         let skipped2: Vec<_> = ep2
             .step_runs
             .iter()
-            .filter(|s| s.status == StepStatus::Skipped)
+            .filter(|s| s.status == TaskStatus::Canceled)
             .collect();
         let pending2: Vec<_> = ep2
             .step_runs
             .iter()
-            .filter(|s| s.status == StepStatus::Pending)
+            .filter(|s| s.status == TaskStatus::Pending)
             .collect();
         assert_eq!(skipped2.len(), 3);
         assert_eq!(pending2.len(), 3);
@@ -2206,7 +2206,7 @@ mod tests {
                     ),
                 ]),
                 required_inputs: vec![],
-                trigger: None,
+                triggers: vec![],
             }]);
 
         let applied = workflow.apply_entry_point("from_merge").unwrap();
@@ -2216,14 +2216,14 @@ mod tests {
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::new(store, executor);
         let status = runner.run_all("parallel-entry").await.unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         let state = runner.get_state("parallel-entry").await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Skipped); // detect
-        assert_eq!(state.step_runs[1].status, StepStatus::Skipped); // analyze_a
-        assert_eq!(state.step_runs[2].status, StepStatus::Skipped); // analyze_b
-        assert_eq!(state.step_runs[3].status, StepStatus::Done); // merge
-        assert_eq!(state.step_runs[4].status, StepStatus::Done); // report
+        assert_eq!(state.step_runs[0].status, TaskStatus::Canceled); // detect
+        assert_eq!(state.step_runs[1].status, TaskStatus::Canceled); // analyze_a
+        assert_eq!(state.step_runs[2].status, TaskStatus::Canceled); // analyze_b
+        assert_eq!(state.step_runs[3].status, TaskStatus::Completed); // merge
+        assert_eq!(state.step_runs[4].status, TaskStatus::Completed); // report
     }
 
     #[tokio::test]
@@ -2255,7 +2255,7 @@ mod tests {
 
         // Run to checkpoint
         let status = runner.run_all(&workflow.id()).await.unwrap();
-        assert_eq!(status, WorkflowStatus::Paused);
+        assert_eq!(status, TaskStatus::InputRequired);
 
         let events = runner.events.events.lock().unwrap();
         // Should have: workflow_started, step_waiting (review)
@@ -2302,7 +2302,7 @@ mod tests {
                 starts_at: "eval".to_string(),
                 preset_results: HashMap::new(),
                 required_inputs: vec![],
-                trigger: None,
+                triggers: vec![],
             }])
             .apply_entry_point("from_eval")
             .unwrap()
@@ -2314,12 +2314,12 @@ mod tests {
 
         let runner = WorkflowRunner::new(store, MockExecutor::new());
         let status = runner.run_all("skip-entry-combo").await.unwrap();
-        assert_eq!(status, WorkflowStatus::Completed);
+        assert_eq!(status, TaskStatus::Completed);
 
         let state = runner.get_state("skip-entry-combo").await.unwrap().unwrap();
-        assert_eq!(state.step_runs[0].status, StepStatus::Skipped); // detect (by entry point)
-        assert_eq!(state.step_runs[1].status, StepStatus::Done); // eval
-        assert_eq!(state.step_runs[2].status, StepStatus::Done); // grade
+        assert_eq!(state.step_runs[0].status, TaskStatus::Canceled); // detect (by entry point)
+        assert_eq!(state.step_runs[1].status, TaskStatus::Completed); // eval
+        assert_eq!(state.step_runs[2].status, TaskStatus::Completed); // grade
     }
 
     #[tokio::test]
@@ -2397,13 +2397,13 @@ mod tests {
     fn entry_point_parses_slash_trigger() {
         let json = serde_json::json!({
             "id": "join", "label": "Join", "starts_at": "ask_code",
-            "trigger": {"type": "slash", "name": "/join"}
+            "triggers": [{"type": "slash", "name": "/join"}]
         });
         let ep: EntryPoint = serde_json::from_value(json).unwrap();
         assert_eq!(ep.id, "join");
         assert!(matches!(
-            ep.trigger,
-            Some(distri_types::channel_commands::ChannelTrigger::Slash { .. })
+            ep.triggers[0],
+            distri_types::WorkflowTrigger::Slash { .. }
         ));
     }
 
@@ -2411,7 +2411,7 @@ mod tests {
     fn entry_point_trigger_defaults_none() {
         let json = serde_json::json!({"id":"x","label":"X","starts_at":"s"});
         let ep: EntryPoint = serde_json::from_value(json).unwrap();
-        assert!(ep.trigger.is_none());
+        assert!(ep.triggers.is_empty());
     }
 
     fn def_with_entry(ep: serde_json::Value) -> WorkflowDefinition {
@@ -2427,7 +2427,7 @@ mod tests {
     fn channel_surface_ok_for_valid_slash() {
         let d = def_with_entry(serde_json::json!({
             "id":"e","label":"E","starts_at":"s",
-            "trigger":{"type":"slash","name":"/resume"}
+            "triggers":[{"type":"slash","name":"/resume"}]
         }));
         assert!(d.validate_channel_surface().is_ok());
     }
@@ -2436,7 +2436,7 @@ mod tests {
     fn channel_surface_rejects_missing_starts_at() {
         let d = def_with_entry(serde_json::json!({
             "id":"e","label":"E","starts_at":"nope",
-            "trigger":{"type":"slash","name":"/resume"}
+            "triggers":[{"type":"slash","name":"/resume"}]
         }));
         let err = d.validate_channel_surface().unwrap_err();
         assert!(err.contains("nope"), "got: {err}");
@@ -2446,7 +2446,7 @@ mod tests {
     fn channel_surface_rejects_builtin_shadow() {
         let d = def_with_entry(serde_json::json!({
             "id":"e","label":"E","starts_at":"s",
-            "trigger":{"type":"slash","name":"/help"}
+            "triggers":[{"type":"slash","name":"/help"}]
         }));
         let err = d.validate_channel_surface().unwrap_err();
         assert!(err.contains("/help"), "got: {err}");
@@ -2458,8 +2458,8 @@ mod tests {
             "id":"w",
             "steps":[{"id":"s","label":"S","kind":{"type":"checkpoint","message":"m"}}],
             "entry_points":[
-                {"id":"a","label":"A","starts_at":"s","trigger":{"type":"message"}},
-                {"id":"b","label":"B","starts_at":"s","trigger":{"type":"message"}}
+                {"id":"a","label":"A","starts_at":"s","triggers":[{"type":"message"}]},
+                {"id":"b","label":"B","starts_at":"s","triggers":[{"type":"message"}]}
             ]
         }))
         .unwrap();
@@ -2472,9 +2472,9 @@ mod tests {
             "id":"w",
             "steps":[{"id":"s","label":"S","kind":{"type":"checkpoint","message":"m"}}],
             "entry_points":[
-                {"id":"a","label":"A","starts_at":"s","trigger":{"type":"slash","name":"/x"}},
+                {"id":"a","label":"A","starts_at":"s","triggers":[{"type":"slash","name":"/x"}]},
                 {"id":"b","label":"B","starts_at":"s",
-                 "trigger":{"type":"slash","name":"/y","aliases":["/x"]}}
+                 "triggers":[{"type":"slash","name":"/y","aliases":["/x"]}]}
             ]
         }))
         .unwrap();
@@ -2500,7 +2500,7 @@ mod tests {
     fn channel_surface_ok_for_single_message_catch_all() {
         let d = def_with_entry(serde_json::json!({
             "id":"e","label":"E","starts_at":"s",
-            "trigger":{"type":"message"}
+            "triggers":[{"type":"message"}]
         }));
         assert!(d.validate_channel_surface().is_ok());
     }
@@ -2537,8 +2537,8 @@ mod tests {
         // must be Skipped; step "b" must remain Pending (runnable).
         let a_run = run.step_run_by_id("a").unwrap();
         let b_run = run.step_run_by_id("b").unwrap();
-        assert_eq!(a_run.status, StepStatus::Skipped, "step 'a' should be skipped");
-        assert_eq!(b_run.status, StepStatus::Pending, "step 'b' should be pending (runnable)");
+        assert_eq!(a_run.status, TaskStatus::Canceled, "step 'a' should be skipped");
+        assert_eq!(b_run.status, TaskStatus::Pending, "step 'b' should be pending (runnable)");
     }
 
     #[test]
@@ -2561,7 +2561,7 @@ mod tests {
         let run = WorkflowRun::new(d).apply_entry_point("process_only").unwrap();
         // "fetch" is skipped with the preset result
         let fetch_run = run.step_run_by_id("fetch").unwrap();
-        assert_eq!(fetch_run.status, StepStatus::Skipped);
+        assert_eq!(fetch_run.status, TaskStatus::Canceled);
         assert_eq!(fetch_run.result, Some(serde_json::json!({"data": "pre-fetched"})));
         // The preset result is merged into context["steps"] for downstream resolution
         let steps_ctx = run.context.get("steps").unwrap();

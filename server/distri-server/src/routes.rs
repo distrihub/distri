@@ -1903,7 +1903,8 @@ async fn complete_tool_handler(
 ) -> HttpResponse {
     let req = request.into_inner();
 
-    match executor
+    let orchestrator: Arc<AgentOrchestrator> = executor.get_ref().clone();
+    match orchestrator
         .complete_tool(&req.tool_call_id, req.tool_response)
         .await
     {

@@ -154,7 +154,7 @@ async fn test_workflow_event_serialization() {
         },
         WorkflowEvent::WorkflowCompleted {
             workflow_id: "wf-1".into(),
-            status: WorkflowStatus::Failed,
+            status: TaskStatus::Failed,
             steps_done: 1,
             steps_failed: 1,
         },
