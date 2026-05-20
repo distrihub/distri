@@ -729,55 +729,137 @@ impl BaseAgent for WorkflowAgent {
     }
 }
 
+/// Hydrate an in-memory `WorkflowRun` from the persisted
+/// `WorkflowExecutionState` + per-step rows. Used on resume so the
+/// runner picks up exactly where the previous invocation parked.
+///
+/// `WorkflowRun.status` is forced to `Running` (the resume itself
+/// flips the parked run back) and each `step_run` is populated from
+/// the corresponding stored `WorkflowStepState` by `step_id`. Steps
+/// with no stored row are left at their fresh defaults (`Pending`).
+fn hydrate_run(state: WorkflowExecutionState, step_states: Vec<WorkflowStepState>) -> WorkflowRun {
+    let mut run = WorkflowRun::new(state.definition);
+    run.context = state.context;
+    run.status = distri_types::TaskStatus::Running;
+    for (i, step) in run.definition.steps.iter().enumerate() {
+        if let Some(saved) = step_states.iter().find(|s| s.step_id == step.id) {
+            run.step_runs[i].status = saved.status.clone();
+            run.step_runs[i].result = saved.result.clone();
+            run.step_runs[i].error = saved.error.clone();
+            run.step_runs[i].started_at = saved.started_at;
+            run.step_runs[i].completed_at = saved.completed_at;
+        }
+    }
+    run
+}
+
 impl WorkflowAgent {
     /// Core workflow execution logic, instrumented under the OTel agent span.
+    ///
+    /// Two paths:
+    ///   - **Fresh run** — no `WorkflowExecutionState` for this task
+    ///     id. Parse the message as `WorkflowInput`, validate, apply
+    ///     entry point, persist the new state, drive the runner.
+    ///   - **Resume** — `WorkflowExecutionState` already exists for
+    ///     this task id (set by a previous invocation that parked).
+    ///     Hydrate `WorkflowRun` from it + the stored step rows and
+    ///     drive the runner from the parked frontier. Input parsing
+    ///     is skipped — the resume trigger is allowed to send an
+    ///     empty message.
     async fn run_workflow(
         &self,
         message: Message,
         context: Arc<ExecutorContext>,
     ) -> Result<InvokeResult, AgentError> {
-        // Parse the workflow definition (template) from the agent config
-        // and build a fresh `WorkflowRun` to mutate during execution.
-        let definition: WorkflowDefinition =
-            serde_json::from_value(self.definition.definition.clone()).map_err(|e| {
-                AgentError::Execution(format!("Invalid workflow definition: {}", e))
-            })?;
-        let mut run = WorkflowRun::new(definition);
-
-        // Parse typed input from message (first text part as JSON, or defaults)
-        let workflow_input: WorkflowInput = message
-            .parts
-            .iter()
-            .find_map(|p| {
-                if let distri_types::Part::Text(text) = p {
-                    serde_json::from_str::<WorkflowInput>(text).ok()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-
-        // Capture the entry-point and raw input for the sidecar record
-        // before the values are moved into `run` below.
-        let entry_point_for_record = workflow_input.entry_point.clone();
-        let input_for_record = workflow_input.data.clone();
-
         // Save user message to thread (like StandardAgent does)
         context.save_message(&message).await;
 
-        // Validate and merge the user data (everything except workflow control fields)
-        run = run
-            .with_input(workflow_input.data)
-            .map_err(AgentError::Validation)?;
+        let workflow_store = context
+            .orchestrator
+            .as_ref()
+            .and_then(|o| o.workflow_store.clone());
 
-        // Apply entry point if specified
-        if let Some(entry_id) = workflow_input.entry_point {
+        // Resume detection: a stored state for this task id means the
+        // previous invocation parked. Hydrate from it.
+        let saved_state = match workflow_store.as_ref() {
+            Some(store) => store.get_run(&context.task_id).await.ok().flatten(),
+            None => None,
+        };
+
+        let mut run = if let Some(saved) = saved_state {
+            tracing::info!(
+                task_id = %context.task_id,
+                "resuming workflow from workflow_store"
+            );
+            let step_states = workflow_store
+                .as_ref()
+                .map(|s| {
+                    s.list_steps(&context.task_id)
+                })
+                .unwrap()
+                .await
+                .unwrap_or_default();
+            hydrate_run(saved, step_states)
+        } else {
+            // Fresh run: parse input + apply entry point.
+            let definition: WorkflowDefinition =
+                serde_json::from_value(self.definition.definition.clone()).map_err(|e| {
+                    AgentError::Execution(format!("Invalid workflow definition: {}", e))
+                })?;
+            let workflow_input: WorkflowInput = message
+                .parts
+                .iter()
+                .find_map(|p| {
+                    if let distri_types::Part::Text(text) = p {
+                        serde_json::from_str::<WorkflowInput>(text).ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+
+            let entry_point_for_record = workflow_input.entry_point.clone();
+            let input_for_record = workflow_input.data.clone();
+
+            let mut run = WorkflowRun::new(definition);
             run = run
-                .apply_entry_point(&entry_id)
+                .with_input(workflow_input.data)
                 .map_err(AgentError::Validation)?;
-        }
 
-        // Populate env namespace from executor context env vars
+            if let Some(entry_id) = workflow_input.entry_point {
+                run = run
+                    .apply_entry_point(&entry_id)
+                    .map_err(AgentError::Validation)?;
+            }
+
+            // Persist initial WorkflowExecutionState (definition
+            // snapshot + entry point + input + initial context). Done
+            // on the fresh path only — on resume the row already
+            // exists and we don't want to overwrite step results.
+            if let Some(store) = workflow_store.as_ref() {
+                let state = WorkflowExecutionState::new(
+                    &context.task_id,
+                    &context.agent_id,
+                    run.definition.clone(),
+                )
+                .with_entry_point(entry_point_for_record)
+                .with_input(input_for_record)
+                .with_context(run.context.clone());
+                if let Err(e) = store.create_run(state).await {
+                    tracing::warn!(
+                        error = %e,
+                        task_id = %context.task_id,
+                        "workflow_store create_run failed; continuing without persistence"
+                    );
+                }
+            }
+
+            run
+        };
+
+        // Refresh env namespace from current executor context — fresh
+        // values on every invocation (resume picks up any new env
+        // vars set since the previous park).
         if let Some(ctx_obj) = run.context.as_object_mut() {
             let env: &mut serde_json::Map<String, serde_json::Value> = ctx_obj
                 .entry("env")
@@ -787,32 +869,6 @@ impl WorkflowAgent {
             let env_vars = context.env_vars.read().await;
             for (k, v) in env_vars.iter() {
                 env.insert(k.clone(), serde_json::Value::String(v.clone()));
-            }
-        }
-
-        // Persist the run-level execution state (definition snapshot,
-        // entry point, input, initial context). `create_run` is
-        // create-or-overwrite, so a re-invocation with the same task
-        // id (resume) just refreshes the row.
-        if let Some(workflow_store) = context
-            .orchestrator
-            .as_ref()
-            .and_then(|o| o.workflow_store.clone())
-        {
-            let state = WorkflowExecutionState::new(
-                &context.task_id,
-                &context.agent_id,
-                run.definition.clone(),
-            )
-            .with_entry_point(entry_point_for_record)
-            .with_input(input_for_record)
-            .with_context(run.context.clone());
-            if let Err(e) = workflow_store.create_run(state).await {
-                tracing::warn!(
-                    error = %e,
-                    task_id = %context.task_id,
-                    "workflow_store create_run failed; continuing without persistence"
-                );
             }
         }
 
