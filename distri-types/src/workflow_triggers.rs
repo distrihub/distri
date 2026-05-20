@@ -1,26 +1,14 @@
 //! Unified workflow trigger taxonomy.
 //!
-//! Supersedes the two earlier trigger types that disagreed about
-//! shape and scope:
-//!
-//!   - [`crate::configuration::Trigger`] —
-//!     `OnCall`/`Schedule` on `WorkflowAgentDefinition.triggers`
-//!     (agent-level).
-//!   - [`crate::channel_commands::ChannelTrigger`] —
-//!     `Slash`/`Callback`/`Message` on `EntryPoint.trigger`
-//!     (entry-point-level).
-//!
-//! [`WorkflowTrigger`] folds both, plus the new variants the spec
-//! adds — `Webhook`, `Event`, `Tool` (workflow exposed as an A2A
-//! skill) — into one enum **attached to entry points**. Every
-//! trigger either starts a new run (manual / schedule / channel /
-//! webhook / tool / event-without-correlation) or resumes a parked
-//! one (event-correlated-by-task — handled through the
-//! `WorkflowStore.wait_task_id` mechanism).
-//!
-//! Conversion impls from the legacy types are provided so callers
-//! can migrate incrementally; the legacy enums themselves are slated
-//! for deletion once all call sites move over.
+//! Replaces two earlier trigger types that disagreed about shape and
+//! scope (`configuration::Trigger` and `channel_commands::ChannelTrigger`
+//! — both now deleted). [`WorkflowTrigger`] folds channel triggers
+//! (`Slash`/`Callback`/`Message`), agent-level triggers
+//! (`Manual`/`Schedule`), and the spec's new variants — `Webhook`,
+//! `Event`, `Tool` (workflow exposed as an A2A skill) — into one
+//! enum **attached to entry points**. Every trigger either starts a
+//! new run or resumes a parked one (event-correlated-by-task —
+//! handled through `WorkflowStore.wait_task_id`).
 
 use crate::channels::ChannelProvider;
 use schemars::JsonSchema;
@@ -155,70 +143,30 @@ impl Default for WebhookResponse {
     }
 }
 
-// ── Conversions from the legacy enums ───────────────────────────────
-
-impl From<crate::channel_commands::ChannelTrigger> for WorkflowTrigger {
-    fn from(t: crate::channel_commands::ChannelTrigger) -> Self {
-        match t {
-            crate::channel_commands::ChannelTrigger::Slash {
-                name,
-                aliases,
-                channels,
-                args,
-            } => WorkflowTrigger::Slash {
-                name,
-                aliases,
-                channels,
-                args,
-            },
-            crate::channel_commands::ChannelTrigger::Callback { id, arg } => {
-                WorkflowTrigger::Callback { id, arg }
-            }
-            crate::channel_commands::ChannelTrigger::Message {} => WorkflowTrigger::Message {},
-        }
-    }
-}
-
-impl From<crate::configuration::Trigger> for WorkflowTrigger {
-    fn from(t: crate::configuration::Trigger) -> Self {
-        match t {
-            crate::configuration::Trigger::OnCall {} => WorkflowTrigger::Manual,
-            crate::configuration::Trigger::Schedule {
-                cron,
-                timezone,
-                enabled,
-                input,
-            } => WorkflowTrigger::Schedule {
-                cron,
-                timezone,
-                enabled,
-                input,
-            },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn channel_trigger_round_trips_through_workflow_trigger() {
-        let ct = crate::channel_commands::ChannelTrigger::Slash {
-            name: "/join".into(),
-            aliases: vec!["/continue".into()],
-            channels: vec![],
-            args: vec!["code".into()],
-        };
-        let wt: WorkflowTrigger = ct.into();
-        assert!(matches!(wt, WorkflowTrigger::Slash { .. }));
+    fn slash_trigger_round_trips() {
+        let json = serde_json::json!({
+            "type": "slash",
+            "name": "/join",
+            "aliases": ["/continue"],
+            "channels": ["telegram"],
+            "args": ["code"]
+        });
+        let t: WorkflowTrigger = serde_json::from_value(json.clone()).unwrap();
+        assert!(matches!(t, WorkflowTrigger::Slash { .. }));
+        assert_eq!(serde_json::to_value(&t).unwrap(), json);
     }
 
     #[test]
-    fn legacy_trigger_oncall_maps_to_manual() {
-        let t = crate::configuration::Trigger::OnCall {};
-        let wt: WorkflowTrigger = t.into();
-        assert!(matches!(wt, WorkflowTrigger::Manual));
+    fn manual_trigger_round_trips() {
+        let json = serde_json::json!({"type": "manual"});
+        let t: WorkflowTrigger = serde_json::from_value(json.clone()).unwrap();
+        assert!(matches!(t, WorkflowTrigger::Manual));
+        assert_eq!(serde_json::to_value(&t).unwrap(), json);
     }
 
     #[test]
