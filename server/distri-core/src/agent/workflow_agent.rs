@@ -677,17 +677,16 @@ impl WorkflowAgent {
             }
         }
 
-        // Persist the run-level sidecar (definition snapshot, entry
-        // point, input, shared context). Best-effort here — if it
-        // fails (e.g. PK conflict on a resume) we log and continue;
-        // once the full task-tree drive lands this becomes the
-        // authoritative resume source.
-        if let Some(run_store) = context
+        // Persist the run-level execution state (definition snapshot,
+        // entry point, input, initial context). `create_run` is
+        // create-or-overwrite, so a re-invocation with the same task
+        // id (resume) just refreshes the row.
+        if let Some(workflow_store) = context
             .orchestrator
             .as_ref()
-            .and_then(|o| o.workflow_run_store.clone())
+            .and_then(|o| o.workflow_store.clone())
         {
-            let record = WorkflowRunRecord::new(
+            let state = WorkflowExecutionState::new(
                 &context.task_id,
                 &context.agent_id,
                 run.definition.clone(),
@@ -695,11 +694,11 @@ impl WorkflowAgent {
             .with_entry_point(entry_point_for_record)
             .with_input(input_for_record)
             .with_context(run.context.clone());
-            if let Err(e) = run_store.insert(record).await {
-                tracing::debug!(
+            if let Err(e) = workflow_store.create_run(state).await {
+                tracing::warn!(
                     error = %e,
                     task_id = %context.task_id,
-                    "workflow_runs insert failed (treating as resume / continuing)"
+                    "workflow_store create_run failed; continuing without persistence"
                 );
             }
         }
@@ -730,27 +729,22 @@ impl WorkflowAgent {
             .map_err(AgentError::Execution)?
             .ok_or_else(|| AgentError::Execution("Workflow state lost".to_string()))?;
 
-        // Persist the final accumulated context back to the sidecar so
-        // the workflow_runs row reflects the terminal state (useful for
-        // debugging + future resume).
-        if let Some(run_store) = context
+        // Persist the final accumulated context back so the workflow
+        // store reflects the terminal state (useful for debugging +
+        // future resume).
+        if let Some(workflow_store) = context
             .orchestrator
             .as_ref()
-            .and_then(|o| o.workflow_run_store.clone())
+            .and_then(|o| o.workflow_store.clone())
         {
-            if let Err(e) = run_store
-                .update(
-                    &context.task_id,
-                    WorkflowRunUpdate {
-                        context: Some(final_state.context.clone()),
-                    },
-                )
+            if let Err(e) = workflow_store
+                .update_context(&context.task_id, final_state.context.clone())
                 .await
             {
                 tracing::warn!(
                     error = %e,
                     task_id = %context.task_id,
-                    "workflow_runs context update failed"
+                    "workflow_store update_context failed"
                 );
             }
         }

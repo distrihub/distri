@@ -63,14 +63,13 @@ pub struct AgentOrchestrator {
     /// `DefaultResolver` auth pipeline); the standalone OSS server leaves it
     /// `None` and uses the static `[[tools.mcp]]` registry only.
     pub mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
-    /// Run-level sidecar for `WorkflowAgent` (definition snapshot,
-    /// entry point, input, shared context). `None` in OSS deployments
-    /// that don't run workflows through Postgres.
-    pub workflow_run_store: Option<Arc<dyn distri_workflow::WorkflowRunStore>>,
-    /// Per-step sidecar for `WorkflowAgent` (1:1 with a step's child
-    /// task). `None` in OSS deployments.
-    pub workflow_step_execution_store:
-        Option<Arc<dyn distri_workflow::WorkflowStepExecutionStore>>,
+    /// Workflow execution-state store — one trait covering both
+    /// run-level state (definition snapshot, entry point, input,
+    /// shared context) and per-step state (status, result, error,
+    /// optional `wait_task_id` for A2A-addressable wait steps).
+    /// `None` when not wired (OSS tests etc.); the cloud sets an
+    /// `InMemoryWorkflowStore`/`RedisWorkflowStore` here.
+    pub workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -116,9 +115,7 @@ pub struct AgentOrchestratorBuilder {
     remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
-    workflow_run_store: Option<Arc<dyn distri_workflow::WorkflowRunStore>>,
-    workflow_step_execution_store:
-        Option<Arc<dyn distri_workflow::WorkflowStepExecutionStore>>,
+    workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -239,24 +236,15 @@ impl AgentOrchestratorBuilder {
         self
     }
 
-    /// Attach the run-level sidecar store used by `WorkflowAgent` to
-    /// persist `WorkflowRunRecord`s (definition snapshot + shared
-    /// context). The cloud wires the Postgres impl; OSS leaves it
-    /// `None` and the workflow agent skips the projection.
-    pub fn with_workflow_run_store(
+    /// Attach the workflow execution-state store used by
+    /// `WorkflowAgent`. One store, covering both run-level and
+    /// step-level state; cloud wires `RedisWorkflowStore`, OSS/tests
+    /// use `InMemoryWorkflowStore`.
+    pub fn with_workflow_store(
         mut self,
-        store: Arc<dyn distri_workflow::WorkflowRunStore>,
+        store: Arc<dyn distri_workflow::WorkflowStore>,
     ) -> Self {
-        self.workflow_run_store = Some(store);
-        self
-    }
-
-    /// Attach the per-step sidecar store used by `WorkflowAgent`.
-    pub fn with_workflow_step_execution_store(
-        mut self,
-        store: Arc<dyn distri_workflow::WorkflowStepExecutionStore>,
-    ) -> Self {
-        self.workflow_step_execution_store = Some(store);
+        self.workflow_store = Some(store);
         self
     }
 
@@ -337,8 +325,7 @@ impl AgentOrchestratorBuilder {
             remote_task_runner: self.remote_task_runner,
             oauth_handler: self.oauth_handler,
             mcp_pool_provider: self.mcp_pool_provider,
-            workflow_run_store: self.workflow_run_store,
-            workflow_step_execution_store: self.workflow_step_execution_store,
+            workflow_store: self.workflow_store,
         };
 
         // Sync system prompts to the store

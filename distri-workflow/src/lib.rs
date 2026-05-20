@@ -44,25 +44,20 @@
 
 pub mod executor;
 pub mod resolve;
-pub mod runs;
-pub mod step_executions;
 pub mod store;
 pub mod types;
+pub mod workflow_store;
 
 pub use executor::{EventSink, NoopEventSink, StepExecutor, TracingEventSink, WorkflowRunner};
 pub use resolve::{
     build_execution_context, evaluate_skip_condition, resolve_step_input, resolve_template,
     resolve_value,
 };
-pub use runs::{
-    InMemoryWorkflowRunStore, WorkflowRunRecord, WorkflowRunStore, WorkflowRunUpdate,
-};
-pub use step_executions::{
-    InMemoryWorkflowStepExecutionStore, WorkflowStepExecution, WorkflowStepExecutionStore,
-    WorkflowStepExecutionUpdate,
-};
 pub use store::{InMemoryStore, WorkflowStateStore};
 pub use types::*;
+pub use workflow_store::{
+    InMemoryWorkflowStore, WorkflowExecutionState, WorkflowStepState, WorkflowStore,
+};
 
 #[cfg(test)]
 mod tests;
