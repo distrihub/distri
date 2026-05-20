@@ -45,6 +45,7 @@
 pub mod executor;
 pub mod resolve;
 pub mod store;
+pub mod trigger_registry;
 pub mod types;
 pub mod workflow_store;
 
@@ -54,6 +55,9 @@ pub use resolve::{
     resolve_value,
 };
 pub use store::{InMemoryStore, WorkflowStateStore};
+pub use trigger_registry::{
+    InMemoryWorkflowTriggerRegistry, TriggerBinding, WorkflowTriggerRegistry,
+};
 pub use types::*;
 pub use workflow_store::{
     InMemoryWorkflowStore, WorkflowExecutionState, WorkflowStepState, WorkflowStore,
