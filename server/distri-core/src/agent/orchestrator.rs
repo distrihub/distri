@@ -1710,12 +1710,51 @@ impl AgentOrchestrator {
 }
 
 impl AgentOrchestrator {
-    /// Complete an external tool execution
+    /// Complete an external tool execution.
+    ///
+    /// Two paths depending on the `tool_call_id`:
+    ///
+    ///   - **Workflow wait** — the id is a `wait_task_id` on some
+    ///     parked workflow run (the workflow's `ContextEventSink`
+    ///     created a child Task for it). Record the result on the
+    ///     step row, mark the wait task `Completed`, flip the run
+    ///     task back to `Running`. The workflow resumes when an
+    ///     external A2A `message/send` (or any orchestrator invoke)
+    ///     hits the run task — `WorkflowAgent::run_workflow`'s resume
+    ///     detection picks up the stored state from there.
+    ///
+    ///   - **Legacy external tool call** — the id is a oneshot
+    ///     registered via `ExternalToolCallsStore`. Existing path:
+    ///     fire the oneshot. (Slated for deletion once external tool
+    ///     calls migrate to the wait-task model.)
     pub async fn complete_tool(
         &self,
         tool_call_id: &str,
         tool_response: distri_types::ToolResponse,
     ) -> Result<(), String> {
+        if let Some(workflow_store) = self.workflow_store.clone() {
+            if let Ok(Some(task)) = self.stores.task_store.get_task(tool_call_id).await {
+                if let Some(parent_id) = task.parent_task_id.clone() {
+                    if workflow_store
+                        .get_run(&parent_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some()
+                    {
+                        return self
+                            .complete_workflow_wait(
+                                &parent_id,
+                                tool_call_id,
+                                tool_response,
+                                workflow_store,
+                            )
+                            .await;
+                    }
+                }
+            }
+        }
+
         let outcome = self
             .stores
             .external_tool_calls_store
@@ -1730,6 +1769,70 @@ impl AgentOrchestrator {
             "browser POST /complete-tool received"
         );
         outcome
+    }
+
+    /// Complete a workflow wait synchronously: record the tool
+    /// response onto the step row, mark the wait task `Completed`,
+    /// flip the run task back to `Running`. Does not re-invoke the
+    /// workflow agent — the caller (or any later A2A `message/send`)
+    /// re-enters the workflow run task, which goes through resume
+    /// detection.
+    async fn complete_workflow_wait(
+        &self,
+        run_task_id: &str,
+        wait_task_id: &str,
+        tool_response: distri_types::ToolResponse,
+        workflow_store: Arc<dyn distri_workflow::WorkflowStore>,
+    ) -> Result<(), String> {
+        let steps = workflow_store
+            .list_steps(run_task_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let step = steps
+            .into_iter()
+            .find(|s| s.wait_task_id.as_deref() == Some(wait_task_id))
+            .ok_or_else(|| {
+                format!(
+                    "no step with wait_task_id={wait_task_id} on run {run_task_id}"
+                )
+            })?;
+
+        let result = serde_json::to_value(&tool_response).map_err(|e| e.to_string())?;
+        let now = chrono::Utc::now();
+        let updated = distri_workflow::WorkflowStepState {
+            step_id: step.step_id.clone(),
+            status: distri_types::TaskStatus::Completed,
+            result: Some(result),
+            error: None,
+            started_at: step.started_at,
+            completed_at: Some(now),
+            wait_task_id: step.wait_task_id.clone(),
+        };
+        workflow_store
+            .upsert_step(run_task_id, updated)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        self.stores
+            .task_store
+            .update_task_status(wait_task_id, distri_types::TaskStatus::Completed)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        self.stores
+            .task_store
+            .update_task_status(run_task_id, distri_types::TaskStatus::Running)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        tracing::info!(
+            target: "workflow.resume",
+            run_task_id = %run_task_id,
+            wait_task_id = %wait_task_id,
+            step_id = %step.step_id,
+            "workflow wait completed; run task flipped to Running"
+        );
+        Ok(())
     }
 
     pub async fn complete_inline_hook(
