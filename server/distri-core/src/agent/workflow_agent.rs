@@ -730,6 +730,31 @@ impl WorkflowAgent {
             .map_err(AgentError::Execution)?
             .ok_or_else(|| AgentError::Execution("Workflow state lost".to_string()))?;
 
+        // Persist the final accumulated context back to the sidecar so
+        // the workflow_runs row reflects the terminal state (useful for
+        // debugging + future resume).
+        if let Some(run_store) = context
+            .orchestrator
+            .as_ref()
+            .and_then(|o| o.workflow_run_store.clone())
+        {
+            if let Err(e) = run_store
+                .update(
+                    &context.task_id,
+                    WorkflowRunUpdate {
+                        context: Some(final_state.context.clone()),
+                    },
+                )
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    task_id = %context.task_id,
+                    "workflow_runs context update failed"
+                );
+            }
+        }
+
         let summary = serde_json::to_value(WorkflowRunSummary::from_run(&final_state, status))
             .map_err(|e| AgentError::Execution(format!("summary serialize: {e}")))?;
 
