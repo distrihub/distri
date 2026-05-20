@@ -430,7 +430,7 @@ impl StepExecutor for ContextStepExecutor {
                 // This should be intercepted by the executor before reaching here,
                 // but handle defensively.
                 Ok(StepResult {
-                    status: StepStatus::WaitingForInput,
+                    status: TaskStatus::InputRequired,
                     result: Some(serde_json::json!({
                         "waiting": true,
                         "message": message,

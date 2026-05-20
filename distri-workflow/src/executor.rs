@@ -144,7 +144,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
             .ok_or("Workflow not found")?;
 
         if run.is_complete() {
-            run.status = WorkflowStatus::Completed;
+            run.status = TaskStatus::Completed;
             self.store.save(&run).await?;
             return Ok(vec![]);
         }
@@ -156,14 +156,14 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         // Evaluate skip_if conditions on pending steps
         let mut skipped_any = false;
         for i in 0..run.definition.steps.len() {
-            if run.step_runs[i].status != StepStatus::Pending {
+            if run.step_runs[i].status != TaskStatus::Pending {
                 continue;
             }
             let skip_expr = run.definition.steps[i].skip_if.clone();
             if let Some(skip_expr) = skip_expr {
                 if resolve::evaluate_skip_condition(&skip_expr, &run.context) {
                     let step_id = run.definition.steps[i].id.clone();
-                    run.step_runs[i].status = StepStatus::Skipped;
+                    run.step_runs[i].status = TaskStatus::Canceled;
                     run.step_runs[i].completed_at = Some(chrono::Utc::now());
                     run.add_note(&step_id, "Skipped by skip_if condition");
                     skipped_any = true;
@@ -184,7 +184,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         if runnable.is_empty() {
             // Check if we're stuck (all remaining are blocked or depend on blocked)
             if run.is_stuck() {
-                run.status = WorkflowStatus::Blocked;
+                run.status = TaskStatus::Failed;
                 self.store.save(&run).await?;
                 return Ok(vec![]);
             }
@@ -207,7 +207,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
 
         // Mark blocked steps
         for (idx, missing) in &blocked_indices {
-            run.step_runs[*idx].status = StepStatus::Blocked;
+            run.step_runs[*idx].status = TaskStatus::Failed;
             run.step_runs[*idx].error = Some(format!("Missing skills: {}", missing.join(", ")));
         }
 
@@ -218,7 +218,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         if executable.is_empty() {
             // All runnable steps were blocked
             if run.is_stuck() {
-                run.status = WorkflowStatus::Blocked;
+                run.status = TaskStatus::Failed;
                 self.store.save(&run).await?;
             }
             return Ok(vec![]);
@@ -236,9 +236,9 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 StepKind::WaitForInput { message, schema } => (message.clone(), schema.clone()),
                 _ => unreachable!(),
             };
-            run.step_runs[*idx].status = StepStatus::WaitingForInput;
+            run.step_runs[*idx].status = TaskStatus::InputRequired;
             run.step_runs[*idx].started_at = Some(chrono::Utc::now());
-            run.status = WorkflowStatus::Paused;
+            run.status = TaskStatus::InputRequired;
             run.current_step = *idx;
             self.store.save(&run).await?;
             self.events
@@ -262,10 +262,10 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         // Run parallel steps
         if !parallel.is_empty() {
             for (idx, _, _, _) in &parallel {
-                run.step_runs[*idx].status = StepStatus::Running;
+                run.step_runs[*idx].status = TaskStatus::Running;
                 run.step_runs[*idx].started_at = Some(chrono::Utc::now());
             }
-            run.status = WorkflowStatus::Running;
+            run.status = TaskStatus::Running;
             self.store.save(&run).await?;
 
             for (idx, step_id, _, step) in &parallel {
@@ -280,7 +280,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 let step_context = resolve::resolve_step_input(step.input.as_ref(), &run.context);
                 let result = self.executor.execute(step, &step_context).await;
                 match result {
-                    Ok(r) if r.status == StepStatus::Failed => {
+                    Ok(r) if r.status == TaskStatus::Failed => {
                         let error = r.error.clone().unwrap_or_else(|| "Step failed".to_string());
                         self.events
                             .emit(WorkflowEvent::StepFailed {
@@ -328,9 +328,9 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         if !sequential.is_empty() && parallel.is_empty() {
             let (idx, step_id, _, step) = &sequential[0];
 
-            run.step_runs[*idx].status = StepStatus::Running;
+            run.step_runs[*idx].status = TaskStatus::Running;
             run.step_runs[*idx].started_at = Some(chrono::Utc::now());
-            run.status = WorkflowStatus::Running;
+            run.status = TaskStatus::Running;
             run.current_step = *idx;
             self.store.save(&run).await?;
 
@@ -345,7 +345,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
             let step_context = resolve::resolve_step_input(step.input.as_ref(), &run.context);
             let result = self.executor.execute(step, &step_context).await;
             match result {
-                Ok(r) if r.status == StepStatus::Failed => {
+                Ok(r) if r.status == TaskStatus::Failed => {
                     let error = r.error.clone().unwrap_or_else(|| "Step failed".to_string());
                     self.events
                         .emit(WorkflowEvent::StepFailed {
@@ -392,10 +392,10 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         let run = self.store.load(workflow_id).await?.unwrap();
         if run.is_complete() {
             let mut w = run;
-            if w.is_stuck() || w.step_runs.iter().any(|s| s.status == StepStatus::Blocked) {
-                w.status = WorkflowStatus::Blocked;
+            if w.is_stuck() || w.step_runs.iter().any(|s| s.status == TaskStatus::Failed) {
+                w.status = TaskStatus::Failed;
             } else {
-                w.status = WorkflowStatus::Completed;
+                w.status = TaskStatus::Completed;
             }
             self.store.save(&w).await?;
         }
@@ -404,7 +404,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
     }
 
     /// Run all steps until completion, failure, blocked, or pause.
-    pub async fn run_all(&self, workflow_id: &str) -> Result<WorkflowStatus, String> {
+    pub async fn run_all(&self, workflow_id: &str) -> Result<TaskStatus, String> {
         // Validate DAG before executing
         let run = self
             .store
@@ -429,21 +429,21 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 .ok_or("Workflow not found")?;
 
             match run.status {
-                WorkflowStatus::Completed | WorkflowStatus::Failed | WorkflowStatus::Blocked => {
+                TaskStatus::Completed | TaskStatus::Failed => {
                     let done = run
                         .step_runs
                         .iter()
-                        .filter(|s| s.status == StepStatus::Done)
+                        .filter(|s| s.status == TaskStatus::Completed)
                         .count();
                     let failed = run
                         .step_runs
                         .iter()
-                        .filter(|s| s.status == StepStatus::Failed)
+                        .filter(|s| s.status == TaskStatus::Failed)
                         .count();
                     self.events
                         .emit(WorkflowEvent::WorkflowCompleted {
                             workflow_id: workflow_id.to_string(),
-                            status: run.status,
+                            status: run.status.clone(),
                             steps_done: done,
                             steps_failed: failed,
                         })
@@ -451,8 +451,8 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                     return Ok(run.status);
                 }
                 // Paused = waiting for human input. Return without emitting completed.
-                WorkflowStatus::Paused => {
-                    return Ok(WorkflowStatus::Paused);
+                TaskStatus::InputRequired => {
+                    return Ok(TaskStatus::InputRequired);
                 }
                 _ => {}
             }
@@ -461,39 +461,39 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 self.events
                     .emit(WorkflowEvent::WorkflowCompleted {
                         workflow_id: workflow_id.to_string(),
-                        status: WorkflowStatus::Completed,
+                        status: TaskStatus::Completed,
                         steps_done: run.definition.steps.len(),
                         steps_failed: 0,
                     })
                     .await;
-                return Ok(WorkflowStatus::Completed);
+                return Ok(TaskStatus::Completed);
             }
 
             let results = self.run_next(workflow_id).await?;
 
-            if results.iter().any(|(_, r)| r.status == StepStatus::Failed) {
+            if results.iter().any(|(_, r)| r.status == TaskStatus::Failed) {
                 let mut w = self.store.load(workflow_id).await?.unwrap();
-                w.status = WorkflowStatus::Failed;
+                w.status = TaskStatus::Failed;
                 self.store.save(&w).await?;
                 let done = w
                     .step_runs
                     .iter()
-                    .filter(|s| s.status == StepStatus::Done)
+                    .filter(|s| s.status == TaskStatus::Completed)
                     .count();
                 let failed = w
                     .step_runs
                     .iter()
-                    .filter(|s| s.status == StepStatus::Failed)
+                    .filter(|s| s.status == TaskStatus::Failed)
                     .count();
                 self.events
                     .emit(WorkflowEvent::WorkflowCompleted {
                         workflow_id: workflow_id.to_string(),
-                        status: WorkflowStatus::Failed,
+                        status: TaskStatus::Failed,
                         steps_done: done,
                         steps_failed: failed,
                     })
                     .await;
-                return Ok(WorkflowStatus::Failed);
+                return Ok(TaskStatus::Failed);
             }
 
             if results.is_empty() {
@@ -510,14 +510,14 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         workflow_id: &str,
         step_id: &str,
         input: serde_json::Value,
-    ) -> Result<WorkflowStatus, String> {
+    ) -> Result<TaskStatus, String> {
         let mut run = self
             .store
             .load(workflow_id)
             .await?
             .ok_or("Workflow not found")?;
 
-        if run.status != WorkflowStatus::Paused {
+        if run.status != TaskStatus::InputRequired {
             return Err(format!("Workflow is not paused (status: {:?})", run.status));
         }
 

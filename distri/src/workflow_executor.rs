@@ -74,7 +74,7 @@ impl WorkflowSession {
 
     /// Run the workflow to completion. Emits events to the channel.
     /// Returns the final workflow status.
-    pub async fn run(self) -> Result<WorkflowStatus, String> {
+    pub async fn run(self) -> Result<TaskStatus, String> {
         let store = InMemoryStore::new();
         let workflow_id = self.run.id().to_string();
         store.save(&self.run).await?;
@@ -89,7 +89,7 @@ impl WorkflowSession {
     }
 
     /// Run the workflow with input. Validates against input_schema, merges into context.
-    pub async fn run_with_input(mut self, input: Value) -> Result<WorkflowStatus, String> {
+    pub async fn run_with_input(mut self, input: Value) -> Result<TaskStatus, String> {
         self.run = self.run.with_input(input)?;
 
         let store = InMemoryStore::new();
@@ -159,7 +159,7 @@ impl StepExecutor for DistriStepExecutor {
             }))),
 
             StepKind::WaitForInput { message, schema } => Ok(StepResult {
-                status: StepStatus::WaitingForInput,
+                status: TaskStatus::InputRequired,
                 result: Some(json!({
                     "waiting": true,
                     "message": message,
