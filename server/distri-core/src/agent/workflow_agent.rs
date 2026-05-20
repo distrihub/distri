@@ -99,6 +99,42 @@ impl ContextEventSink {
             );
         }
     }
+
+    /// Create a child `Task` under the run task representing a parked
+    /// wait-style step (`WaitForInput`, and later `ExternalToolCall`
+    /// / `WaitForEvent`). The returned `task_id` becomes the step
+    /// row's `wait_task_id`, and is what an external party uses to
+    /// resume the workflow via `/complete-tool` or A2A `message/send`
+    /// with `taskId`.
+    async fn create_wait_task(&self) -> Option<String> {
+        use distri_types::stores::{CreateTaskInput, TaskStore};
+        let orchestrator = self.context.orchestrator.as_ref()?;
+        let task_store = orchestrator.stores.task_store.clone();
+        let wait_task_id = uuid::Uuid::new_v4().to_string();
+        let input = CreateTaskInput::local(&self.context.thread_id)
+            .with_id(&wait_task_id)
+            .with_status(distri_types::TaskStatus::InputRequired);
+        if let Err(e) = task_store.create_task(input).await {
+            tracing::warn!(
+                error = %e,
+                run_task_id = %self.run_task_id,
+                "wait-task create_task failed"
+            );
+            return None;
+        }
+        if let Err(e) = task_store
+            .update_parent_task(&wait_task_id, Some(&self.run_task_id))
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                run_task_id = %self.run_task_id,
+                wait_task_id = %wait_task_id,
+                "wait-task update_parent_task failed"
+            );
+        }
+        Some(wait_task_id)
+    }
 }
 
 #[async_trait]
@@ -162,15 +198,17 @@ impl EventSink for ContextEventSink {
                 .await;
             }
             WorkflowEvent::StepWaiting { step_id, .. } => {
-                // Park the step as InputRequired in the workflow store.
-                // The A2A-addressable child task (and `wait_task_id`)
-                // lands with the external-tool-call refactor — for now
-                // the run's task transitions to InputRequired through
-                // `context.update_status` and the step row records the
-                // pause here.
+                // Park the step as InputRequired in the workflow store
+                // AND create a child Task that is A2A-addressable. The
+                // wait_task_id is what external parties POST to
+                // /complete-tool or A2A message/send with `taskId` to
+                // resume the workflow (the coordinator re-drive on
+                // child terminal lands as the next step).
                 let now = chrono::Utc::now();
+                let wait_task_id = self.create_wait_task().await;
                 self.merge_step(&step_id, move |s| {
                     s.status = distri_types::TaskStatus::InputRequired;
+                    s.wait_task_id = wait_task_id;
                     if s.started_at.is_none() {
                         s.started_at = Some(now);
                     }
