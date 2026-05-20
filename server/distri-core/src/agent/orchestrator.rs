@@ -63,6 +63,14 @@ pub struct AgentOrchestrator {
     /// `DefaultResolver` auth pipeline); the standalone OSS server leaves it
     /// `None` and uses the static `[[tools.mcp]]` registry only.
     pub mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
+    /// Run-level sidecar for `WorkflowAgent` (definition snapshot,
+    /// entry point, input, shared context). `None` in OSS deployments
+    /// that don't run workflows through Postgres.
+    pub workflow_run_store: Option<Arc<dyn distri_workflow::WorkflowRunStore>>,
+    /// Per-step sidecar for `WorkflowAgent` (1:1 with a step's child
+    /// task). `None` in OSS deployments.
+    pub workflow_step_execution_store:
+        Option<Arc<dyn distri_workflow::WorkflowStepExecutionStore>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -108,6 +116,9 @@ pub struct AgentOrchestratorBuilder {
     remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
+    workflow_run_store: Option<Arc<dyn distri_workflow::WorkflowRunStore>>,
+    workflow_step_execution_store:
+        Option<Arc<dyn distri_workflow::WorkflowStepExecutionStore>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -228,6 +239,27 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Attach the run-level sidecar store used by `WorkflowAgent` to
+    /// persist `WorkflowRunRecord`s (definition snapshot + shared
+    /// context). The cloud wires the Postgres impl; OSS leaves it
+    /// `None` and the workflow agent skips the projection.
+    pub fn with_workflow_run_store(
+        mut self,
+        store: Arc<dyn distri_workflow::WorkflowRunStore>,
+    ) -> Self {
+        self.workflow_run_store = Some(store);
+        self
+    }
+
+    /// Attach the per-step sidecar store used by `WorkflowAgent`.
+    pub fn with_workflow_step_execution_store(
+        mut self,
+        store: Arc<dyn distri_workflow::WorkflowStepExecutionStore>,
+    ) -> Self {
+        self.workflow_step_execution_store = Some(store);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let browser_config = self.browser_config.unwrap_or_default();
 
@@ -305,6 +337,8 @@ impl AgentOrchestratorBuilder {
             remote_task_runner: self.remote_task_runner,
             oauth_handler: self.oauth_handler,
             mcp_pool_provider: self.mcp_pool_provider,
+            workflow_run_store: self.workflow_run_store,
+            workflow_step_execution_store: self.workflow_step_execution_store,
         };
 
         // Sync system prompts to the store

@@ -644,6 +644,11 @@ impl WorkflowAgent {
             })
             .unwrap_or_default();
 
+        // Capture the entry-point and raw input for the sidecar record
+        // before the values are moved into `run` below.
+        let entry_point_for_record = workflow_input.entry_point.clone();
+        let input_for_record = workflow_input.data.clone();
+
         // Save user message to thread (like StandardAgent does)
         context.save_message(&message).await;
 
@@ -669,6 +674,33 @@ impl WorkflowAgent {
             let env_vars = context.env_vars.read().await;
             for (k, v) in env_vars.iter() {
                 env.insert(k.clone(), serde_json::Value::String(v.clone()));
+            }
+        }
+
+        // Persist the run-level sidecar (definition snapshot, entry
+        // point, input, shared context). Best-effort here — if it
+        // fails (e.g. PK conflict on a resume) we log and continue;
+        // once the full task-tree drive lands this becomes the
+        // authoritative resume source.
+        if let Some(run_store) = context
+            .orchestrator
+            .as_ref()
+            .and_then(|o| o.workflow_run_store.clone())
+        {
+            let record = WorkflowRunRecord::new(
+                &context.task_id,
+                &context.agent_id,
+                run.definition.clone(),
+            )
+            .with_entry_point(entry_point_for_record)
+            .with_input(input_for_record)
+            .with_context(run.context.clone());
+            if let Err(e) = run_store.insert(record).await {
+                tracing::debug!(
+                    error = %e,
+                    task_id = %context.task_id,
+                    "workflow_runs insert failed (treating as resume / continuing)"
+                );
             }
         }
 
