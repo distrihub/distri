@@ -54,12 +54,51 @@ impl WorkflowAgent {
     }
 }
 
-/// Event bridge: translates `WorkflowEvent`s into `AgentEventType`s and
-/// emits them through the executor context so workflow step progress
-/// rides the same broadcaster + A2A SSE path agent runs do (no
-/// workflow-specific stream).
+/// Event bridge: forwards workflow step progress through the **two**
+/// paths the rest of the system already consumes.
+///
+/// 1. `context.emit(AgentEventType::Step…)` — the live event stream
+///    (broadcaster → A2A SSE → `tasks/resubscribe`). Same path agent
+///    runs use; no workflow-specific transport.
+/// 2. `workflow_store.upsert_step(...)` — the durable per-step row in
+///    the workflow store. So `list_steps(run_task_id)` returns real
+///    `WorkflowStepState` rows queryable for debugging / UI / future
+///    resume.
+///
+/// Each `merge_step` call read-modify-writes the existing row so a
+/// `StepCompleted` doesn't clobber the `started_at` set on
+/// `StepStarted`.
 struct ContextEventSink {
     context: Arc<ExecutorContext>,
+    workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
+    run_task_id: String,
+}
+
+impl ContextEventSink {
+    async fn merge_step<F>(&self, step_id: &str, apply: F)
+    where
+        F: FnOnce(&mut distri_workflow::WorkflowStepState) + Send,
+    {
+        let Some(store) = self.workflow_store.as_ref() else {
+            return;
+        };
+        let mut state = match store.get_step(&self.run_task_id, step_id).await {
+            Ok(Some(s)) => s,
+            _ => distri_workflow::WorkflowStepState {
+                step_id: step_id.to_string(),
+                ..Default::default()
+            },
+        };
+        apply(&mut state);
+        if let Err(e) = store.upsert_step(&self.run_task_id, state).await {
+            tracing::warn!(
+                error = %e,
+                run_task_id = %self.run_task_id,
+                step_id,
+                "workflow_store upsert_step failed"
+            );
+        }
+    }
 }
 
 #[async_trait]
@@ -74,37 +113,73 @@ impl EventSink for ContextEventSink {
             } => {
                 self.context
                     .emit(distri_types::AgentEventType::StepStarted {
-                        step_id,
+                        step_id: step_id.clone(),
                         step_index,
                     })
                     .await;
+                let now = chrono::Utc::now();
+                self.merge_step(&step_id, |s| {
+                    s.status = distri_types::TaskStatus::Running;
+                    s.started_at = Some(now);
+                    s.completed_at = None;
+                    s.error = None;
+                })
+                .await;
             }
-            WorkflowEvent::StepCompleted { step_id, .. } => {
+            WorkflowEvent::StepCompleted { step_id, result, .. } => {
                 self.context
                     .emit(distri_types::AgentEventType::StepCompleted {
-                        step_id,
+                        step_id: step_id.clone(),
                         success: true,
                         context_budget: None,
                         usage: None,
                     })
                     .await;
+                let now = chrono::Utc::now();
+                self.merge_step(&step_id, move |s| {
+                    s.status = distri_types::TaskStatus::Completed;
+                    s.result = result;
+                    s.completed_at = Some(now);
+                    s.error = None;
+                })
+                .await;
             }
-            WorkflowEvent::StepFailed { step_id, .. } => {
+            WorkflowEvent::StepFailed { step_id, error, .. } => {
                 self.context
                     .emit(distri_types::AgentEventType::StepCompleted {
-                        step_id,
+                        step_id: step_id.clone(),
                         success: false,
                         context_budget: None,
                         usage: None,
                     })
                     .await;
+                let now = chrono::Utc::now();
+                self.merge_step(&step_id, move |s| {
+                    s.status = distri_types::TaskStatus::Failed;
+                    s.error = Some(error);
+                    s.completed_at = Some(now);
+                })
+                .await;
             }
-            // WorkflowStarted/Completed are subsumed by the agent run's
-            // RunStarted (emitted by hooks) and RunFinished (emitted by
-            // `WorkflowAgent::invoke_stream`). StepWaiting will be
-            // surfaced once the per-step child-task projection lands —
-            // for now the run's task transitions to InputRequired
-            // through `context.update_status`.
+            WorkflowEvent::StepWaiting { step_id, .. } => {
+                // Park the step as InputRequired in the workflow store.
+                // The A2A-addressable child task (and `wait_task_id`)
+                // lands with the external-tool-call refactor — for now
+                // the run's task transitions to InputRequired through
+                // `context.update_status` and the step row records the
+                // pause here.
+                let now = chrono::Utc::now();
+                self.merge_step(&step_id, move |s| {
+                    s.status = distri_types::TaskStatus::InputRequired;
+                    if s.started_at.is_none() {
+                        s.started_at = Some(now);
+                    }
+                })
+                .await;
+            }
+            // WorkflowStarted/Completed are subsumed by the agent
+            // run's RunStarted (hooks) and RunFinished
+            // (`WorkflowAgent::invoke_stream`).
             _ => {}
         }
     }
@@ -710,6 +785,11 @@ impl WorkflowAgent {
 
         let event_sink = ContextEventSink {
             context: context.clone(),
+            workflow_store: context
+                .orchestrator
+                .as_ref()
+                .and_then(|o| o.workflow_store.clone()),
+            run_task_id: context.task_id.clone(),
         };
         let executor = ContextStepExecutor {
             context: context.clone(),
