@@ -16,6 +16,8 @@ async-openai = { version = "0.32.2", features = [
   "audio",
   "realtime-types",
   "realtime",
+  "image-types",
+  "image",
 ] }
 async-trait = "0.1"
 reqwest = { version = "0.13.2", features = ["json", "form", "query", "stream"] }
