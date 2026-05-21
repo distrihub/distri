@@ -17,9 +17,15 @@ use distri_types::WorkflowTrigger;
 use std::collections::HashMap;
 
 /// What a registry hit resolves to.
+///
+/// `workspace_id` is the tenant the agent belongs to (cloud); `None`
+/// for OSS / single-tenant deployments. The webhook / scheduler /
+/// event dispatchers use it to set the task-local workspace context
+/// before spawning the run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TriggerBinding {
     pub agent_id: String,
+    pub workspace_id: Option<String>,
     pub entry_point_id: String,
     pub trigger: WorkflowTrigger,
 }
@@ -29,14 +35,21 @@ pub struct TriggerBinding {
 pub trait WorkflowTriggerRegistry: Send + Sync {
     /// Register all triggers from an agent's workflow definition.
     /// Overwrites any previous bindings for this agent (call after
-    /// upsert).
-    async fn register(&self, agent_id: &str, def: &WorkflowDefinition) -> anyhow::Result<()>;
+    /// upsert). `workspace_id` is the tenant the agent belongs to
+    /// (cloud); `None` for OSS.
+    async fn register(
+        &self,
+        agent_id: &str,
+        workspace_id: Option<&str>,
+        def: &WorkflowDefinition,
+    ) -> anyhow::Result<()>;
 
     /// Remove all bindings for an agent.
     async fn unregister(&self, agent_id: &str) -> anyhow::Result<()>;
 
     /// Resolve the binding for a `Webhook { path }` trigger. The
     /// webhook HTTP route maps `/v1/workflows/webhook/{path}` here.
+    /// First-match wins when multiple tenants declare the same path.
     async fn find_webhook(&self, path: &str) -> anyhow::Result<Option<TriggerBinding>>;
 
     /// Resolve the binding for a `Tool { name }` trigger (workflow
@@ -66,12 +79,17 @@ impl InMemoryWorkflowTriggerRegistry {
         Self::default()
     }
 
-    fn collect_bindings(agent_id: &str, def: &WorkflowDefinition) -> Vec<TriggerBinding> {
+    fn collect_bindings(
+        agent_id: &str,
+        workspace_id: Option<&str>,
+        def: &WorkflowDefinition,
+    ) -> Vec<TriggerBinding> {
         let mut out = Vec::new();
         for ep in &def.entry_points {
             for trigger in &ep.triggers {
                 out.push(TriggerBinding {
                     agent_id: agent_id.to_string(),
+                    workspace_id: workspace_id.map(|s| s.to_string()),
                     entry_point_id: ep.id.clone(),
                     trigger: trigger.clone(),
                 });
@@ -83,9 +101,17 @@ impl InMemoryWorkflowTriggerRegistry {
 
 #[async_trait::async_trait]
 impl WorkflowTriggerRegistry for InMemoryWorkflowTriggerRegistry {
-    async fn register(&self, agent_id: &str, def: &WorkflowDefinition) -> anyhow::Result<()> {
+    async fn register(
+        &self,
+        agent_id: &str,
+        workspace_id: Option<&str>,
+        def: &WorkflowDefinition,
+    ) -> anyhow::Result<()> {
         let mut guard = self.bindings.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        guard.insert(agent_id.to_string(), Self::collect_bindings(agent_id, def));
+        guard.insert(
+            agent_id.to_string(),
+            Self::collect_bindings(agent_id, workspace_id, def),
+        );
         Ok(())
     }
 
@@ -180,7 +206,7 @@ mod tests {
             auth: WebhookAuth::None,
             response: Default::default(),
         }]);
-        reg.register("agent-1", &def).await.unwrap();
+        reg.register("agent-1", None, &def).await.unwrap();
 
         let hit = reg.find_webhook("github").await.unwrap().unwrap();
         assert_eq!(hit.agent_id, "agent-1");
@@ -197,7 +223,7 @@ mod tests {
             description: "summarize a document".into(),
             input_schema: None,
         }]);
-        reg.register("wf-summarize", &def).await.unwrap();
+        reg.register("wf-summarize", None, &def).await.unwrap();
 
         let hit = reg.find_tool("summarize").await.unwrap().unwrap();
         assert_eq!(hit.agent_id, "wf-summarize");
@@ -216,8 +242,8 @@ mod tests {
             topic: "user.signup".into(),
             filter: None,
         }]);
-        reg.register("agent-a", &def_a).await.unwrap();
-        reg.register("agent-b", &def_b).await.unwrap();
+        reg.register("agent-a", None, &def_a).await.unwrap();
+        reg.register("agent-b", None, &def_b).await.unwrap();
 
         let hits = reg.find_event("user.signup").await.unwrap();
         assert_eq!(hits.len(), 2);
@@ -235,7 +261,7 @@ mod tests {
             },
             WorkflowTrigger::Manual,
         ]);
-        reg.register("nightly", &def).await.unwrap();
+        reg.register("nightly", None, &def).await.unwrap();
 
         let sched = reg.list_schedules().await.unwrap();
         assert_eq!(sched.len(), 1);
@@ -251,7 +277,7 @@ mod tests {
             auth: WebhookAuth::None,
             response: Default::default(),
         }]);
-        reg.register("billing", &def).await.unwrap();
+        reg.register("billing", None, &def).await.unwrap();
         assert!(reg.find_webhook("stripe").await.unwrap().is_some());
 
         reg.unregister("billing").await.unwrap();
@@ -267,7 +293,7 @@ mod tests {
             auth: WebhookAuth::None,
             response: Default::default(),
         }]);
-        reg.register("api", &def_v1).await.unwrap();
+        reg.register("api", None, &def_v1).await.unwrap();
         assert!(reg.find_webhook("v1").await.unwrap().is_some());
 
         // Re-register with a different path — v1 should disappear.
@@ -277,7 +303,7 @@ mod tests {
             auth: WebhookAuth::None,
             response: Default::default(),
         }]);
-        reg.register("api", &def_v2).await.unwrap();
+        reg.register("api", None, &def_v2).await.unwrap();
         assert!(reg.find_webhook("v1").await.unwrap().is_none());
         assert!(reg.find_webhook("v2").await.unwrap().is_some());
     }

@@ -912,8 +912,20 @@ impl AgentOrchestrator {
                         distri_workflow::WorkflowDefinition,
                     >(definition.definition.clone())
                     {
-                        if let Err(e) =
-                            registry.register(&definition.name, &workflow_def).await
+                        // Pull workspace from task-local context so the
+                        // binding carries enough tenant identity for the
+                        // webhook / scheduler / event dispatchers to
+                        // rebuild an ExecutorContext at fire time.
+                        let workspace_id =
+                            distri_types::context::current_workspace_id()
+                                .map(|w| w.to_string());
+                        if let Err(e) = registry
+                            .register(
+                                &definition.name,
+                                workspace_id.as_deref(),
+                                &workflow_def,
+                            )
+                            .await
                         {
                             tracing::warn!(
                                 error = %e,
