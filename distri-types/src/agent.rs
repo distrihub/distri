@@ -1469,6 +1469,23 @@ impl ModelProvider {
         self.completion_url()
     }
 
+    /// Resolved image-generation base URL.
+    ///
+    /// Azure AI Foundry exposes image generation on
+    /// `https://<resource>.services.ai.azure.com/openai/v1` — a different
+    /// subdomain from chat/TTS (which use `*.openai.azure.com`). The image
+    /// dispatcher consults this method so a Foundry resource routes to the
+    /// right host without changing the chat path.
+    pub fn image_url(&self) -> Option<String> {
+        match self {
+            ModelProvider::AzureAiFoundry { resource, .. } if !resource.trim().is_empty() => {
+                let r = resource.trim().trim_matches('/');
+                Some(format!("https://{r}.services.ai.azure.com/openai/v1"))
+            }
+            _ => self.completion_url(),
+        }
+    }
+
     /// `(base_url, api_key)` for this provider — call after `hydrate_creds`.
     /// `base_url` is the OpenAI-compatible endpoint to probe; used by the
     /// `/providers/test` validation flow.

@@ -210,6 +210,20 @@
               "high": 0.167
             }
           }
+        },
+        {
+          "id": "gpt-image-2",
+          "name": "GPT Image 2",
+          "capability": "image",
+          "pricing": {
+            "type": "image",
+            "per_image": 0.042,
+            "per_quality": {
+              "low": 0.011,
+              "medium": 0.042,
+              "high": 0.167
+            }
+          }
         }
       ]
     },
