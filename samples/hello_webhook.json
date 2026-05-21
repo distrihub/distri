@@ -1,0 +1,47 @@
+{
+  "agent_type": "workflow_agent",
+  "name": "hello-webhook",
+  "description": "Sample workflow: POST /v1/workflows/webhook/hello to fire a 2-step run that logs the payload and echoes it back.",
+  "version": "0.1.0",
+  "definition": {
+    "id": "hello-webhook",
+    "steps": [
+      {
+        "id": "log_payload",
+        "label": "Log incoming payload",
+        "kind": {
+          "type": "checkpoint",
+          "message": "📨 webhook received — payload: {input}"
+        }
+      },
+      {
+        "id": "echo",
+        "label": "Echo payload back",
+        "kind": {
+          "type": "checkpoint",
+          "message": "✅ workflow completed; final input was {input}"
+        },
+        "depends_on": ["log_payload"]
+      }
+    ],
+    "entry_points": [
+      {
+        "id": "main",
+        "label": "Webhook entry",
+        "description": "Receive a webhook POST and emit a 2-step trace",
+        "starts_at": "log_payload",
+        "preset_results": {},
+        "required_inputs": [],
+        "triggers": [
+          {
+            "type": "webhook",
+            "path": "hello",
+            "methods": ["POST"],
+            "auth": { "type": "none" },
+            "response": { "type": "ack" }
+          }
+        ]
+      }
+    ]
+  }
+}
