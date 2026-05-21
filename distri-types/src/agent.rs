@@ -1126,6 +1126,9 @@ struct DefaultProviderEntry {
     label: String,
     keys: Vec<SecretKeyDefinition>,
     models: Vec<crate::models::Model>,
+    /// Optional per-provider override of `/v1/providers/test`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    test: Option<crate::models::ProviderTestConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1176,8 +1179,20 @@ impl From<crate::models::ModelProviderDefinition> for DefaultProviderEntry {
             label: d.label,
             keys: d.keys.into_iter().map(SecretKeyDefinition::from).collect(),
             models,
+            test: d.test,
         }
     }
+}
+
+/// Look up the provider-test override for a registered provider. The
+/// `/v1/providers/test` handler calls this and falls back to its default
+/// `GET /models` probe when `None` is returned. Reads from the merged
+/// layered registry (built-in basics + deployment extensions).
+pub fn lookup_provider_test_config(provider_id: &str) -> Option<crate::models::ProviderTestConfig> {
+    merged_providers()
+        .into_iter()
+        .find(|p| p.id == provider_id)
+        .and_then(|p| p.test)
 }
 
 /// Provider/model definitions contributed by a deployment, layered on top of
@@ -2995,6 +3010,7 @@ tool_format = "json_l"
             label: label.to_string(),
             keys: vec![],
             models: vec![],
+            test: None,
         }
     }
 
@@ -3044,6 +3060,7 @@ tool_format = "json_l"
                 formats: vec![],
             }],
             is_custom: false,
+            test: None,
         };
         let converted = DefaultProviderEntry::from(def);
         assert_eq!(converted.models[0].name, "acme-large");

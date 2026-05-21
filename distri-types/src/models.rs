@@ -178,6 +178,49 @@ pub struct ModelProviderDefinition {
     pub models: Vec<Model>,
     #[serde(default)]
     pub is_custom: bool,
+    /// Per-provider override of how `/v1/providers/test` validates the API
+    /// key. When omitted, the test endpoint probes `GET {base_url}/models`.
+    /// fal.ai sets this because it has no `/models` listing endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<ProviderTestConfig>,
+}
+
+/// Per-provider override of the `/v1/providers/test` probe.
+///
+/// Default behavior (when omitted): `GET {base_url}/models` with both
+/// `Authorization: Bearer <key>` and `api-key: <key>` headers, parsing
+/// `{data: [{id}]}`.
+///
+/// Set this when a provider has no `/models` listing endpoint (fal.ai).
+/// The probe sends the configured request and treats any response status
+/// outside the configured fail set (default: 401/403) as proof the auth
+/// header was accepted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderTestConfig {
+    /// Full URL, or a template containing `{base_url}`.
+    pub url: String,
+    /// HTTP method. Default `GET`.
+    #[serde(default = "default_test_method")]
+    pub method: String,
+    /// Auth header style: `bearer` (default), `key` (fal.ai), or `api_key`.
+    #[serde(default = "default_test_auth")]
+    pub auth: String,
+    /// Optional JSON body (POST/PUT). For fal.ai we send a body that fails
+    /// validation (`{}`) so we never pay for a generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<serde_json::Value>,
+    /// HTTP status codes that count as success. When empty (default), any
+    /// status other than 401/403 passes — the auth header reached the server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accept_status: Vec<u16>,
+}
+
+fn default_test_method() -> String {
+    "GET".to_string()
+}
+
+fn default_test_auth() -> String {
+    "bearer".to_string()
 }
 
 // ── TTS voice info ──────────────────────────────────────────────────────

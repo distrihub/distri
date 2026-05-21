@@ -21,7 +21,7 @@
 
 use crate::models::{
     Model, ModelCapability, ModelPricing, ModelProviderDefinition, ProviderKeyDefinition,
-    TtsVoiceInfo,
+    ProviderTestConfig, TtsVoiceInfo,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -91,6 +91,10 @@ pub struct ProviderCatalogEntry {
     pub stt: Vec<CatalogModel>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image: Vec<CatalogModel>,
+    /// Per-provider override of the `/v1/providers/test` probe — see
+    /// [`ProviderTestConfig`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<ProviderTestConfig>,
 }
 
 impl ProviderCatalogEntry {
@@ -116,6 +120,7 @@ impl ProviderCatalogEntry {
             keys: self.keys,
             models,
             is_custom: false,
+            test: self.test,
         }
     }
 
@@ -138,6 +143,7 @@ impl ProviderCatalogEntry {
             tts: section(ModelCapability::Tts),
             stt: section(ModelCapability::Stt),
             image: section(ModelCapability::Image),
+            test: def.test.clone(),
         }
     }
 }
