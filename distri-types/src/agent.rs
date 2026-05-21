@@ -1059,6 +1059,11 @@ pub enum ModelProvider {
         base_url: String,
         api_key: Option<String>,
     },
+    /// fal.ai — image-generation provider. The model id is the fal endpoint
+    /// path (e.g. `fal-ai/flux/dev`); the gateway POSTs to
+    /// `https://fal.run/<model_id>` with `Authorization: Key <api_key>`.
+    #[serde(rename = "fal_ai")]
+    FalAi { api_key: Option<String> },
 }
 /// Defines the secret requirements for a provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1276,6 +1281,12 @@ impl ModelProvider {
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".to_string()
     }
 
+    /// fal.ai sync invocation root. The full URL is
+    /// `https://fal.run/<model_id>`; auth is `Authorization: Key <key>`.
+    pub fn fal_ai_base_url() -> &'static str {
+        "https://fal.run"
+    }
+
     /// Mutable reference to this provider's `api_key` slot, if any.
     /// Plain OpenAI returns `None` because it uses an env var directly.
     pub fn api_key_slot_mut(&mut self) -> Option<&mut Option<String>> {
@@ -1288,7 +1299,8 @@ impl ModelProvider {
             | Self::AzureAiFoundry { api_key, .. }
             | Self::AwsBedrock { api_key, .. }
             | Self::GoogleVertex { api_key, .. }
-            | Self::AlibabaCloud { api_key, .. } => Some(api_key),
+            | Self::AlibabaCloud { api_key, .. }
+            | Self::FalAi { api_key } => Some(api_key),
         }
     }
 
@@ -1308,7 +1320,7 @@ impl ModelProvider {
             | Self::Gemini { base_url, .. }
             | Self::OpenAICompatible { base_url, .. }
             | Self::AlibabaCloud { base_url, .. } => Some(base_url),
-            Self::OpenAI {} | Self::Anthropic { .. } => None,
+            Self::OpenAI {} | Self::Anthropic { .. } | Self::FalAi { .. } => None,
         }
     }
 
@@ -1326,6 +1338,7 @@ impl ModelProvider {
             ModelProvider::AwsBedrock { .. } => crate::models::ProviderType::AwsBedrock,
             ModelProvider::GoogleVertex { .. } => crate::models::ProviderType::GoogleVertex,
             ModelProvider::AlibabaCloud { .. } => crate::models::ProviderType::AlibabaCloud,
+            ModelProvider::FalAi { .. } => crate::models::ProviderType::FalAi,
         }
     }
 
@@ -1341,6 +1354,7 @@ impl ModelProvider {
             ModelProvider::AwsBedrock { .. } => "aws_bedrock",
             ModelProvider::GoogleVertex { .. } => "google_vertex",
             ModelProvider::AlibabaCloud { .. } => "alibaba_cloud",
+            ModelProvider::FalAi { .. } => "fal_ai",
         }
     }
 
@@ -1370,6 +1384,7 @@ impl ModelProvider {
             ModelProvider::AwsBedrock { .. } => "AWS_ACCESS_KEY_ID",
             ModelProvider::GoogleVertex { .. } => "GOOGLE_VERTEX_API_KEY",
             ModelProvider::AlibabaCloud { .. } => "DASHSCOPE_API_KEY",
+            ModelProvider::FalAi { .. } => "FAL_KEY",
         }
     }
 
@@ -1389,7 +1404,8 @@ impl ModelProvider {
             | ModelProvider::OpenAICompatible { .. }
             | ModelProvider::Anthropic { .. }
             | ModelProvider::Gemini { .. }
-            | ModelProvider::AlibabaCloud { .. } => None,
+            | ModelProvider::AlibabaCloud { .. }
+            | ModelProvider::FalAi { .. } => None,
         }
     }
 
@@ -1473,6 +1489,9 @@ impl ModelProvider {
             ModelProvider::GoogleVertex {
                 base_url, api_key, ..
             } => (Some(base_url.clone()), api_key.clone()),
+            ModelProvider::FalAi { api_key } => {
+                (Some(Self::fal_ai_base_url().to_string()), api_key.clone())
+            }
         }
     }
 
@@ -1489,7 +1508,8 @@ impl ModelProvider {
             | ModelProvider::AzureAiFoundry { api_key, .. }
             | ModelProvider::AwsBedrock { api_key, .. }
             | ModelProvider::GoogleVertex { api_key, .. }
-            | ModelProvider::AlibabaCloud { api_key, .. } => api_key.is_some(),
+            | ModelProvider::AlibabaCloud { api_key, .. }
+            | ModelProvider::FalAi { api_key } => api_key.is_some(),
             ModelProvider::Anthropic { api_key, .. } => api_key.is_some(),
         };
         if api_key_present {
@@ -1538,6 +1558,7 @@ impl ModelProvider {
             ModelProvider::AwsBedrock { .. } => "AWS Bedrock",
             ModelProvider::GoogleVertex { .. } => "Google Vertex AI",
             ModelProvider::AlibabaCloud { .. } => "Alibaba Cloud",
+            ModelProvider::FalAi { .. } => "fal.ai",
         }
     }
 
@@ -1554,6 +1575,7 @@ impl ModelProvider {
             ModelProvider::AwsBedrock { .. } => "aws.bedrock",
             ModelProvider::GoogleVertex { .. } => "gcp.vertex_ai",
             ModelProvider::AlibabaCloud { .. } => "alibaba_cloud",
+            ModelProvider::FalAi { .. } => "fal.ai",
         }
     }
 }
@@ -1731,6 +1753,7 @@ impl ModelSettings {
                 base_url: ModelProvider::alibaba_cloud_base_url(),
                 api_key: None,
             },
+            "fal_ai" => ModelProvider::FalAi { api_key: None },
             _ if provider_str.starts_with("custom_") => ModelProvider::OpenAICompatible {
                 base_url: String::new(),
                 api_key: None,
@@ -1749,7 +1772,7 @@ impl ModelSettings {
                     "unknown model provider prefix '{provider_str}' in '{s}'. \
                      Recognised prefixes: openai, anthropic, azure_openai, \
                      azure (alias for azure_openai), gemini, azure_ai_foundry, \
-                     aws_bedrock, google_vertex, alibaba_cloud, custom_*. \
+                     aws_bedrock, google_vertex, alibaba_cloud, fal_ai, custom_*. \
                      Pass just the model name with no slash to use the \
                      workspace's default provider."
                 ));
@@ -2902,6 +2925,10 @@ tool_format = "json_l"
             }
             .api_key_secret(),
             "OPENAI_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::FalAi { api_key: None }.api_key_secret(),
+            "FAL_KEY"
         );
     }
 

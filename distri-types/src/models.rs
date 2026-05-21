@@ -19,6 +19,8 @@ pub enum ProviderType {
     AlibabaCloud,
     #[serde(rename = "elevenlabs")]
     ElevenLabs,
+    #[serde(rename = "fal_ai")]
+    FalAi,
     /// User-defined provider (LangDB-compatible / OpenAI-compatible)
     #[serde(untagged)]
     Custom(String),
@@ -36,6 +38,7 @@ impl ProviderType {
             Self::GoogleVertex => "google_vertex",
             Self::AlibabaCloud => "alibaba_cloud",
             Self::ElevenLabs => "elevenlabs",
+            Self::FalAi => "fal_ai",
             Self::Custom(id) => id.as_str(),
         }
     }
@@ -51,6 +54,7 @@ impl ProviderType {
             Self::GoogleVertex => "Google Vertex AI",
             Self::AlibabaCloud => "Alibaba Cloud",
             Self::ElevenLabs => "ElevenLabs",
+            Self::FalAi => "fal.ai",
             Self::Custom(id) => id.as_str(),
         }
     }
@@ -66,6 +70,7 @@ impl ProviderType {
             "google_vertex" => Self::GoogleVertex,
             "alibaba_cloud" => Self::AlibabaCloud,
             "elevenlabs" => Self::ElevenLabs,
+            "fal_ai" => Self::FalAi,
             other => Self::Custom(other.to_string()),
         }
     }
@@ -86,6 +91,7 @@ pub enum ModelCapability {
     Completion,
     Tts,
     Stt,
+    Image,
 }
 
 /// Pricing varies by capability type.
@@ -103,6 +109,14 @@ pub enum ModelPricing {
     Tts { per_1m_chars: f64 },
     /// STT pricing — per minute of audio (USD).
     Stt { per_minute: f64 },
+    /// Image generation pricing — per image (USD), with optional per-quality
+    /// overrides keyed by quality tier name (`"low"` / `"medium"` / `"high"`
+    /// for gpt-image-1, `"standard"` / `"hd"` for dall-e-3, etc.).
+    Image {
+        per_image: f64,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        per_quality: std::collections::BTreeMap<String, f64>,
+    },
 }
 
 /// A model with its capability, pricing, and metadata.

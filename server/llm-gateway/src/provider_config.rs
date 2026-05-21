@@ -130,6 +130,18 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 query_params: vec![],
                 send_api_key_header: false,
             },
+            // fal.ai is image-only; LLM completion is not supported. This
+            // arm exists for match exhaustiveness — image generation has its
+            // own dispatch in `crate::image` that talks to fal.run directly.
+            ModelProvider::FalAi { api_key } => Self {
+                base_url: ModelProvider::fal_ai_base_url().to_string(),
+                api_key_secret,
+                inline_api_key: api_key.clone(),
+                project_id: None,
+                extra_headers: HashMap::new(),
+                query_params: vec![],
+                send_api_key_header: false,
+            },
         }
     }
 }

@@ -89,6 +89,8 @@ pub struct ProviderCatalogEntry {
     pub tts: Vec<CatalogModel>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stt: Vec<CatalogModel>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image: Vec<CatalogModel>,
 }
 
 impl ProviderCatalogEntry {
@@ -103,6 +105,11 @@ impl ProviderCatalogEntry {
         );
         models.extend(self.tts.into_iter().map(|m| m.into_model(ModelCapability::Tts)));
         models.extend(self.stt.into_iter().map(|m| m.into_model(ModelCapability::Stt)));
+        models.extend(
+            self.image
+                .into_iter()
+                .map(|m| m.into_model(ModelCapability::Image)),
+        );
         ModelProviderDefinition {
             id: self.id,
             label: self.label,
@@ -130,6 +137,7 @@ impl ProviderCatalogEntry {
             completion: section(ModelCapability::Completion),
             tts: section(ModelCapability::Tts),
             stt: section(ModelCapability::Stt),
+            image: section(ModelCapability::Image),
         }
     }
 }
