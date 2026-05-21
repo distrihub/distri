@@ -107,7 +107,7 @@ impl ContextEventSink {
     /// resume the workflow via `/complete-tool` or A2A `message/send`
     /// with `taskId`.
     async fn create_wait_task(&self) -> Option<String> {
-        use distri_types::stores::{CreateTaskInput, TaskStore};
+        use distri_types::stores::CreateTaskInput;
         let orchestrator = self.context.orchestrator.as_ref()?;
         let task_store = orchestrator.stores.task_store.clone();
         let wait_task_id = uuid::Uuid::new_v4().to_string();
