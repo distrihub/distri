@@ -42,6 +42,8 @@ async-openai = { version = "0.32.2", features = [
   "audio",
   "realtime-types",
   "realtime",
+  "image-types",
+  "image",
 ] }
 anyhow = "1.0"
 tracing = "0.1"

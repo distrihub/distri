@@ -177,6 +177,56 @@ async fn probe_models(base_url: &str, api_key: &str) -> Result<Vec<String>, Stri
     Ok(parsed.data.into_iter().map(|m| m.id).collect())
 }
 
+/// Probe using a catalog-supplied [`ProviderTestConfig`] — used by providers
+/// like fal.ai that don't expose a `GET /models` listing.
+///
+/// Sends the configured request (method, body, auth header style) and
+/// treats any response outside the fail set as success: by default
+/// **any status other than 401/403** counts as "the auth header reached
+/// the server," which is enough to confirm the key is valid. A provider
+/// can narrow this via `accept_status`.
+async fn probe_with_config(
+    cfg: &distri_types::ProviderTestConfig,
+    base_url: &str,
+    api_key: &str,
+) -> Result<(), String> {
+    let url = cfg.url.replace("{base_url}", base_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let mut req = match cfg.method.to_uppercase().as_str() {
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        _ => client.get(&url),
+    };
+    req = match cfg.auth.to_lowercase().as_str() {
+        "key" => req.header("Authorization", format!("Key {api_key}")),
+        "api_key" | "api-key" => req.header("api-key", api_key),
+        _ => req.header("Authorization", format!("Bearer {api_key}")),
+    };
+    if let Some(body) = &cfg.body {
+        req = req.json(body);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("request to {url} failed: {e}"))?;
+    let status = resp.status().as_u16();
+
+    let ok = if !cfg.accept_status.is_empty() {
+        cfg.accept_status.contains(&status)
+    } else {
+        // Default: anything outside 401/403 means the auth header reached the
+        // server — a 4xx validation error still proves the key is valid.
+        status != 401 && status != 403
+    };
+    if ok {
+        return Ok(());
+    }
+    let body = resp.text().await.unwrap_or_default();
+    let detail: String = body.chars().take(300).collect();
+    Err(format!("endpoint returned {status}: {detail}"))
+}
+
 #[utoipa::path(
     post,
     path = "/v1/providers/test",
@@ -206,17 +256,44 @@ async fn test_provider(
         }
     };
 
-    let result = match probe_models(&endpoint.base_url, &endpoint.api_key).await {
-        Ok(models) => TestProviderResponse {
-            ok: true,
-            models,
-            error: None,
-        },
-        Err(error) => TestProviderResponse {
-            ok: false,
-            models: vec![],
-            error: Some(error),
-        },
+    // Per-provider override: providers without a `/models` endpoint (fal.ai)
+    // ship a `test` block in their catalog file. When present we use it;
+    // otherwise we fall back to the OpenAI-style `/models` probe.
+    let result = if let Some(cfg) = distri_types::lookup_provider_test_config(&provider_id) {
+        match probe_with_config(&cfg, &endpoint.base_url, &endpoint.api_key).await {
+            Ok(()) => {
+                // The override probe doesn't list models — surface the
+                // catalog's own model ids so the UI can show them.
+                let models = ModelProvider::well_known_models()
+                    .into_iter()
+                    .find(|m| m.provider_id == provider_id)
+                    .map(|m| m.models.into_iter().map(|m| m.id).collect())
+                    .unwrap_or_default();
+                TestProviderResponse {
+                    ok: true,
+                    models,
+                    error: None,
+                }
+            }
+            Err(error) => TestProviderResponse {
+                ok: false,
+                models: vec![],
+                error: Some(error),
+            },
+        }
+    } else {
+        match probe_models(&endpoint.base_url, &endpoint.api_key).await {
+            Ok(models) => TestProviderResponse {
+                ok: true,
+                models,
+                error: None,
+            },
+            Err(error) => TestProviderResponse {
+                ok: false,
+                models: vec![],
+                error: Some(error),
+            },
+        }
     };
     HttpResponse::Ok().json(result)
 }
