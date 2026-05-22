@@ -25,6 +25,7 @@ pub fn provider_label(ms: &distri_types::ModelSettings) -> String {
         distri_types::ModelProvider::GoogleVertex { .. } => "GoogleVertex",
         distri_types::ModelProvider::OpenAICompatible { .. } => "OpenAICompatible",
         distri_types::ModelProvider::AlibabaCloud { .. } => "AlibabaCloud",
+        distri_types::ModelProvider::FalAi { .. } => "FalAi",
     };
     // Suppress unused warning — variant is used indirectly via name match above
     let _ = variant;
@@ -1761,6 +1762,14 @@ pub fn create_llm_executor(
                 )))
             }
         }
+        // fal.ai is image-only; pinning it as an agent's LLM is a config
+        // error. Image generation goes through `POST /v1/images/generations`,
+        // not the agent loop.
+        ModelProvider::FalAi { .. } => Err(AgentError::InvalidConfiguration(
+            "fal.ai is an image-generation provider and cannot be used as an agent's LLM; \
+             use `POST /v1/images/generations` instead"
+                .to_string(),
+        )),
     }
 }
 

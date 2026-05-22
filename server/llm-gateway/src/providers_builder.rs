@@ -35,6 +35,10 @@ pub fn build_provider_definitions() -> Vec<ModelProviderDefinition> {
                 keys,
                 models,
                 is_custom: false,
+                // The provider-test override is consulted directly by the
+                // `/v1/providers/test` handler via `lookup_provider_test_config`.
+                // The UI doesn't need to render it, so leave it None here.
+                test: None,
             }
         })
         .collect()
