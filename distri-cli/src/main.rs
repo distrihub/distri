@@ -8,13 +8,13 @@ use tokio::fs;
 
 mod chat;
 mod commands;
-mod launcher;
-mod manifest;
 mod config;
 mod credentials;
 mod input;
+mod launcher;
 mod logging;
 mod login;
+mod manifest;
 mod push;
 mod registries;
 mod threads;
@@ -474,9 +474,7 @@ pub(crate) enum ProvidersCommands {
     },
     /// Delete a provider — clears its secrets and (for custom
     /// providers) the `workspace.settings.custom_providers` entry.
-    Delete {
-        provider_id: String,
-    },
+    Delete { provider_id: String },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -488,9 +486,7 @@ pub(crate) enum ModelsCommands {
     /// Set the workspace's default model. Format: `provider/model`
     /// (e.g. `azure_ai_foundry/gpt-5.4`). Pass an empty string to
     /// clear.
-    SetDefault {
-        provider_model: String,
-    },
+    SetDefault { provider_model: String },
 }
 
 fn parse_kv(s: &str) -> Result<(String, String), String> {

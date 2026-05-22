@@ -93,11 +93,7 @@ impl ConnectionStore for InMemoryConnectionStore {
         Ok(())
     }
 
-    async fn update(
-        &self,
-        id: &str,
-        name: Option<String>,
-    ) -> anyhow::Result<Connection> {
+    async fn update(&self, id: &str, name: Option<String>) -> anyhow::Result<Connection> {
         let id = Uuid::parse_str(id).map_err(|e| anyhow::anyhow!("invalid UUID: {}", e))?;
         let mut map = self.connections.write().await;
         let conn = map

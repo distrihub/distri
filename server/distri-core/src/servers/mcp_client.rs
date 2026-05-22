@@ -150,9 +150,9 @@ pub async fn connect(handle: &McpServerHandle) -> Result<RemoteMcpClient> {
                     url,
                 ),
             );
-            info.serve(transport)
-                .await
-                .with_context(|| format!("initializing streamable-http MCP server '{}'", handle.name))?
+            info.serve(transport).await.with_context(|| {
+                format!("initializing streamable-http MCP server '{}'", handle.name)
+            })?
         }
         McpClientTransport::Sse { .. } => {
             // The streamable-http transport gracefully handles servers that

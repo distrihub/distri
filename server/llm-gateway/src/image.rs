@@ -13,9 +13,7 @@
 
 use crate::gateway_config::GatewayConfig;
 use crate::image_types::*;
-use async_openai::types::images::{
-    CreateImageRequestArgs, Image as OaiImage, ImageModel,
-};
+use async_openai::types::images::{CreateImageRequestArgs, Image as OaiImage, ImageModel};
 use async_openai::Client;
 use distri_types::ProviderType;
 use serde_json::{json, Value};

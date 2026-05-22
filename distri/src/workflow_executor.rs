@@ -169,9 +169,9 @@ impl StepExecutor for DistriStepExecutor {
                 context_updates: None,
             }),
 
-            StepKind::Reply { .. } => Ok(StepResult::failed(
-                "Reply step requires a channel executor",
-            )),
+            StepKind::Reply { .. } => {
+                Ok(StepResult::failed("Reply step requires a channel executor"))
+            }
         }
     }
 

@@ -246,11 +246,7 @@ fn format_todo_change(ch: &distri_types::todos::TodoChange) -> String {
             format!("{}-{} {} {}", COLOR_GRAY, COLOR_RESET, icon, ch.content)
         }
         TodoChangeKind::StatusChanged => {
-            let prev_icon = ch
-                .prev_status
-                .as_ref()
-                .map(status_icon)
-                .unwrap_or("?");
+            let prev_icon = ch.prev_status.as_ref().map(status_icon).unwrap_or("?");
             format!(
                 "{}~{} {}→{} {}",
                 COLOR_YELLOW, COLOR_RESET, prev_icon, icon, ch.content

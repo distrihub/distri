@@ -1,8 +1,8 @@
-use actix_web::{HttpResponse, web};
+use actix_web::{web, HttpResponse};
 use distri_types::stores::{
     ProviderStore, TestProviderRequest, TestProviderResponse, UpsertProviderRequest,
 };
-use distri_types::{ModelProvider, SecretKeyDefinition, models::Model};
+use distri_types::{models::Model, ModelProvider, SecretKeyDefinition};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -190,7 +190,9 @@ async fn probe_with_config(
     base_url: &str,
     api_key: &str,
 ) -> Result<(), String> {
-    let url = cfg.url.replace("{base_url}", base_url.trim_end_matches('/'));
+    let url = cfg
+        .url
+        .replace("{base_url}", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
     let mut req = match cfg.method.to_uppercase().as_str() {
         "POST" => client.post(&url),

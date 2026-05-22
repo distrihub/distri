@@ -107,8 +107,16 @@ impl ProviderCatalogEntry {
                 .into_iter()
                 .map(|m| m.into_model(ModelCapability::Completion)),
         );
-        models.extend(self.tts.into_iter().map(|m| m.into_model(ModelCapability::Tts)));
-        models.extend(self.stt.into_iter().map(|m| m.into_model(ModelCapability::Stt)));
+        models.extend(
+            self.tts
+                .into_iter()
+                .map(|m| m.into_model(ModelCapability::Tts)),
+        );
+        models.extend(
+            self.stt
+                .into_iter()
+                .map(|m| m.into_model(ModelCapability::Stt)),
+        );
         models.extend(
             self.image
                 .into_iter()
@@ -198,8 +206,8 @@ pub fn load_catalog_path(path: &Path) -> Result<Vec<ProviderCatalogEntry>> {
     if path.is_dir() {
         load_provider_dir(path)
     } else {
-        let raw = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let raw =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         parse_combined_catalog(&raw)
     }
 }

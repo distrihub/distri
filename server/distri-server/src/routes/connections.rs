@@ -209,12 +209,15 @@ async fn create_connection(
         (status = 500, description = "Internal server error"),
     )
 )]
-async fn update_connection(_executor: web::Data<Arc<AgentOrchestrator>>, _path: web::Path<String>, _payload: web::Json<UpdateConnectionRequest>, ) -> HttpResponse {
+async fn update_connection(
+    _executor: web::Data<Arc<AgentOrchestrator>>,
+    _path: web::Path<String>,
+    _payload: web::Json<UpdateConnectionRequest>,
+) -> HttpResponse {
     HttpResponse::NotImplemented().json(json!({
         "error": "update_connection: OSS handler not yet ported to the Credential model; see docs/specs/credential-separation.md"
     }))
 }
-
 
 // ── DELETE /connections/{id} ──────────────────────────────────────────────
 
@@ -289,12 +292,14 @@ async fn delete_connection(
         (status = 503, description = "OAuth not configured"),
     )
 )]
-async fn oauth_callback(_executor: web::Data<Arc<AgentOrchestrator>>, _payload: web::Json<OAuthCallbackRequest>, ) -> HttpResponse {
+async fn oauth_callback(
+    _executor: web::Data<Arc<AgentOrchestrator>>,
+    _payload: web::Json<OAuthCallbackRequest>,
+) -> HttpResponse {
     HttpResponse::NotImplemented().json(json!({
         "error": "oauth_callback: OSS handler not yet ported to the Credential model; see docs/specs/credential-separation.md"
     }))
 }
-
 
 // ── POST /connections/{id}/token ──────────────────────────────────────────
 
@@ -311,9 +316,11 @@ async fn oauth_callback(_executor: web::Data<Arc<AgentOrchestrator>>, _payload: 
         (status = 500, description = "Internal server error"),
     )
 )]
-async fn get_token(_executor: web::Data<Arc<AgentOrchestrator>>, _path: web::Path<String>, ) -> HttpResponse {
+async fn get_token(
+    _executor: web::Data<Arc<AgentOrchestrator>>,
+    _path: web::Path<String>,
+) -> HttpResponse {
     HttpResponse::NotImplemented().json(json!({
         "error": "get_token: OSS handler not yet ported to the Credential model; see docs/specs/credential-separation.md"
     }))
 }
-

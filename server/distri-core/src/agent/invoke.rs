@@ -188,9 +188,9 @@ impl AgentOrchestrator {
 
                 let mut results = Vec::with_capacity(handles.len());
                 for (idx, h) in handles.into_iter().enumerate() {
-                    let r = h
-                        .await
-                        .map_err(|e| AgentError::Session(format!("join error on target #{idx}: {e}")))?;
+                    let r = h.await.map_err(|e| {
+                        AgentError::Session(format!("join error on target #{idx}: {e}"))
+                    })?;
                     results.push(r?);
                 }
                 Ok(InvocationResult::Vector { results })
@@ -227,7 +227,9 @@ impl AgentOrchestrator {
         invocation_blob: &serde_json::Value,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<AgentResult, AgentError> {
-        let plan = self.plan_for_target(invocation, &target, parent_ctx).await?;
+        let plan = self
+            .plan_for_target(invocation, &target, parent_ctx)
+            .await?;
         match plan {
             DispatchPlan::Local => {
                 self.invoke_local_independent(target, invocation_blob, parent_ctx)
@@ -249,7 +251,9 @@ impl AgentOrchestrator {
         invocation_blob: &serde_json::Value,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<String, AgentError> {
-        let plan = self.plan_for_target(invocation, &target, parent_ctx).await?;
+        let plan = self
+            .plan_for_target(invocation, &target, parent_ctx)
+            .await?;
         match plan {
             DispatchPlan::Local => {
                 self.detach_local_independent(target, invocation_blob, parent_ctx)
@@ -487,12 +491,8 @@ impl AgentOrchestrator {
                     broadcaster: orch.runtime.broadcaster_arc(),
                     hooks,
                 };
-                if let Err(e) = crate::agent::types::BaseAgent::invoke_stream(
-                    &agent,
-                    message,
-                    child_ctx,
-                )
-                .await
+                if let Err(e) =
+                    crate::agent::types::BaseAgent::invoke_stream(&agent, message, child_ctx).await
                 {
                     tracing::warn!(
                         target: "invoke.detached",
@@ -738,7 +738,9 @@ impl ResolvedTarget {
 /// defeat the point of using `invoke_agent` for isolation.
 fn filter_for_subtask(mut tools: distri_types::ToolsConfig) -> distri_types::ToolsConfig {
     const NON_INHERITED: &[&str] = &["write_todos"];
-    tools.builtin.retain(|name| !NON_INHERITED.contains(&name.as_str()));
+    tools
+        .builtin
+        .retain(|name| !NON_INHERITED.contains(&name.as_str()));
     tools
 }
 

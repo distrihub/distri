@@ -317,12 +317,11 @@ async fn tool_search_names_marks_deferred_tools_loaded() {
         ctx.get_loaded_deferred_tools().await.is_empty(),
         "nothing should be loaded yet"
     );
-    assert!(
-        !ctx.get_tools_for_llm()
-            .await
-            .iter()
-            .any(|t| t.get_name() == "zippy__list_content")
-    );
+    assert!(!ctx
+        .get_tools_for_llm()
+        .await
+        .iter()
+        .any(|t| t.get_name() == "zippy__list_content"));
 
     // Model calls tool_search with names:[zippy__list_content].
     let tc = ToolCall {

@@ -10,8 +10,8 @@ use std::{path::Path, sync::Arc};
 
 mod cli;
 pub mod distri_yaml;
-mod seed;
 pub mod logging;
+mod seed;
 
 pub use cli::Cli;
 

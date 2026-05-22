@@ -57,7 +57,8 @@ impl Tool for GetTaskTool {
     fn get_description(&self) -> String {
         "Read a task's current status, parent, and timing by task_id. \
          Use when a supervisor agent needs to inspect a child task it \
-         spawned (typically via a Detached invocation).".to_string()
+         spawned (typically via a Detached invocation)."
+            .to_string()
     }
 
     fn get_parameters(&self) -> Value {
@@ -102,9 +103,9 @@ impl ExecutorContextTool for GetTaskTool {
             .get_task(&input.id)
             .await
             .map_err(|e| AgentError::ToolExecution(format!("get_task failed: {e}")))?;
-        Ok(vec![Part::Data(serde_json::to_value(task).map_err(|e| {
-            AgentError::ToolExecution(format!("serialize get_task: {e}"))
-        })?)])
+        Ok(vec![Part::Data(serde_json::to_value(task).map_err(
+            |e| AgentError::ToolExecution(format!("serialize get_task: {e}")),
+        )?)])
     }
 }
 
@@ -143,7 +144,8 @@ impl Tool for WaitTaskTool {
         "Wait until a task finishes (or timeout_ms elapses) and return \
          its final result. Use after spawning a Detached child to \
          block on it before continuing. Returns immediately if the \
-         task is already terminal.".to_string()
+         task is already terminal."
+            .to_string()
     }
 
     fn get_parameters(&self) -> Value {
@@ -272,7 +274,8 @@ impl Tool for CancelTaskTool {
     fn get_description(&self) -> String {
         "Cancel a task and every descendant. Idempotent — terminal \
          tasks stay in their terminal state. Returns the list of \
-         task ids that were transitioned to Canceled.".to_string()
+         task ids that were transitioned to Canceled."
+            .to_string()
     }
 
     fn get_parameters(&self) -> Value {
@@ -377,7 +380,8 @@ impl Tool for ListMyTasksTool {
         "List tasks the supervisor agent can see. Two scopes: \
          'descendants' (default, lists the parent_task_id tree under \
          the caller's task) and 'running' (all non-terminal tasks, \
-         optionally bounded by thread_id).".to_string()
+         optionally bounded by thread_id)."
+            .to_string()
     }
 
     fn get_parameters(&self) -> Value {
@@ -427,7 +431,9 @@ impl ExecutorContextTool for ListMyTasksTool {
 
         let tasks = match input.scope {
             ListScope::Descendants => {
-                let root = input.root_task_id.unwrap_or_else(|| context.task_id.clone());
+                let root = input
+                    .root_task_id
+                    .unwrap_or_else(|| context.task_id.clone());
                 orch.stores
                     .task_store
                     .list_descendant_tasks(&root)

@@ -2373,7 +2373,12 @@ mod tests {
         });
         let kind: StepKind = serde_json::from_value(json.clone()).unwrap();
         match &kind {
-            StepKind::Reply { text, buttons, buttons_from, button_template } => {
+            StepKind::Reply {
+                text,
+                buttons,
+                buttons_from,
+                button_template,
+            } => {
                 assert_eq!(text, "Your classes:");
                 assert!(buttons.is_empty());
                 assert_eq!(buttons_from.as_deref(), Some("{steps.list.result.classes}"));
@@ -2386,10 +2391,8 @@ mod tests {
 
     #[test]
     fn step_kind_reply_text_only() {
-        let kind: StepKind = serde_json::from_value(
-            serde_json::json!({"type":"reply","text":"Hi"}),
-        )
-        .unwrap();
+        let kind: StepKind =
+            serde_json::from_value(serde_json::json!({"type":"reply","text":"Hi"})).unwrap();
         assert!(matches!(kind, StepKind::Reply { .. }));
     }
 
@@ -2537,8 +2540,16 @@ mod tests {
         // must be Skipped; step "b" must remain Pending (runnable).
         let a_run = run.step_run_by_id("a").unwrap();
         let b_run = run.step_run_by_id("b").unwrap();
-        assert_eq!(a_run.status, StepStatus::Skipped, "step 'a' should be skipped");
-        assert_eq!(b_run.status, StepStatus::Pending, "step 'b' should be pending (runnable)");
+        assert_eq!(
+            a_run.status,
+            StepStatus::Skipped,
+            "step 'a' should be skipped"
+        );
+        assert_eq!(
+            b_run.status,
+            StepStatus::Pending,
+            "step 'b' should be pending (runnable)"
+        );
     }
 
     #[test]
@@ -2558,11 +2569,16 @@ mod tests {
             }]
         }))
         .unwrap();
-        let run = WorkflowRun::new(d).apply_entry_point("process_only").unwrap();
+        let run = WorkflowRun::new(d)
+            .apply_entry_point("process_only")
+            .unwrap();
         // "fetch" is skipped with the preset result
         let fetch_run = run.step_run_by_id("fetch").unwrap();
         assert_eq!(fetch_run.status, StepStatus::Skipped);
-        assert_eq!(fetch_run.result, Some(serde_json::json!({"data": "pre-fetched"})));
+        assert_eq!(
+            fetch_run.result,
+            Some(serde_json::json!({"data": "pre-fetched"}))
+        );
         // The preset result is merged into context["steps"] for downstream resolution
         let steps_ctx = run.context.get("steps").unwrap();
         assert_eq!(steps_ctx["fetch"]["data"], "pre-fetched");

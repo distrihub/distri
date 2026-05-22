@@ -390,6 +390,13 @@ impl<'a> MessageFormatter<'a> {
             return Ok(vec![]);
         };
 
+        // Scratchpad stays task-scoped, even for top-level continuations.
+        // Raw `Execution` entries (ToolCall + ToolResult) become live
+        // `tool_response` messages when reloaded — the LLM treats them as
+        // a few-shot pattern and mimics them, e.g. re-emitting `run_skill`
+        // when it sees a prior `run_skill` call+result. Cross-turn
+        // conversation memory is carried by user/assistant Messages via
+        // `load_task_user_messages`, not by the scratchpad.
         let entries = orchestrator
             .stores
             .scratchpad_store
@@ -439,7 +446,7 @@ impl<'a> MessageFormatter<'a> {
     }
 
     async fn load_task_user_messages(context: &Arc<ExecutorContext>) -> Vec<crate::types::Message> {
-        let Ok(history) = context.get_current_task_message_history().await else {
+        let Ok(history) = context.get_conversation_history().await else {
             return Vec::new();
         };
 
@@ -888,7 +895,6 @@ fn extract_partial_names(template: &str) -> Vec<String> {
     }
     names
 }
-
 
 #[cfg(test)]
 #[path = "formatter_tests.rs"]

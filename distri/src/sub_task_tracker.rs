@@ -28,7 +28,9 @@ use std::time::Instant;
 
 use distri_types::{AgentEvent, AgentEventType};
 
-use distri_formatter::colors::{COLOR_BRIGHT_CYAN, COLOR_GRAY, COLOR_RED, COLOR_RESET, COLOR_YELLOW};
+use distri_formatter::colors::{
+    COLOR_BRIGHT_CYAN, COLOR_GRAY, COLOR_RED, COLOR_RESET, COLOR_YELLOW,
+};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]

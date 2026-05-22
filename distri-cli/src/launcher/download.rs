@@ -26,8 +26,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 pub fn extract_tar_gz(tar_gz: &[u8], dest: &Path) -> Result<()> {
-    std::fs::create_dir_all(dest)
-        .with_context(|| format!("create_dir_all {}", dest.display()))?;
+    std::fs::create_dir_all(dest).with_context(|| format!("create_dir_all {}", dest.display()))?;
     let dec = GzDecoder::new(tar_gz);
     let mut ar = Archive::new(dec);
     ar.unpack(dest)
@@ -86,10 +85,7 @@ mod tests {
 
     #[test]
     fn extract_writes_files() {
-        let bytes = make_tar_gz(&[
-            ("hello.txt", b"world"),
-            ("nested/inner.bin", &[0xde, 0xad]),
-        ]);
+        let bytes = make_tar_gz(&[("hello.txt", b"world"), ("nested/inner.bin", &[0xde, 0xad])]);
         let tmp = TempDir::new().unwrap();
         extract_tar_gz(&bytes, tmp.path()).unwrap();
         assert_eq!(

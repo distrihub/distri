@@ -239,10 +239,7 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
             // surfaces. Mirror `call_agent`'s style — show what the user
             // actually cares about: which skill, what mode.
             let skill = str_field("skill_id");
-            let mode = input
-                .get("mode")
-                .and_then(|v| v.as_str())
-                .unwrap_or("fork");
+            let mode = input.get("mode").and_then(|v| v.as_str()).unwrap_or("fork");
             format!("run_skill(\"{}\", mode: {})", truncate(&skill, 40), mode)
         }
         "final" | "reflect" | "console_log" => format!("{}(...)", name),
