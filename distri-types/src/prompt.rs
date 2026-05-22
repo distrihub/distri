@@ -534,6 +534,26 @@ impl PromptRegistry {
     }
 }
 
+/// Validate that a user-authored handlebars template (skill body, agent
+/// `instructions`, or stored prompt-template content) renders cleanly under
+/// the same strict-mode pipeline used at execution.
+///
+/// Catches unbalanced `{{` / `}}`, references to partials that aren't
+/// registered, and strict-mode variable lookups against the default
+/// `TemplateData`. Called from `SkillStore`, `AgentStore`, and
+/// `PromptTemplateStore` create/update paths so authors see template
+/// errors at push time instead of at the next agent run.
+///
+/// Empty input is a no-op: an agent with no instructions or a freshly
+/// stubbed-out skill is valid.
+pub async fn validate_template_content(content: &str) -> Result<(), AgentError> {
+    if content.trim().is_empty() {
+        return Ok(());
+    }
+    let registry = PromptRegistry::with_defaults().await?;
+    registry.validate_template(content).await
+}
+
 impl Default for PromptRegistry {
     fn default() -> Self {
         Self::new()
