@@ -15,7 +15,7 @@ uuid = { version = "1", features = ["v4"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
 tracing = { workspace = true }
 jsonschema = "0.28"
-distri-types = { path = "../distri-types" }
+distri-types = { path = "../distri-types", version = "0.3.9 " }
 anyhow = { workspace = true }
 
 [dev-dependencies]
