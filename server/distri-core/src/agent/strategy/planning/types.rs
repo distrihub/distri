@@ -119,8 +119,6 @@ pub trait PlanningStrategy: Send + Sync + std::fmt::Debug {
         let planning_executor = self
             .build_planning_executor(plan_config, context.clone(), format)
             .await?;
-        planning_executor
-            .execute_stream(messages, context)
-            .await
+        planning_executor.execute_stream(messages, context).await
     }
 }

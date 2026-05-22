@@ -118,9 +118,7 @@ pub enum WebhookAuth {
     },
     /// Bearer token in `Authorization`. Token comes from the
     /// referenced connection.
-    BearerToken {
-        connection_id: uuid::Uuid,
-    },
+    BearerToken { connection_id: uuid::Uuid },
 }
 
 /// How the webhook HTTP response is shaped.

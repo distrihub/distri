@@ -889,7 +889,6 @@ fn extract_partial_names(template: &str) -> Vec<String> {
     names
 }
 
-
 #[cfg(test)]
 #[path = "formatter_tests.rs"]
 mod tests;

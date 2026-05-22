@@ -48,13 +48,14 @@ pub enum AgentConfig {
     #[schema(value_type = Object)]
     StandardAgent(StandardDefinition),
     /// Workflow-based agent — executes a workflow DAG instead of an LLM loop
+    #[schema(value_type = Object)]
     WorkflowAgent(WorkflowAgentDefinition),
 }
 
 /// Definition for a workflow-based agent.
 /// The workflow definition is stored as JSON to avoid crate dependency on distri-workflow.
 /// Deserialize to `distri_workflow::WorkflowDefinition` at execution time.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WorkflowAgentDefinition {
     pub name: String,
     pub description: String,
@@ -74,6 +75,21 @@ pub struct WorkflowAgentDefinition {
     /// Channel chrome when this workflow agent backs a bot. Optional.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channels: Option<crate::channel_commands::ChannelBindings>,
+    /// Workspace connections this workflow needs. Resolved at run start —
+    /// each connection's tokens are injected into `ExecutorContext.env_vars`
+    /// (usable from `api_call` steps via `{env.X}`), and the connection's
+    /// MCP tools become available to `tool_call` steps by name.
+    ///
+    /// Same shape as `StandardDefinition.connections`; the connection's
+    /// own `auth_scope` (Workspace vs User) determines the fire mode for
+    /// triggered runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<crate::connections::ConnectionRequirement>,
+    /// Explicit tool allowlist (mirrors `StandardDefinition.tools`).
+    /// Optional — when absent, the workflow agent gets the MCP tools
+    /// implied by its declared `connections` plus nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<crate::ToolsConfig>,
 }
 
 fn default_version() -> String {

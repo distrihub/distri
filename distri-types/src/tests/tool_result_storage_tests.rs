@@ -157,7 +157,10 @@ fn compact_for_storage_keeps_inline_image() {
             assert_eq!(bytes, "abc123");
             assert_eq!(mime_type, "image/png");
         }
-        other => panic!("expected Part::Image kept verbatim at storage; got {:?}", other),
+        other => panic!(
+            "expected Part::Image kept verbatim at storage; got {:?}",
+            other
+        ),
     }
 }
 
@@ -171,7 +174,10 @@ fn compact_for_storage_keeps_inline_file() {
     let stored = result.compact_for_storage();
     match &stored.parts[0] {
         Part::File(FileType::Bytes { bytes, .. }) => assert_eq!(bytes, "PDFBYTES"),
-        other => panic!("expected Part::File kept verbatim at storage; got {:?}", other),
+        other => panic!(
+            "expected Part::File kept verbatim at storage; got {:?}",
+            other
+        ),
     }
 }
 
@@ -181,7 +187,10 @@ fn compact_for_storage_still_truncates_long_text() {
     let stored = make_result(vec![Part::Text(long)]).compact_for_storage();
     match &stored.parts[0] {
         Part::Text(t) => {
-            assert!(t.len() < 5000, "long text should still be truncated at storage");
+            assert!(
+                t.len() < 5000,
+                "long text should still be truncated at storage"
+            );
             assert!(t.contains("[truncated"));
         }
         _ => panic!("expected text"),
@@ -194,7 +203,10 @@ fn compact_for_storage_still_truncates_oversized_json() {
     let stored = make_result(vec![Part::Data(big)]).compact_for_storage();
     match &stored.parts[0] {
         Part::Data(v) => {
-            assert!(v.get("truncated").is_some(), "JSON should still be truncated at storage");
+            assert!(
+                v.get("truncated").is_some(),
+                "JSON should still be truncated at storage"
+            );
             assert!(v.get("summary").is_some());
         }
         _ => panic!("expected data part"),
@@ -223,7 +235,10 @@ fn tool_result_inner_image_kept_at_storage() {
             assert_eq!(tr.parts.len(), 2);
             match &tr.parts[1] {
                 Part::Image(FileType::Bytes { bytes, .. }) => assert_eq!(bytes, "INNER"),
-                other => panic!("inner image should survive storage compaction; got {:?}", other),
+                other => panic!(
+                    "inner image should survive storage compaction; got {:?}",
+                    other
+                ),
             }
         }
         _ => panic!("expected tool result"),

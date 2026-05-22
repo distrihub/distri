@@ -145,7 +145,6 @@ pub(crate) fn resolve_reply_step(
     }
 }
 
-
 #[async_trait]
 impl BaseAgent for WorkflowAgent {
     async fn invoke_stream(
@@ -314,9 +313,7 @@ impl WorkflowAgent {
             );
             let step_states = workflow_store
                 .as_ref()
-                .map(|s| {
-                    s.list_steps(&context.task_id)
-                })
+                .map(|s| s.list_steps(&context.task_id))
                 .unwrap()
                 .await
                 .unwrap_or_default();

@@ -75,8 +75,7 @@ pub struct AgentOrchestrator {
     /// `WorkflowAgentDefinition`; what the cloud's webhook route,
     /// scheduler tick, event bus, and workflow-as-tool A2A dispatch
     /// consult to find the workflow run a stimulus targets.
-    pub workflow_trigger_registry:
-        Option<Arc<dyn distri_workflow::WorkflowTriggerRegistry>>,
+    pub workflow_trigger_registry: Option<Arc<dyn distri_workflow::WorkflowTriggerRegistry>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -123,8 +122,7 @@ pub struct AgentOrchestratorBuilder {
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
     workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
-    workflow_trigger_registry:
-        Option<Arc<dyn distri_workflow::WorkflowTriggerRegistry>>,
+    workflow_trigger_registry: Option<Arc<dyn distri_workflow::WorkflowTriggerRegistry>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -249,10 +247,7 @@ impl AgentOrchestratorBuilder {
     /// `WorkflowAgent`. One store, covering both run-level and
     /// step-level state; cloud wires `RedisWorkflowStore`, OSS/tests
     /// use `InMemoryWorkflowStore`.
-    pub fn with_workflow_store(
-        mut self,
-        store: Arc<dyn distri_workflow::WorkflowStore>,
-    ) -> Self {
+    pub fn with_workflow_store(mut self, store: Arc<dyn distri_workflow::WorkflowStore>) -> Self {
         self.workflow_store = Some(store);
         self
     }
@@ -759,9 +754,7 @@ impl AgentOrchestrator {
                         // prompt that says "load skill X and do Y" —
                         // sub-agent then calls `load_skill` itself.
                         context
-                            .extend_tools(vec![Arc::new(
-                                crate::tools::skill_script::LoadSkillTool,
-                            )
+                            .extend_tools(vec![Arc::new(crate::tools::skill_script::LoadSkillTool)
                                 as Arc<dyn Tool>])
                             .await;
                     }
@@ -772,7 +765,13 @@ impl AgentOrchestrator {
                 // auto-discover or auto-inject based on skills or workspace
                 // state. This keeps the prompt/env surface explicit.
                 if !definition.connections.is_empty() {
-                    resolve_declared_connections(&self.stores, &definition, &context).await?;
+                    resolve_declared_connections(
+                        &self.stores,
+                        &definition.name,
+                        &definition.connections,
+                        &context,
+                    )
+                    .await?;
                 }
 
                 // Always inject agent delegation info into prompt context
@@ -902,6 +901,45 @@ impl AgentOrchestrator {
                     crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
                 );
 
+                // Resolve declared connections first so subsequent tool
+                // discovery can use the populated MCP pool, and any
+                // `api_call` step can read `{env.X}` template substitutions
+                // from `ExecutorContext.env_vars`.
+                if !definition.connections.is_empty() {
+                    resolve_declared_connections(
+                        &self.stores,
+                        &definition.name,
+                        &definition.connections,
+                        &context,
+                    )
+                    .await?;
+                }
+
+                // Discover tools available to `StepKind::ToolCall` steps.
+                // The MCP pool is built from this run's connections (cloud
+                // wires it from PgConnectionStore + DefaultResolver), so
+                // declared connections automatically surface their MCP tools.
+                {
+                    let tools_config = definition
+                        .tools
+                        .clone()
+                        .unwrap_or_else(distri_types::ToolsConfig::default);
+                    let external_tools: Vec<Arc<dyn Tool>> = match context.dynamic_tools.clone() {
+                        Some(t) => t.read().await.clone(),
+                        None => vec![],
+                    };
+                    let mcp_pool = self.resolve_mcp_pool(&context).await;
+                    let resolved = crate::tools::resolve_tools_with_deferral_and_pool(
+                        &tools_config,
+                        self.mcp_registry.clone(),
+                        &external_tools,
+                        mcp_pool,
+                    )
+                    .await
+                    .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
+                    context.extend_tools(resolved.all_tools).await;
+                }
+
                 // Populate the trigger registry from this workflow's
                 // entry-point triggers so webhook/cron/event/tool
                 // dispatch can route back to it. Best-effort; logs
@@ -917,14 +955,9 @@ impl AgentOrchestrator {
                         // webhook / scheduler / event dispatchers to
                         // rebuild an ExecutorContext at fire time.
                         let workspace_id =
-                            distri_types::context::current_workspace_id()
-                                .map(|w| w.to_string());
+                            distri_types::context::current_workspace_id().map(|w| w.to_string());
                         if let Err(e) = registry
-                            .register(
-                                &definition.name,
-                                workspace_id.as_deref(),
-                                &workflow_def,
-                            )
+                            .register(&definition.name, workspace_id.as_deref(), &workflow_def)
                             .await
                         {
                             tracing::warn!(
@@ -1932,35 +1965,39 @@ impl AgentOrchestrator {
         let self_inner = self.clone();
         let run_task_id_for_ctx = run_task_id.clone();
 
-        distri_types::context::with_user_and_workspace(user_id.clone(), workspace_uuid, async move {
-            let exec_ctx = crate::agent::ExecutorContext {
-                thread_id: thread_id.clone(),
-                task_id: run_task_id_for_ctx.clone(),
-                agent_id: agent_id.clone(),
-                user_id: user_id.clone(),
-                workspace_id: workspace_str,
-                session_id: thread_id.clone(),
-                orchestrator: Some(self_inner.clone()),
-                ..Default::default()
-            };
+        distri_types::context::with_user_and_workspace(
+            user_id.clone(),
+            workspace_uuid,
+            async move {
+                let exec_ctx = crate::agent::ExecutorContext {
+                    thread_id: thread_id.clone(),
+                    task_id: run_task_id_for_ctx.clone(),
+                    agent_id: agent_id.clone(),
+                    user_id: user_id.clone(),
+                    workspace_id: workspace_str,
+                    session_id: thread_id.clone(),
+                    orchestrator: Some(self_inner.clone()),
+                    ..Default::default()
+                };
 
-            let (registered_ctx, event_rx) = self_inner
-                .register_task(&run_task_id_for_ctx, &thread_id, exec_ctx)
-                .await
-                .map_err(|e| format!("register_task: {e}"))?;
-            self_inner.spawn_task_relay(run_task_id_for_ctx.clone(), event_rx);
-            crate::a2a::stream::spawn_background_execution(
-                self_inner.clone(),
-                agent_id,
-                distri_types::Message::default(),
-                registered_ctx,
-                None,
-                run_task_id_for_ctx,
-                user_id,
-                workspace_uuid,
-            );
-            Ok::<(), String>(())
-        })
+                let (registered_ctx, event_rx) = self_inner
+                    .register_task(&run_task_id_for_ctx, &thread_id, exec_ctx)
+                    .await
+                    .map_err(|e| format!("register_task: {e}"))?;
+                self_inner.spawn_task_relay(run_task_id_for_ctx.clone(), event_rx);
+                crate::a2a::stream::spawn_background_execution(
+                    self_inner.clone(),
+                    agent_id,
+                    distri_types::Message::default(),
+                    registered_ctx,
+                    None,
+                    run_task_id_for_ctx,
+                    user_id,
+                    workspace_uuid,
+                );
+                Ok::<(), String>(())
+            },
+        )
         .await
     }
 
@@ -2180,7 +2217,8 @@ fn parse_structured_output(raw: &str) -> serde_json::Value {
 /// orchestrator, which authenticates via the `x-connection-id` proxy path.
 async fn resolve_declared_connections(
     stores: &distri_types::stores::InitializedStores,
-    definition: &distri_types::StandardDefinition,
+    agent_name: &str,
+    requirements: &[distri_types::connections::ConnectionRequirement],
     context: &Arc<ExecutorContext>,
 ) -> Result<(), AgentError> {
     use crate::connections::{ConnectionResolver, DefaultResolver, ResolveCtx};
@@ -2191,7 +2229,7 @@ async fn resolve_declared_connections(
         None => {
             tracing::warn!(
                 "Agent '{}' declares connections but no connection_store is configured",
-                definition.name
+                agent_name
             );
             return Ok(());
         }
@@ -2202,7 +2240,7 @@ async fn resolve_declared_connections(
         None => {
             return Err(AgentError::Validation(format!(
                 "Agent '{}' declares connections but context has no workspace_id",
-                definition.name
+                agent_name
             )));
         }
     };
@@ -2216,7 +2254,7 @@ async fn resolve_declared_connections(
     let mut connected_lines: Vec<String> = Vec::new();
     let mut missing_providers: Vec<String> = Vec::new();
 
-    for req in &definition.connections {
+    for req in requirements {
         // Wildcard: list every connected workspace connection in the partial
         // but do NOT inject env vars. The agent is expected to authenticate
         // via the `x-connection-id` proxy path (see distri_request /
@@ -2258,9 +2296,7 @@ async fn resolve_declared_connections(
                     distri_types::connections::ConnectionAuth::Oauth { provider: p, .. } => {
                         p == provider
                     }
-                    distri_types::connections::ConnectionAuth::Custom { .. } => {
-                        c.name == provider
-                    }
+                    distri_types::connections::ConnectionAuth::Custom { .. } => c.name == provider,
                     distri_types::connections::ConnectionAuth::DistriNative => provider == "distri",
                     distri_types::connections::ConnectionAuth::None => c.name == provider,
                 };
@@ -2273,7 +2309,7 @@ async fn resolve_declared_connections(
         } else {
             return Err(AgentError::Validation(format!(
                 "Agent '{}' has a connection requirement with neither provider nor connection_id",
-                definition.name
+                agent_name
             )));
         };
 
@@ -2286,7 +2322,7 @@ async fn resolve_declared_connections(
             if req.required {
                 return Err(AgentError::Validation(format!(
                     "Agent '{}' requires connection '{}' but none is connected in this workspace",
-                    definition.name, label
+                    agent_name, label
                 )));
             }
             missing_providers.push(format!(
@@ -2362,7 +2398,7 @@ async fn resolve_declared_connections(
                 }
                 tracing::warn!(
                     "Agent '{}' declared non-required connection '{}' but resolution failed: {}",
-                    definition.name,
+                    agent_name,
                     connection.name,
                     e
                 );
@@ -2376,8 +2412,7 @@ async fn resolve_declared_connections(
 
     // Wildcard path also surfaces registry-known but not-yet-connected providers
     // so the LLM can suggest which ones the user could connect.
-    let has_wildcard = definition
-        .connections
+    let has_wildcard = requirements
         .iter()
         .any(|r| r.provider.as_deref() == Some("*"));
     if has_wildcard {

@@ -245,10 +245,8 @@ impl ExecutorContextTool for InvokeAgentTool {
         tool_call: ToolCall,
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
-        let raw: InvokeAgentInput =
-            serde_json::from_value(tool_call.input.clone()).map_err(|e| {
-                AgentError::ToolExecution(format!("invoke_agent: invalid input: {e}"))
-            })?;
+        let raw: InvokeAgentInput = serde_json::from_value(tool_call.input.clone())
+            .map_err(|e| AgentError::ToolExecution(format!("invoke_agent: invalid input: {e}")))?;
         let invocation = raw
             .into_invocation(&context.runtime_mode)
             .map_err(|e| AgentError::ToolExecution(format!("invoke_agent: {e}")))?;

@@ -551,8 +551,8 @@ mod tests {
 
     #[test]
     fn serde_executor_remote_carries_runner_config() {
-        let inv = Invocation::single(named("w"))
-            .with_executor(ExecutorHint::Force(Executor::Remote {
+        let inv =
+            Invocation::single(named("w")).with_executor(ExecutorHint::Force(Executor::Remote {
                 runner: RunnerConfig::new("sandbox")
                     .with_config(serde_json::json!({ "image": "distri-cli:latest" })),
             }));
@@ -560,7 +560,10 @@ mod tests {
         assert_eq!(v["executor"]["kind"], "force");
         assert_eq!(v["executor"]["type"], "remote");
         assert_eq!(v["executor"]["runner"]["kind"], "sandbox");
-        assert_eq!(v["executor"]["runner"]["config"]["image"], "distri-cli:latest");
+        assert_eq!(
+            v["executor"]["runner"]["config"]["image"],
+            "distri-cli:latest"
+        );
         // Round-trip back to typed.
         let back: Invocation = serde_json::from_value(v).unwrap();
         match back.executor {
