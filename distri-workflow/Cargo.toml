@@ -1,6 +1,6 @@
 [package]
 name = "distri-workflow"
-version = "0.3.8"
+version = "0.3.9"
 edition = "2021"
 description = "Workflow engine for Distri — define, execute, and track multi-step workflows"
 license = "MIT"
