@@ -196,6 +196,34 @@
             "type": "stt",
             "per_minute": 0.006
           }
+        },
+        {
+          "id": "gpt-image-1",
+          "name": "GPT Image 1",
+          "capability": "image",
+          "pricing": {
+            "type": "image",
+            "per_image": 0.042,
+            "per_quality": {
+              "low": 0.011,
+              "medium": 0.042,
+              "high": 0.167
+            }
+          }
+        },
+        {
+          "id": "gpt-image-2",
+          "name": "GPT Image 2",
+          "capability": "image",
+          "pricing": {
+            "type": "image",
+            "per_image": 0.042,
+            "per_quality": {
+              "low": 0.011,
+              "medium": 0.042,
+              "high": 0.167
+            }
+          }
         }
       ]
     },
@@ -286,344 +314,6 @@
             "output": 10.00,
             "cached_input": 0.315
           }
-        }
-      ]
-    },
-    {
-      "id": "elevenlabs",
-      "label": "ElevenLabs",
-      "keys": [
-        {
-          "key": "ELEVENLABS_API_KEY",
-          "label": "API key",
-          "placeholder": "...",
-          "required": true,
-          "sensitive": true
-        }
-      ],
-      "models": [
-        {
-          "id": "eleven_multilingual_v2",
-          "name": "ElevenLabs Multilingual V2",
-          "capability": "tts",
-          "pricing": {
-            "type": "tts",
-            "per_1m_chars": 30.00
-          },
-          "voices": [
-            {
-              "id": "21m00Tcm4TlvDq8ikWAM",
-              "name": "Rachel",
-              "description": "Calm and natural female",
-              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
-            },
-            {
-              "id": "29vD33N1CtxCmqQRPOHJ",
-              "name": "Drew",
-              "description": "Well-rounded male",
-              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
-            },
-            {
-              "id": "2EiwWnXFnvU5JabPnv8n",
-              "name": "Clyde",
-              "description": "War veteran male",
-              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
-            },
-            {
-              "id": "5Q0t7uMcjvnagumLfvZi",
-              "name": "Paul",
-              "description": "Ground news male",
-              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
-            },
-            {
-              "id": "AZnzlk1XvdvUeBnXmlld",
-              "name": "Domi",
-              "description": "Strong female",
-              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
-            },
-            {
-              "id": "EXAVITQu4vr4xnSDxMaL",
-              "name": "Bella",
-              "description": "Soft female",
-              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
-            }
-          ],
-          "formats": [
-            "mp3",
-            "pcm"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "azure_ai_foundry",
-      "label": "Azure AI Foundry",
-      "keys": [
-        {
-          "key": "AZURE_AI_FOUNDRY_RESOURCE",
-          "label": "Resource name",
-          "placeholder": "distri-tts-resource",
-          "required": true,
-          "sensitive": false,
-          "url_template": "https://{}.openai.azure.com/openai/v1"
-        },
-        {
-          "key": "AZURE_AI_FOUNDRY_API_KEY",
-          "label": "API key",
-          "placeholder": "...",
-          "required": true,
-          "sensitive": true
-        }
-      ],
-      "models": [
-        {
-          "id": "gpt-5.4",
-          "name": "GPT-5.4",
-          "capability": "completion",
-          "context_window": 128000,
-          "pricing": {
-            "type": "completion",
-            "input": 5.00,
-            "output": 15.00,
-            "cached_input": 2.50
-          }
-        },
-        {
-          "id": "gpt-5.3-codex",
-          "name": "GPT-5.3 Codex",
-          "capability": "completion",
-          "context_window": 192000,
-          "pricing": {
-            "type": "completion",
-            "input": 5.00,
-            "output": 15.00,
-            "cached_input": 2.50
-          }
-        },
-        {
-          "id": "gpt-4.1-mini",
-          "name": "GPT-4.1 Mini",
-          "capability": "completion",
-          "context_window": 1047576,
-          "pricing": {
-            "type": "completion",
-            "input": 0.40,
-            "output": 1.60,
-            "cached_input": 0.10
-          }
-        },
-        {
-          "id": "gpt-4o-mini-tts",
-          "name": "GPT-4o Mini TTS",
-          "capability": "tts",
-          "pricing": {
-            "type": "tts",
-            "per_1m_chars": 12.00
-          },
-          "voices": [
-            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "ash", "name": "Ash", "description": "Warm and confident", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "ballad", "name": "Ballad", "description": "Expressive and melodic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "coral", "name": "Coral", "description": "Clear and friendly", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "sage", "name": "Sage", "description": "Calm and measured", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
-          ],
-          "formats": ["mp3", "wav", "opus", "aac", "flac", "pcm"]
-        },
-        {
-          "id": "whisper-1",
-          "name": "Whisper",
-          "capability": "stt",
-          "pricing": {
-            "type": "stt",
-            "per_minute": 0.006
-          },
-          "formats": ["wav", "mp3", "flac", "opus", "aac", "pcm"]
-        }
-      ]
-    },
-    {
-      "id": "aws_bedrock",
-      "label": "AWS Bedrock",
-      "keys": [
-        {
-          "key": "AWS_BEDROCK_ENDPOINT",
-          "label": "Endpoint URL",
-          "placeholder": "https://bedrock-runtime.<region>.amazonaws.com/v1",
-          "required": true,
-          "sensitive": false
-        },
-        {
-          "key": "AWS_ACCESS_KEY_ID",
-          "label": "Access Key ID",
-          "placeholder": "AKIA...",
-          "required": true,
-          "sensitive": true
-        },
-        {
-          "key": "AWS_SECRET_ACCESS_KEY",
-          "label": "Secret Access Key",
-          "placeholder": "...",
-          "required": true,
-          "sensitive": true
-        },
-        {
-          "key": "AWS_REGION",
-          "label": "Region",
-          "placeholder": "us-east-1",
-          "required": false,
-          "sensitive": false
-        }
-      ],
-      "models": []
-    },
-    {
-      "id": "google_vertex",
-      "label": "Google Vertex AI",
-      "keys": [
-        {
-          "key": "GOOGLE_VERTEX_ENDPOINT",
-          "label": "Endpoint URL",
-          "placeholder": "https://<region>-aiplatform.googleapis.com/v1",
-          "required": true,
-          "sensitive": false
-        },
-        {
-          "key": "GOOGLE_VERTEX_API_KEY",
-          "label": "API key",
-          "placeholder": "...",
-          "required": true,
-          "sensitive": true
-        },
-        {
-          "key": "GOOGLE_VERTEX_PROJECT_ID",
-          "label": "Project ID",
-          "placeholder": "my-project",
-          "required": false,
-          "sensitive": false
-        }
-      ],
-      "models": []
-    },
-    {
-      "id": "alibaba_cloud",
-      "label": "Alibaba Cloud",
-      "keys": [
-        {
-          "key": "DASHSCOPE_API_KEY",
-          "label": "API key",
-          "placeholder": "sk-...",
-          "required": true,
-          "sensitive": true
-        }
-      ],
-      "models": [
-        {
-          "id": "qwen3.6-plus",
-          "name": "Qwen3.6 Plus",
-          "capability": "completion",
-          "context_window": 1000000,
-          "pricing": {
-            "type": "completion",
-            "input": 0.276,
-            "output": 1.651,
-            "cached_input": 0.028
-          }
-        },
-        {
-          "id": "qwen3.5-35b-a3b",
-          "name": "Qwen3.5 35B A3B",
-          "capability": "completion",
-          "context_window": 262144,
-          "pricing": {
-            "type": "completion",
-            "input": 0.16,
-            "output": 1.30,
-            "cached_input": 0.016
-          }
-        },
-        {
-          "id": "qwen3-tts-flash",
-          "name": "Qwen3 TTS Flash",
-          "capability": "tts",
-          "pricing": {
-            "type": "tts",
-            "per_1m_chars": 10.00
-          },
-          "voices": [
-            { "id": "Cherry", "name": "Cherry", "description": "Female, sunny and friendly", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Serena", "name": "Serena", "description": "Female, gentle", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Ethan", "name": "Ethan", "description": "Male, sunny and warm", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Chelsie", "name": "Chelsie", "description": "Female, virtual girlfriend style", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Momo", "name": "Momo", "description": "Female, playful and mischievous", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Vivian", "name": "Vivian", "description": "Female, cute and slightly feisty", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Moon", "name": "Moon", "description": "Male, bold and handsome", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Maia", "name": "Maia", "description": "Female, intellectual and gentle", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Kai", "name": "Kai", "description": "Male, soothing and smooth", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Nofish", "name": "Nofish", "description": "Male, casual designer", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Bella", "name": "Bella", "description": "Female, lively little girl", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Jennifer", "name": "Jennifer", "description": "Female, cinematic American English", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Ryan", "name": "Ryan", "description": "Male, dramatic and expressive", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Katerina", "name": "Katerina", "description": "Female, mature and elegant", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Aiden", "name": "Aiden", "description": "Male, American English young man", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Eldric Sage", "name": "Eldric Sage", "description": "Male, calm and wise elder", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Mia", "name": "Mia", "description": "Female, gentle and obedient", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Mochi", "name": "Mochi", "description": "Male, clever young adult", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Bellona", "name": "Bellona", "description": "Female, powerful and clear", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Vincent", "name": "Vincent", "description": "Male, raspy and smoky", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Bunny", "name": "Bunny", "description": "Female, cute and adorable", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Neil", "name": "Neil", "description": "Male, professional news anchor", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Elias", "name": "Elias", "description": "Female, academic narrator", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Arthur", "name": "Arthur", "description": "Male, earthy storyteller", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Nini", "name": "Nini", "description": "Female, sweet and clingy", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Seren", "name": "Seren", "description": "Female, soothing lullaby", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Pip", "name": "Pip", "description": "Male, playful and mischievous", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Stella", "name": "Stella", "description": "Female, sweet teenage girl", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Bodega", "name": "Bodega", "description": "Male, passionate Spanish", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Sonrisa", "name": "Sonrisa", "description": "Female, cheerful Latin American", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Alek", "name": "Alek", "description": "Male, cold Russian", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Dolce", "name": "Dolce", "description": "Male, laid-back Italian", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Sohee", "name": "Sohee", "description": "Female, Korean unnie", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Ono Anna", "name": "Ono Anna", "description": "Female, spirited childhood friend", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Lenn", "name": "Lenn", "description": "Male, German post-punk youth", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Emilien", "name": "Emilien", "description": "Male, romantic French", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Andre", "name": "Andre", "description": "Male, magnetic and steady", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Radio Gol", "name": "Radio Gol", "description": "Male, football commentator", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Jada", "name": "Jada", "description": "Female, Shanghainese", "languages": ["Shanghainese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Dylan", "name": "Dylan", "description": "Male, Beijing dialect", "languages": ["Beijing dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Li", "name": "Li", "description": "Male, Nanjing dialect", "languages": ["Nanjing dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Marcus", "name": "Marcus", "description": "Male, Shaanxi dialect", "languages": ["Shaanxi dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Roy", "name": "Roy", "description": "Male, Southern Min dialect", "languages": ["Southern Min", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Peter", "name": "Peter", "description": "Male, Tianjin dialect", "languages": ["Tianjin dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Sunny", "name": "Sunny", "description": "Female, Sichuan dialect", "languages": ["Sichuan dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Eric", "name": "Eric", "description": "Male, Sichuan dialect", "languages": ["Sichuan dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Rocky", "name": "Rocky", "description": "Male, Cantonese", "languages": ["Cantonese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
-            { "id": "Kiki", "name": "Kiki", "description": "Female, Cantonese", "languages": ["Cantonese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] }
-          ],
-          "formats": [
-            "wav"
-          ]
-        },
-        {
-          "id": "qwen3-asr-flash",
-          "name": "Qwen3 ASR Flash",
-          "capability": "stt",
-          "pricing": {
-            "type": "stt",
-            "per_minute": 0.012
-          },
-          "formats": [
-            "wav",
-            "mp3",
-            "flac",
-            "ogg",
-            "aac",
-            "m4a"
-          ]
         }
       ]
     }

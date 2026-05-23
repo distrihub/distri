@@ -107,9 +107,7 @@ pub fn cast_to_executor_context_tool(
 
     // MCP-backed tools: dispatch through their concrete adapter.
     if tool.is_mcp() {
-        if let Some(adapter) =
-            (tool as &dyn Any).downcast_ref::<mcp_tool::McpToolAdapter>()
-        {
+        if let Some(adapter) = (tool as &dyn Any).downcast_ref::<mcp_tool::McpToolAdapter>() {
             return Ok(Box::new(adapter.clone()));
         }
         return Err(AgentError::ToolExecution(format!(
@@ -421,13 +419,8 @@ pub async fn resolve_tools_config_with_pool(
 /// - Empty `include` means "all".
 /// - `exclude` always wins on a hit.
 fn mcp_filter_matches(name: &str, include: &[String], exclude: &[String]) -> bool {
-    let included = include.is_empty()
-        || include
-            .iter()
-            .any(|pat| glob_matches(name, pat));
-    let excluded = exclude
-        .iter()
-        .any(|pat| glob_matches(name, pat));
+    let included = include.is_empty() || include.iter().any(|pat| glob_matches(name, pat));
+    let excluded = exclude.iter().any(|pat| glob_matches(name, pat));
     included && !excluded
 }
 

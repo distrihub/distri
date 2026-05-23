@@ -5,8 +5,8 @@ pub mod config;
 pub mod message;
 mod printer;
 mod renderers;
-mod sub_task_tracker;
 pub mod run;
+mod sub_task_tracker;
 
 /// Workflow engine — define, execute, and track multi-step workflows.
 pub mod workflow {

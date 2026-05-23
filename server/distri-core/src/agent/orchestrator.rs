@@ -759,9 +759,7 @@ impl AgentOrchestrator {
                         // prompt that says "load skill X and do Y" —
                         // sub-agent then calls `load_skill` itself.
                         context
-                            .extend_tools(vec![Arc::new(
-                                crate::tools::skill_script::LoadSkillTool,
-                            )
+                            .extend_tools(vec![Arc::new(crate::tools::skill_script::LoadSkillTool)
                                 as Arc<dyn Tool>])
                             .await;
                     }
@@ -2258,9 +2256,7 @@ async fn resolve_declared_connections(
                     distri_types::connections::ConnectionAuth::Oauth { provider: p, .. } => {
                         p == provider
                     }
-                    distri_types::connections::ConnectionAuth::Custom { .. } => {
-                        c.name == provider
-                    }
+                    distri_types::connections::ConnectionAuth::Custom { .. } => c.name == provider,
                     distri_types::connections::ConnectionAuth::DistriNative => provider == "distri",
                     distri_types::connections::ConnectionAuth::None => c.name == provider,
                 };

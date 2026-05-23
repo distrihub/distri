@@ -9,7 +9,10 @@ use distri_types::stores::{NewSkill, SkillFrontmatter};
 /// Bundled agent markdown from `distri/server/agents/*.md` (compile-time embedded).
 const BUNDLED_AGENTS: &[(&str, &str)] = &[
     ("distri", include_str!("../../agents/distri.md")),
-    ("distri_runner", include_str!("../../agents/distri_runner.md")),
+    (
+        "distri_runner",
+        include_str!("../../agents/distri_runner.md"),
+    ),
     (
         "distri_browser_runner",
         include_str!("../../agents/distri_browser_runner.md"),
@@ -21,10 +24,19 @@ const BUNDLED_AGENTS: &[(&str, &str)] = &[
 
 /// Bundled skills under `distri/server/agents/skills/`.
 const BUNDLED_SKILLS: &[(&str, &str)] = &[
-    ("distri_platform", include_str!("../../agents/skills/distri_platform.md")),
-    ("distri-debug", include_str!("../../agents/skills/distri-debug.md")),
+    (
+        "distri_platform",
+        include_str!("../../agents/skills/distri_platform.md"),
+    ),
+    (
+        "distri-debug",
+        include_str!("../../agents/skills/distri-debug.md"),
+    ),
     ("designer", include_str!("../../agents/skills/designer.md")),
-    ("code_execution", include_str!("../../agents/skills/code_execution.md")),
+    (
+        "code_execution",
+        include_str!("../../agents/skills/code_execution.md"),
+    ),
 ];
 
 pub async fn seed_bundled_defaults(orchestrator: &AgentOrchestrator) -> Result<()> {

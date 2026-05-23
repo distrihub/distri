@@ -29,12 +29,18 @@ pub struct MockFactoryConfig {
     /// `{type: "object", properties: {}}` if absent — fine for
     /// no-arg mocks, but most tests want to drive the LLM toward
     /// realistic argument shapes.
-    #[serde(default = "default_parameters", skip_serializing_if = "is_empty_object")]
+    #[serde(
+        default = "default_parameters",
+        skip_serializing_if = "is_empty_object"
+    )]
     pub parameters: serde_json::Value,
 
     /// Canned response returned verbatim on every invocation. Defaults
     /// to `{"ok": true}` for trivial mocks.
-    #[serde(default = "default_response", skip_serializing_if = "is_default_response")]
+    #[serde(
+        default = "default_response",
+        skip_serializing_if = "is_default_response"
+    )]
     pub response: serde_json::Value,
 }
 

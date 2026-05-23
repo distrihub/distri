@@ -958,6 +958,79 @@ impl ExecutorContext {
         self.collect_message_history(Some(&self.task_id)).await
     }
 
+    /// Conversation history for the LLM prompt, scoped to what the current
+    /// task should see:
+    ///
+    /// - Top-level task (`parent_task_id` is None): messages from all
+    ///   top-level sibling tasks in the same thread. This is the
+    ///   continuation path — distrijs creates a new top-level task per user
+    ///   message, and the LLM needs prior turns to keep conversation memory.
+    /// - Sub-agent task (`parent_task_id` is Some): only the current task's
+    ///   own messages. Sub-agent execution is isolated; the sub-agent's
+    ///   output reaches sibling turns via the parent's saved assistant
+    ///   message, not via cross-task message loading.
+    pub async fn get_conversation_history(
+        &self,
+    ) -> Result<Vec<crate::types::Message>, crate::AgentError> {
+        if self.parent_task_id.is_none() {
+            self.collect_top_level_message_history().await
+        } else {
+            self.get_current_task_message_history().await
+        }
+    }
+
+    async fn collect_top_level_message_history(
+        &self,
+    ) -> Result<Vec<crate::types::Message>, crate::AgentError> {
+        tracing::debug!(
+            "Loading top-level sibling message history for thread_id: {}",
+            self.thread_id
+        );
+
+        let Some(orchestrator) = &self.orchestrator else {
+            tracing::error!(
+                "No orchestrator when loading conversation history for thread_id: {}",
+                self.thread_id
+            );
+            return Ok(Vec::new());
+        };
+
+        let task_history = match orchestrator
+            .stores
+            .task_store
+            .get_history(&self.thread_id, None)
+            .await
+        {
+            Ok(h) => h,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to get history from task store for thread_id {}: {err:?}",
+                    self.thread_id
+                );
+                return Ok(Vec::new());
+            }
+        };
+
+        let mut messages = Vec::new();
+        for (task, task_messages) in &task_history {
+            if task.parent_task_id.is_some() {
+                continue;
+            }
+            for task_message in task_messages {
+                if let crate::types::TaskMessage::Message(message) = task_message {
+                    messages.push(message.clone());
+                }
+            }
+        }
+        messages.sort_by_key(|m| m.created_at);
+        tracing::debug!(
+            "Returning {} top-level sibling messages for thread_id: {}",
+            messages.len(),
+            self.thread_id
+        );
+        Ok(messages)
+    }
+
     async fn collect_message_history(
         &self,
         task_filter: Option<&str>,

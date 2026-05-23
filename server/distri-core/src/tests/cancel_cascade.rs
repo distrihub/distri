@@ -93,7 +93,10 @@ async fn cancel_task_cascades_to_descendants_signals_and_rows() {
 
     // None should be cancelled yet.
     for sig in &signals {
-        assert!(!sig.is_cancelled().await, "signal must not be cancelled pre-cancel");
+        assert!(
+            !sig.is_cancelled().await,
+            "signal must not be cancelled pre-cancel"
+        );
     }
 
     // Fire cancel on the root. Should cascade to all 4.
@@ -163,7 +166,11 @@ async fn cancel_task_on_leaf_does_not_touch_siblings_or_ancestors() {
     let parent = "leaf-parent".to_string();
     let child_a = "leaf-child-a".to_string();
     let child_b = "leaf-child-b".to_string();
-    for (id, p) in [(&parent, None), (&child_a, Some(&parent)), (&child_b, Some(&parent))] {
+    for (id, p) in [
+        (&parent, None),
+        (&child_a, Some(&parent)),
+        (&child_b, Some(&parent)),
+    ] {
         let mut input = CreateTaskInput::local(&thread.id)
             .with_id(id)
             .with_status(TaskStatus::Running);

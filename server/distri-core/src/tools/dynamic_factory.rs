@@ -66,8 +66,8 @@ pub fn validate_dynamic_tool(factory: &DynamicToolFactory) -> Result<()> {
             // typed deserialise. A missing scenario id is allowed (the
             // factory falls back to a generic stub) so authors can
             // experiment with custom inline configs.
-            let _: MockFactoryConfig = serde_json::from_value(factory.config.clone())
-                .map_err(|e| {
+            let _: MockFactoryConfig =
+                serde_json::from_value(factory.config.clone()).map_err(|e| {
                     anyhow::anyhow!("Invalid mock factory config for '{}': {}", factory.name, e)
                 })?;
             Ok(())

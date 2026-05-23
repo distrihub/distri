@@ -140,7 +140,10 @@ impl AgentEventBroadcaster for InProcessBroadcaster {
         // Apply the shared scoped-terminate filter so this impl matches the
         // Redis impl's semantics (stream auto-closes on the subscribed
         // task's own terminal — sub-agent terminals pass through).
-        Ok(Box::pin(super::until_own_terminal(raw, task_id.to_string())))
+        Ok(Box::pin(super::until_own_terminal(
+            raw,
+            task_id.to_string(),
+        )))
     }
 
     async fn set_parent_run(&self, inner_task_id: &str, outer_run_id: &str) -> anyhow::Result<()> {

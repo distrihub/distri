@@ -2,11 +2,11 @@ use anyhow::{anyhow, Context, Result};
 use semver::{Version, VersionReq};
 use std::path::PathBuf;
 
-use crate::manifest::{self, EntryRecord, Manifest};
 use super::compat::{server_req, ui_req};
 use super::download::download_verify_extract;
 use super::platform::Platform;
 use super::releases::{fetch_releases, versions_for_stream, GhRelease, Stream};
+use crate::manifest::{self, EntryRecord, Manifest};
 
 /// Options for resolving a server or UI artifact.
 #[derive(Debug, Default, Clone)]
@@ -113,19 +113,14 @@ async fn resolve_artifact(
     // 5. Download + verify + extract into the cache layout.
     let dest = match stream {
         Stream::Server => manifest::distri_home()?.join("bin"),
-        Stream::Ui => manifest::distri_home()?
-            .join("ui")
-            .join(pick.0.to_string()),
+        Stream::Ui => manifest::distri_home()?.join("ui").join(pick.0.to_string()),
     };
     download_verify_extract(http, &asset.browser_download_url, &expected_sha, &dest).await?;
 
     // 6. Compute the binary path inside the extracted destination + persist manifest.
     let path = match stream {
         Stream::Server => {
-            let bin_name = format!(
-                "distri-server-{}-{}-{}",
-                pick.0, plat.os, plat.arch
-            );
+            let bin_name = format!("distri-server-{}-{}-{}", pick.0, plat.os, plat.arch);
             let candidate = dest.join(&bin_name);
             if candidate.exists() {
                 candidate
@@ -168,9 +163,7 @@ fn pick_release<'a>(
         return candidates
             .iter()
             .find(|(v, _)| v == pin)
-            .ok_or_else(|| {
-                anyhow!("pinned {stream:?} version {pin} not found in releases")
-            });
+            .ok_or_else(|| anyhow!("pinned {stream:?} version {pin} not found in releases"));
     }
     candidates
         .iter()
@@ -187,8 +180,8 @@ fn pick_release<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::releases::{GhAsset, GhRelease};
+    use super::*;
 
     fn release(tag: &str, assets: Vec<(&str, &str)>) -> GhRelease {
         GhRelease {

@@ -755,7 +755,10 @@ impl Distri {
         {
             return Err(ClientError::InvalidResponse(err.to_string()));
         }
-        let result = body.get("result").cloned().unwrap_or(serde_json::Value::Null);
+        let result = body
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         parse_invoke_result(result)
     }
 
@@ -807,7 +810,10 @@ impl Distri {
         {
             return Err(ClientError::InvalidResponse(err.to_string()));
         }
-        let result = body.get("result").cloned().unwrap_or(serde_json::Value::Null);
+        let result = body
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         parse_invoke_result(result)
     }
 

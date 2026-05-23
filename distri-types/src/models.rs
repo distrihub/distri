@@ -19,6 +19,8 @@ pub enum ProviderType {
     AlibabaCloud,
     #[serde(rename = "elevenlabs")]
     ElevenLabs,
+    #[serde(rename = "fal_ai")]
+    FalAi,
     /// User-defined provider (LangDB-compatible / OpenAI-compatible)
     #[serde(untagged)]
     Custom(String),
@@ -36,6 +38,7 @@ impl ProviderType {
             Self::GoogleVertex => "google_vertex",
             Self::AlibabaCloud => "alibaba_cloud",
             Self::ElevenLabs => "elevenlabs",
+            Self::FalAi => "fal_ai",
             Self::Custom(id) => id.as_str(),
         }
     }
@@ -51,6 +54,7 @@ impl ProviderType {
             Self::GoogleVertex => "Google Vertex AI",
             Self::AlibabaCloud => "Alibaba Cloud",
             Self::ElevenLabs => "ElevenLabs",
+            Self::FalAi => "fal.ai",
             Self::Custom(id) => id.as_str(),
         }
     }
@@ -66,6 +70,7 @@ impl ProviderType {
             "google_vertex" => Self::GoogleVertex,
             "alibaba_cloud" => Self::AlibabaCloud,
             "elevenlabs" => Self::ElevenLabs,
+            "fal_ai" => Self::FalAi,
             other => Self::Custom(other.to_string()),
         }
     }
@@ -86,6 +91,7 @@ pub enum ModelCapability {
     Completion,
     Tts,
     Stt,
+    Image,
 }
 
 /// Pricing varies by capability type.
@@ -103,12 +109,23 @@ pub enum ModelPricing {
     Tts { per_1m_chars: f64 },
     /// STT pricing — per minute of audio (USD).
     Stt { per_minute: f64 },
+    /// Image generation pricing — per image (USD), with optional per-quality
+    /// overrides keyed by quality tier name (`"low"` / `"medium"` / `"high"`
+    /// for gpt-image-1, `"standard"` / `"hd"` for dall-e-3, etc.).
+    Image {
+        per_image: f64,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        per_quality: std::collections::BTreeMap<String, f64>,
+    },
 }
 
 /// A model with its capability, pricing, and metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
     pub id: String,
+    /// Human-readable name. Optional in config sources — when omitted it is
+    /// backfilled from `id` by `register_provider_extensions`.
+    #[serde(default)]
     pub name: String,
     pub capability: ModelCapability,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -138,6 +155,7 @@ pub struct ModelWithProvider {
 pub struct ProviderKeyDefinition {
     pub key: String,
     pub label: String,
+    #[serde(default)]
     pub placeholder: String,
     #[serde(default = "default_true")]
     pub required: bool,
@@ -160,6 +178,49 @@ pub struct ModelProviderDefinition {
     pub models: Vec<Model>,
     #[serde(default)]
     pub is_custom: bool,
+    /// Per-provider override of how `/v1/providers/test` validates the API
+    /// key. When omitted, the test endpoint probes `GET {base_url}/models`.
+    /// fal.ai sets this because it has no `/models` listing endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<ProviderTestConfig>,
+}
+
+/// Per-provider override of the `/v1/providers/test` probe.
+///
+/// Default behavior (when omitted): `GET {base_url}/models` with both
+/// `Authorization: Bearer <key>` and `api-key: <key>` headers, parsing
+/// `{data: [{id}]}`.
+///
+/// Set this when a provider has no `/models` listing endpoint (fal.ai).
+/// The probe sends the configured request and treats any response status
+/// outside the configured fail set (default: 401/403) as proof the auth
+/// header was accepted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderTestConfig {
+    /// Full URL, or a template containing `{base_url}`.
+    pub url: String,
+    /// HTTP method. Default `GET`.
+    #[serde(default = "default_test_method")]
+    pub method: String,
+    /// Auth header style: `bearer` (default), `key` (fal.ai), or `api_key`.
+    #[serde(default = "default_test_auth")]
+    pub auth: String,
+    /// Optional JSON body (POST/PUT). For fal.ai we send a body that fails
+    /// validation (`{}`) so we never pay for a generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<serde_json::Value>,
+    /// HTTP status codes that count as success. When empty (default), any
+    /// status other than 401/403 passes — the auth header reached the server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accept_status: Vec<u16>,
+}
+
+fn default_test_method() -> String {
+    "GET".to_string()
+}
+
+fn default_test_auth() -> String {
+    "bearer".to_string()
 }
 
 // ── TTS voice info ──────────────────────────────────────────────────────

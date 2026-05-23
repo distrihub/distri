@@ -74,7 +74,10 @@ impl DistriAgentServer {
         let ui_available = {
             // Prefer explicit --ui-dist path, then legacy hardcoded location.
             let legacy_path = "distri-server/static/ui";
-            ui_dist.as_deref().map(|p| p.exists()).unwrap_or_else(|| std::path::Path::new(legacy_path).exists())
+            ui_dist
+                .as_deref()
+                .map(|p| p.exists())
+                .unwrap_or_else(|| std::path::Path::new(legacy_path).exists())
         };
 
         tracing::info!("🌐 Server ready! Access these endpoints:");

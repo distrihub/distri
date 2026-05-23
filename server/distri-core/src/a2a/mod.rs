@@ -134,6 +134,13 @@ pub fn to_a2a_message(message: &distri_types::Message, task: &distri_types::Task
         });
     }
 
+    // Carry the task's parent task hint so the chat store can place sub-
+    // agent messages under their parent in the rendered tree. Matches the
+    // routing convention used by status-update envelopes.
+    if let Some(parent_task_id) = &task.parent_task_id {
+        metadata["parent_task_id"] = serde_json::json!(parent_task_id);
+    }
+
     Message {
         role: match &message.role {
             distri_types::MessageRole::User => Role::User,
@@ -155,6 +162,24 @@ pub fn to_a2a_task_update(
     event: &distri_types::TaskEvent,
     task: &distri_types::Task,
 ) -> TaskStatusUpdateEvent {
+    // Embed the typed AgentEventEnvelope (same shape as the live-wire path
+    // in `map_agent_event`) so the frontend can route sub-agent events to
+    // their parent via `metadata.parent_task_id`. Without this, history
+    // replay strips the envelope down to the bare event variant and every
+    // sub-agent task arrives at the browser as a root — breaking
+    // SubTaskTree linkage on page reload.
+    //
+    // `agent_id` isn't denormalized onto persisted TaskEvent / Task rows
+    // today; the live path takes it from the executor context. Use empty
+    // string here — consumers that need the display name look up the
+    // thread's agent separately. parent_task_id is what unblocks the
+    // visible bug and that field IS on the Task row.
+    let envelope = distri_types::AgentEventEnvelope {
+        event: event.event.clone(),
+        agent_id: String::new(),
+        parent_task_id: task.parent_task_id.clone(),
+    };
+
     TaskStatusUpdateEvent {
         status: TaskStatus {
             state: task.status.clone().into(),
@@ -163,7 +188,7 @@ pub fn to_a2a_task_update(
         },
         context_id: task.thread_id.clone(),
         task_id: task.id.clone(),
-        metadata: serde_json::to_value(event.event.clone()).ok(),
+        metadata: serde_json::to_value(&envelope).ok(),
         kind: EventKind::TaskStatusUpdate,
         r#final: event.is_final,
     }

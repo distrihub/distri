@@ -11,7 +11,8 @@ use tokio::fs;
 
 use crate::{
     ConnectionsCommands, ModelsCommands, ProfileCommands, ProfileConfigCommands, PromptsCommands,
-    ProvidersCommands, SecretsCommands, SkillsCommands, COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET,
+    ProvidersCommands, SecretsCommands, SkillsCommands, COLOR_BRIGHT_GREEN, COLOR_GRAY,
+    COLOR_RESET,
 };
 
 fn mask_api_key(key: &str) -> String {
@@ -577,10 +578,7 @@ pub async fn handle_secrets_command(client: &Distri, command: SecretsCommands) -
     Ok(())
 }
 
-pub async fn handle_providers_command(
-    client: &Distri,
-    command: ProvidersCommands,
-) -> Result<()> {
+pub async fn handle_providers_command(client: &Distri, command: ProvidersCommands) -> Result<()> {
     match command {
         ProvidersCommands::List => {
             let providers = client.list_model_providers().await?;
@@ -631,9 +629,7 @@ pub async fn handle_models_command(client: &Distri, command: ModelsCommands) -> 
                     let status = if provider.configured { "✓" } else { " " };
                     println!(
                         "{} {} ({})",
-                        status,
-                        provider.provider_id,
-                        provider.provider_label
+                        status, provider.provider_id, provider.provider_label
                     );
                     for m in &provider.models {
                         println!("    {}", m.id);

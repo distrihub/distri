@@ -306,8 +306,7 @@ async fn invoke_force_remote_calls_runner_spawn() {
 /// Auto entries.
 #[tokio::test]
 async fn invoke_auto_routes_remote_when_runtime_unsatisfiable_locally() {
-    let (orch, runner) =
-        build_orch_with_remote_runner("cli_worker", vec![RuntimeMode::Cli]).await;
+    let (orch, runner) = build_orch_with_remote_runner("cli_worker", vec![RuntimeMode::Cli]).await;
     // Parent context is in Cloud runtime; agent requires Cli; runner
     // provides Cli → must dispatch remote even with ExecutorHint::Auto.
     let mut ctx = ExecutorContext::default();
@@ -333,11 +332,11 @@ async fn invoke_force_remote_without_runner_errors() {
     // Orchestrator with NO remote_task_runner.
     let orch = build_orch_with_agent("worker").await;
     let ctx = build_parent_ctx(&orch, "worker");
-    let inv = Invocation::single(target_named("worker", "go")).with_executor(
-        ExecutorHint::Force(Executor::Remote {
+    let inv = Invocation::single(target_named("worker", "go")).with_executor(ExecutorHint::Force(
+        Executor::Remote {
             runner: RunnerConfig::new("default"),
-        }),
-    );
+        },
+    ));
     let err = orch
         .invoke(inv, ctx)
         .await
@@ -353,8 +352,8 @@ async fn invoke_force_remote_without_runner_errors() {
 async fn invoke_inherited_context_returns_not_implemented() {
     let orch = build_orch_with_agent("worker").await;
     let ctx = build_parent_ctx(&orch, "worker");
-    let inv = Invocation::single(target_named("worker", "go"))
-        .with_context(ContextScope::Inherited);
+    let inv =
+        Invocation::single(target_named("worker", "go")).with_context(ContextScope::Inherited);
     let err = orch
         .invoke(inv, ctx)
         .await
@@ -505,10 +504,7 @@ async fn invoke_persists_child_task_row_with_typed_invocation() {
         .await
         .expect("get_task")
         .expect("row");
-    assert_eq!(
-        row.parent_task_id.as_deref(),
-        Some(parent_task_id.as_str())
-    );
+    assert_eq!(row.parent_task_id.as_deref(), Some(parent_task_id.as_str()));
     assert_eq!(
         row.thread_id, parent_ctx.thread_id,
         "child must live in the same thread as parent"

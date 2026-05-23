@@ -156,14 +156,7 @@ fn invoke_agent_tool_metadata_is_stable() {
         "only `prompt` should be required; got: {required:?}"
     );
     // Legacy / orchestrator-controlled fields must NOT appear.
-    for forbidden in [
-        "join",
-        "executor",
-        "targets",
-        "context",
-        "message",
-        "tools",
-    ] {
+    for forbidden in ["join", "executor", "targets", "context", "message", "tools"] {
         assert!(
             params["properties"][forbidden].is_null(),
             "`{forbidden}` must not appear in the LLM-facing schema; \

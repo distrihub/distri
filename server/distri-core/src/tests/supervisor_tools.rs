@@ -79,7 +79,11 @@ async fn build_orch_with_tree() -> (
     (orch, thread.id, root, child_a, child_b)
 }
 
-fn ctx_for(orch: &Arc<crate::AgentOrchestrator>, thread_id: &str, task_id: &str) -> Arc<ExecutorContext> {
+fn ctx_for(
+    orch: &Arc<crate::AgentOrchestrator>,
+    thread_id: &str,
+    task_id: &str,
+) -> Arc<ExecutorContext> {
     let mut ctx = ExecutorContext::default();
     ctx.thread_id = thread_id.to_string();
     ctx.task_id = task_id.to_string();
@@ -123,10 +127,7 @@ async fn get_task_returns_null_for_missing_id() {
     let ctx = ctx_for(&orch, &thread_id, &root);
 
     let parts = GetTaskTool
-        .execute_with_executor_context(
-            tool_call("get_task", json!({ "id": "no-such-task" })),
-            ctx,
-        )
+        .execute_with_executor_context(tool_call("get_task", json!({ "id": "no-such-task" })), ctx)
         .await
         .expect("call must succeed even for missing id");
     let data = data_payload(&parts);
@@ -157,7 +158,10 @@ async fn cancel_task_tool_cascades_descendants() {
         .map(|v| v.as_str().unwrap())
         .collect();
     for id in [&root, &child_a, &child_b] {
-        assert!(cancelled.contains(&id.as_str()), "missing {id} in {cancelled:?}");
+        assert!(
+            cancelled.contains(&id.as_str()),
+            "missing {id} in {cancelled:?}"
+        );
     }
     // DB rows flipped.
     for id in [&root, &child_a, &child_b] {
@@ -266,8 +270,8 @@ async fn wait_task_blocks_until_terminal_event_arrives() {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         // Mark row terminal so the post-wait read sees it.
         let _ = bc_arc; // keep alive
-        // Note: the wait_task tool reads row status AFTER the loop, so we
-        // need to flip the store BEFORE publishing terminal.
+                        // Note: the wait_task tool reads row status AFTER the loop, so we
+                        // need to flip the store BEFORE publishing terminal.
     });
     // Simpler: flip the row first, then publish (so wait sees Completed).
     orch.stores
