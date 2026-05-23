@@ -70,11 +70,7 @@ async fn upsert_step_state(
 /// Emit `AgentEventType::StepStarted` through the executor context's
 /// event channel. Workflow event broadcasting goes through the same
 /// path agent runs use (broadcaster → A2A SSE → `tasks/resubscribe`).
-async fn emit_step_started(
-    context: &Arc<ExecutorContext>,
-    step_id: &str,
-    step_index: usize,
-) {
+async fn emit_step_started(context: &Arc<ExecutorContext>, step_id: &str, step_index: usize) {
     context
         .emit(AgentEventType::StepStarted {
             step_id: step_id.to_string(),
@@ -283,8 +279,7 @@ where
             if !unmet.is_empty() {
                 let missing: Vec<String> = unmet.iter().map(|r| r.skill.clone()).collect();
                 run.step_runs[idx].status = TaskStatus::Failed;
-                run.step_runs[idx].error =
-                    Some(format!("Missing skills: {}", missing.join(", ")));
+                run.step_runs[idx].error = Some(format!("Missing skills: {}", missing.join(", ")));
                 run.step_runs[idx].completed_at = Some(Utc::now());
                 upsert_step_state(
                     workflow_store,
@@ -325,9 +320,7 @@ where
             let wait_task_id = create_wait_task().await;
 
             let (message, schema) = match &step.kind {
-                StepKind::WaitForInput { message, schema } => {
-                    (message.clone(), schema.clone())
-                }
+                StepKind::WaitForInput { message, schema } => (message.clone(), schema.clone()),
                 _ => (String::new(), None),
             };
 
@@ -385,8 +378,7 @@ where
                 )
                 .await;
                 emit_step_started(context, step_id, *idx).await;
-                let step_context =
-                    resolve::resolve_step_input(step.input.as_ref(), &run.context);
+                let step_context = resolve::resolve_step_input(step.input.as_ref(), &run.context);
                 let result = crate::agent::workflow_step_exec::execute_step(
                     step,
                     &step_context,
@@ -418,9 +410,12 @@ where
             .await;
             emit_step_started(context, &step_id, idx).await;
             let step_context = resolve::resolve_step_input(step.input.as_ref(), &run.context);
-            let result =
-                crate::agent::workflow_step_exec::execute_step(&step, &step_context, context.clone())
-                    .await;
+            let result = crate::agent::workflow_step_exec::execute_step(
+                &step,
+                &step_context,
+                context.clone(),
+            )
+            .await;
             let resolved = result.unwrap_or_else(|e| StepResult::failed(&e));
             commit_step(run, workflow_store, run_task_id, context, idx, resolved).await;
 

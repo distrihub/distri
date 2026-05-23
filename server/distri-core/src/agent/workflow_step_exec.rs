@@ -165,8 +165,10 @@ pub(crate) async fn execute_step(
             ..
         } => {
             let resolved_command = resolve_template(command, wf_context);
-            let resolved_args: Vec<String> =
-                args.iter().map(|a| resolve_template(a, wf_context)).collect();
+            let resolved_args: Vec<String> = args
+                .iter()
+                .map(|a| resolve_template(a, wf_context))
+                .collect();
 
             let mut cmd = match shell {
                 Some(ShellType::Bash) | None => {
