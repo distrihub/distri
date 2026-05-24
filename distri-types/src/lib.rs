@@ -16,6 +16,14 @@ pub use orchestrator::*;
 mod hooks;
 
 pub mod auth;
+pub mod authz;
+// Note: authz's `Action` and `TokenType` deliberately stay namespaced
+// (`distri_types::authz::Action`) to avoid colliding with the orchestrator's
+// `core::Action` enum and other crates' `TokenType` types.
+pub use authz::{
+    ActionSet, AuthContext, AuthError, AuthIdentity, AuthMethod, AuthOp, Authorize, HttpMethod,
+    Permissions, ResourceKind, RouteAuthTable, RouteAuthTableBuilder, RouteRequirement, RouteRule,
+};
 pub mod channels;
 pub mod context;
 mod core;

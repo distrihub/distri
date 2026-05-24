@@ -105,6 +105,13 @@ pub struct TokenResponse {
     /// Effective limits applied to this token
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limits: Option<TokenLimits>,
+    /// The typed permissions granted to this token. After spec §6.1
+    /// attenuation: `granted = requested.intersect(&caller.permissions)`.
+    #[serde(default, skip_serializing_if = "crate::Permissions::is_empty")]
+    pub permissions: crate::Permissions,
+    /// Scope this token was issued for (`workspace` or `user`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<crate::connections::AuthScope>,
 }
 
 /// Secret storage for API keys and other non-OAuth authentication
