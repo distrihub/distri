@@ -31,6 +31,29 @@ use distri_workflow::{
 };
 use std::sync::Arc;
 
+/// Build the per-step context: workflow context + `env` namespace populated
+/// from `ExecutorContext.env_vars` (which is where `resolve_declared_connections`
+/// writes resolved connection tokens). Lets `api_call` / `tool_call` steps
+/// reference `{env.GOOGLE_TOKEN}` etc.
+async fn build_step_context(
+    step: &WorkflowStep,
+    run: &WorkflowRun,
+    context: &Arc<ExecutorContext>,
+) -> serde_json::Value {
+    let mut ctx = resolve::resolve_step_input(step.input.as_ref(), &run.context);
+    let env_vars = context.env_vars.read().await;
+    if !env_vars.is_empty() {
+        if let Some(obj) = ctx.as_object_mut() {
+            let env_obj: serde_json::Map<String, serde_json::Value> = env_vars
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            obj.insert("env".to_string(), serde_json::Value::Object(env_obj));
+        }
+    }
+    ctx
+}
+
 /// Skills the workflow agent natively executes (HTTP, MCP tools,
 /// shell, sub-agent dispatch). Used by `unmet_requirements` to mark
 /// steps `Failed` if they declare a skill the engine can't satisfy.
@@ -378,7 +401,7 @@ where
                 )
                 .await;
                 emit_step_started(context, step_id, *idx).await;
-                let step_context = resolve::resolve_step_input(step.input.as_ref(), &run.context);
+                let step_context = build_step_context(step, run, context).await;
                 let result = crate::agent::workflow_step_exec::execute_step(
                     step,
                     &step_context,
@@ -409,7 +432,7 @@ where
             )
             .await;
             emit_step_started(context, &step_id, idx).await;
-            let step_context = resolve::resolve_step_input(step.input.as_ref(), &run.context);
+            let step_context = build_step_context(&step, run, context).await;
             let result = crate::agent::workflow_step_exec::execute_step(
                 &step,
                 &step_context,

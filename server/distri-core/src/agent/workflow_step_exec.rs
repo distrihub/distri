@@ -13,7 +13,7 @@
 
 use crate::agent::ExecutorContext;
 use crate::types::AgentEventType;
-use distri_types::TaskStatus;
+use distri_types::{MessageRole, TaskStatus};
 use distri_workflow::{
     resolve::{resolve_template, resolve_value},
     ShellType, StepKind, StepResult, WorkflowStep,
@@ -26,13 +26,36 @@ pub(crate) fn tool_result_value(text: String) -> serde_json::Value {
     serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({ "output": text }))
 }
 
-fn emit_text(text: &str) -> AgentEventType {
-    AgentEventType::TextMessageContent {
-        message_id: uuid::Uuid::new_v4().to_string(),
-        step_id: "workflow".to_string(),
-        delta: text.to_string(),
-        stripped_content: None,
-    }
+/// Emit a self-contained assistant text message as a proper
+/// Start → Content → End triple so SSE consumers (CLI printer,
+/// distri-formatter) that buffer by `message_id` actually render it.
+/// A bare `TextMessageContent` is dropped by the CLI printer because
+/// `state.messages.get_mut(message_id)` is `None` without a prior Start.
+async fn emit_text(context: &Arc<ExecutorContext>, text: &str) {
+    let message_id = uuid::Uuid::new_v4().to_string();
+    let step_id = "workflow".to_string();
+    context
+        .emit(AgentEventType::TextMessageStart {
+            message_id: message_id.clone(),
+            step_id: step_id.clone(),
+            role: MessageRole::Assistant,
+            is_final: Some(false),
+        })
+        .await;
+    context
+        .emit(AgentEventType::TextMessageContent {
+            message_id: message_id.clone(),
+            step_id: step_id.clone(),
+            delta: text.to_string(),
+            stripped_content: None,
+        })
+        .await;
+    context
+        .emit(AgentEventType::TextMessageEnd {
+            message_id,
+            step_id,
+        })
+        .await;
 }
 
 pub(crate) async fn execute_step(
@@ -58,15 +81,22 @@ pub(crate) async fn execute_step(
                 _ => return Err(format!("Unsupported HTTP method: {}", method)),
             };
 
+            // Legacy convention: any env var prefixed `HEADER_X` becomes an `x` header.
+            // Still useful for non-template-driven cases.
             let env_vars = context.env_vars.read().await;
             for (k, v) in env_vars.iter() {
                 if let Some(name) = k.strip_prefix("HEADER_") {
                     request = request.header(&name.to_lowercase(), v);
                 }
             }
+            drop(env_vars);
+            // Template-resolve declared headers so values like
+            // `"Bearer {env.GOOGLE_TOKEN}"` interpolate against the step context
+            // (which already has `env` populated by `build_step_context` in the driver).
             if let Some(hdrs) = headers {
                 for (k, v) in hdrs {
-                    request = request.header(k, v);
+                    let resolved = resolve_template(v, wf_context);
+                    request = request.header(k, resolved);
                 }
             }
             if let Some(b) = body {
@@ -149,10 +179,9 @@ pub(crate) async fn execute_step(
         }
 
         StepKind::Checkpoint { message } => {
-            context
-                .emit(emit_text(&format!("\n**Checkpoint:** {}\n", message)))
-                .await;
-            Ok(StepResult::done(serde_json::json!({"message": message})))
+            let resolved = resolve_template(message, wf_context);
+            emit_text(&context, &format!("\n**Checkpoint:** {}\n", resolved)).await;
+            Ok(StepResult::done(serde_json::json!({"message": resolved})))
         }
 
         StepKind::Script {
@@ -224,14 +253,10 @@ pub(crate) async fn execute_step(
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
             if !stdout.is_empty() {
-                context
-                    .emit(emit_text(&format!("```\n{}\n```\n", stdout.trim())))
-                    .await;
+                emit_text(&context, &format!("```\n{}\n```\n", stdout.trim())).await;
             }
             if !stderr.is_empty() {
-                context
-                    .emit(emit_text(&format!("⚠ stderr: {}\n", stderr.trim())))
-                    .await;
+                emit_text(&context, &format!("⚠ stderr: {}\n", stderr.trim())).await;
             }
 
             if output.status.success() {

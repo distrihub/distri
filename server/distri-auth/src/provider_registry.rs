@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::providers::OAuth2Provider;
+use distri_types::api::connections::{ByokPolicy, Provider};
 use distri_types::auth::{
     AuthProvider, AuthType, OAuth2FlowType, ProviderRegistry as BaseProviderRegistry,
 };
@@ -29,6 +30,23 @@ pub struct ProviderConfig {
     pub send_redirect_uri: bool,
     #[serde(default)]
     pub pkce_required: bool,
+    /// Extra auth-URL query params this provider always wants set
+    /// (e.g. Google needs `access_type=offline&prompt=consent` to mint
+    /// refresh tokens). Declared in the catalog JSON, not hardcoded in
+    /// `oauth2.rs`. Merged with caller-supplied `extra_params` at URL build
+    /// time — caller wins on key collision.
+    #[serde(default)]
+    pub default_auth_params: HashMap<String, String>,
+    /// JSON Schema describing caller-overridable auth-URL params for this
+    /// provider. The UI consumes this to auto-render form inputs (e.g.
+    /// Slack's "Workspace ID" → `team=`); the server validates incoming
+    /// `extra_auth_params` against it before passing through to OAuth.
+    ///
+    /// Schema is expected to be `{"type": "object", "properties": {...}}`.
+    /// Property names become OAuth URL param keys; property metadata
+    /// (`title`, `description`, `pattern`, etc.) drives form rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_params_schema: Option<serde_json::Value>,
 }
 
 /// Root configuration containing all providers
@@ -39,6 +57,75 @@ pub struct ProvidersConfig {
 
 fn default_send_redirect_uri() -> bool {
     true
+}
+
+impl ProviderConfig {
+    /// Map a catalog entry to the wire `Provider` shape served on
+    /// `GET /v1/connection-providers`. `BYOK policy` is derived from the
+    /// presence of registration metadata / env vars: a `registration_endpoint`
+    /// implies DCR; otherwise we assume the platform manages the OAuth client
+    /// via the env vars declared in `env_vars`.
+    pub fn to_provider(&self) -> Provider {
+        let byok_policy = match (
+            self.env_vars.get("client_id").cloned(),
+            self.env_vars.get("client_secret").cloned(),
+        ) {
+            (Some(env_client_id), Some(env_client_secret)) => ByokPolicy::PlatformDefault {
+                env_client_id,
+                env_client_secret,
+            },
+            _ => ByokPolicy::Required,
+        };
+        let available = match &byok_policy {
+            ByokPolicy::PlatformDefault {
+                env_client_id,
+                env_client_secret,
+            } => env::var(env_client_id).is_ok() && env::var(env_client_secret).is_ok(),
+            ByokPolicy::Dcr => true,
+            ByokPolicy::Required => false,
+        };
+        Provider {
+            // Built-in catalog rows don't have a UUID — use the slug
+            // as the public id. The UI and discovery match by `name`/issuer
+            // anyway, so this is unambiguous.
+            id: self.name.clone(),
+            workspace_id: None,
+            name: self.name.clone(),
+            display_name: title_case(&self.name),
+            authorization_url: self.authorization_url.clone(),
+            token_url: self.token_url.clone(),
+            refresh_url: self.refresh_url.clone(),
+            registration_endpoint: None,
+            scopes_supported: self.scopes_supported.clone(),
+            default_scopes: self.default_scopes.clone().unwrap_or_default(),
+            default_auth_params: self.default_auth_params.clone(),
+            auth_params_schema: self.auth_params_schema.clone(),
+            byok_policy,
+            icon_url: None,
+            available,
+        }
+    }
+}
+
+/// True when `a` is `b` or a sub/parent domain of `b` (one direction is
+/// enough since `find_config_by_issuer` only matches forward). Examples:
+/// `slack.com` vs `slack.com` → true; `mcp.slack.com` vs `slack.com` → true;
+/// `evil.com` vs `slack.com` → false; `slack.com` vs `notslack.com` → false.
+fn host_suffix_match(host_a: &str, host_b: &str) -> bool {
+    let a = host_a.to_ascii_lowercase();
+    let b = host_b.to_ascii_lowercase();
+    if a == b {
+        return true;
+    }
+    a.ends_with(&format!(".{}", b)) || b.ends_with(&format!(".{}", a))
+}
+
+fn title_case(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 /// Registry for dynamically managing authentication providers
@@ -122,6 +209,7 @@ impl ProviderRegistry {
                             client_id,
                             client_secret,
                             self.default_redirect_uri.clone(),
+                            config.default_auth_params.clone(),
                         );
                         Ok(Some(Arc::new(provider)))
                     }
@@ -161,6 +249,56 @@ impl ProviderRegistry {
         None
     }
 
+    /// Get a known provider but built with caller-supplied client_id /
+    /// client_secret instead of the env-var-resolved platform creds. Used
+    /// by BYOK flows where the workspace admin pastes their own OAuth app
+    /// creds at create time. Falls back to None if `name` isn't in the
+    /// catalog (use `build_synthetic_provider` for discovery-only providers).
+    pub async fn get_provider_with_credentials(
+        &self,
+        name: &str,
+        client_id: String,
+        client_secret: String,
+    ) -> Option<Arc<dyn AuthProvider>> {
+        let providers = self.providers.read().await;
+        let config = providers.get(name).cloned()?;
+        if config.r#type != "oauth2" {
+            return None;
+        }
+        let provider = OAuth2Provider::new(
+            config.name,
+            client_id,
+            client_secret,
+            self.default_redirect_uri.clone(),
+            config.default_auth_params,
+        );
+        Some(Arc::new(provider))
+    }
+
+    /// Build an OAuth2Provider entirely from caller-supplied parameters —
+    /// no catalog lookup. Used by discovery + DCR flows where the auth
+    /// server's endpoints aren't in the platform catalog and the client
+    /// creds come from `secret_store` (DCR-issued or BYOK).
+    ///
+    /// `name` is a stable handle (typically the connection's `name`)
+    /// used only for logging; the actual authorization / token URLs
+    /// flow through the `AuthType::OAuth2` passed at flow time.
+    pub fn build_synthetic_provider(
+        &self,
+        name: impl Into<String>,
+        client_id: String,
+        client_secret: String,
+        default_auth_params: HashMap<String, String>,
+    ) -> Arc<dyn AuthProvider> {
+        Arc::new(OAuth2Provider::new(
+            name.into(),
+            client_id,
+            client_secret,
+            self.default_redirect_uri.clone(),
+            default_auth_params,
+        ))
+    }
+
     /// List all available provider names
     pub async fn list_providers(&self) -> Vec<String> {
         let providers = self.providers.read().await;
@@ -173,6 +311,38 @@ impl ProviderRegistry {
     pub async fn get_provider_config(&self, name: &str) -> Option<ProviderConfig> {
         let providers = self.providers.read().await;
         providers.get(name).cloned()
+    }
+
+    /// Snapshot every catalog entry. Cloud merges this with workspace-custom
+    /// rows in `workspace_provider_store` to serve a unified directory.
+    pub async fn list_provider_configs(&self) -> Vec<ProviderConfig> {
+        let providers = self.providers.read().await;
+        let mut list: Vec<ProviderConfig> = providers.values().cloned().collect();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        list
+    }
+
+    /// Find a catalog provider whose `authorization_url` shares an origin
+    /// (host suffix) with the supplied `issuer_or_url`. Used by the
+    /// discovery flow to recognize that an MCP server's OAuth issuer
+    /// (e.g. `https://slack.com`) belongs to a built-in provider. Returns
+    /// `None` for unknown issuers — caller falls through to the
+    /// workspace-custom registry.
+    pub async fn find_config_by_issuer(&self, issuer_or_url: &str) -> Option<ProviderConfig> {
+        let target_host = url::Url::parse(issuer_or_url)
+            .ok()
+            .and_then(|u| u.host_str().map(|s| s.to_string()))?;
+        let providers = self.providers.read().await;
+        for cfg in providers.values() {
+            if let Ok(auth_url) = url::Url::parse(&cfg.authorization_url) {
+                if let Some(cfg_host) = auth_url.host_str() {
+                    if host_suffix_match(&target_host, cfg_host) {
+                        return Some(cfg.clone());
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub async fn requires_pkce(&self, name: &str) -> bool {
