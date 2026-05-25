@@ -13,6 +13,9 @@ pub struct OAuth2Provider {
     pub client_id: String,
     pub client_secret: String,
     pub redirect_uri: String,
+    /// Catalog-declared extras (Google offline-access, Twitter PKCE, etc.)
+    /// — caller-supplied `extra_params` override on key collision.
+    pub default_auth_params: HashMap<String, String>,
     pub http_client: Client,
 }
 
@@ -22,12 +25,14 @@ impl OAuth2Provider {
         client_id: String,
         client_secret: String,
         redirect_uri: String,
+        default_auth_params: HashMap<String, String>,
     ) -> Self {
         Self {
             name,
             client_id,
             client_secret,
             redirect_uri,
+            default_auth_params,
             http_client: Client::new(),
         }
     }
@@ -220,6 +225,7 @@ impl AuthProvider for OAuth2Provider {
         state: &str,
         scopes: &[String],
         redirect_uri: Option<&str>,
+        extra_params: &HashMap<String, String>,
     ) -> Result<String, AuthError> {
         let authorization_url = match auth_config {
             AuthType::OAuth2 {
@@ -248,21 +254,22 @@ impl AuthProvider for OAuth2Provider {
                 query_pairs.append_pair("scope", &scopes.join(" "));
             }
 
-            // Add provider-specific parameters
-            match self.name.as_str() {
-                "google" => {
-                    query_pairs.append_pair("access_type", "offline");
-                    query_pairs.append_pair("prompt", "consent");
-                }
-                "github" => {
-                    // GitHub-specific parameters can be added here
-                }
-                "twitter" => {
-                    query_pairs.append_pair("code_challenge_method", "S256");
-                    // Note: For production, you'd need to implement PKCE properly
-                }
-                _ => {
-                    // Generic OAuth2, no additional parameters
+            // Merge catalog defaults (Google offline-access, Twitter PKCE,
+            // etc.) with caller-supplied `extra_params` (Slack `team=`,
+            // Microsoft `tenant=`, etc.). Caller wins on key collision so
+            // a UI override can replace a catalog default. No provider-name
+            // awareness here — keep this layer provider-agnostic.
+            let mut merged: HashMap<&str, &str> = HashMap::new();
+            for (k, v) in &self.default_auth_params {
+                merged.insert(k.as_str(), v.as_str());
+            }
+            for (k, v) in extra_params {
+                merged.insert(k.as_str(), v.as_str());
+            }
+            for (k, v) in merged {
+                let v = v.trim();
+                if !v.is_empty() {
+                    query_pairs.append_pair(k, v);
                 }
             }
         }
@@ -402,6 +409,7 @@ impl AuthProvider for ClientCredentialsProvider {
         _state: &str,
         _scopes: &[String],
         _redirect_uri: Option<&str>,
+        _extra_params: &HashMap<String, String>,
     ) -> Result<String, AuthError> {
         Err(AuthError::InvalidConfig(
             "Client credentials flow doesn't use authorization URLs".to_string(),
