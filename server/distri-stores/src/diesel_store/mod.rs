@@ -649,11 +649,9 @@ where
 
     async fn register(&self, config: distri_types::configuration::AgentConfig) -> Result<()> {
         if let distri_types::configuration::AgentConfig::StandardAgent(def) = &config {
-            distri_types::prompt::validate_template_content(&def.instructions)
-                .await
-                .with_context(|| {
-                    format!("agent '{}' has invalid handlebars instructions", def.name)
-                })?;
+            distri_types::prompt::validate_template_content(&def.instructions).with_context(
+                || format!("agent '{}' has invalid handlebars instructions", def.name),
+            )?;
         }
         let mut connection = self.conn().await?;
         let name = config.get_name().to_string();
@@ -3816,14 +3814,14 @@ where
 
     async fn create(&self, template_data: NewPromptTemplate) -> Result<PromptTemplateRecord> {
         use crate::schema::prompt_templates::dsl::*;
-        distri_types::prompt::validate_template_content(&template_data.template)
-            .await
-            .with_context(|| {
+        distri_types::prompt::validate_template_content(&template_data.template).with_context(
+            || {
                 format!(
                     "prompt template '{}' has invalid handlebars syntax",
                     template_data.name
                 )
-            })?;
+            },
+        )?;
         let mut conn = self.conn().await?;
         let now = Utc::now().naive_utc();
         let new_id = Uuid::new_v4().to_string();
@@ -3859,14 +3857,14 @@ where
         update_data: UpdatePromptTemplate,
     ) -> Result<PromptTemplateRecord> {
         use crate::schema::prompt_templates::dsl::*;
-        distri_types::prompt::validate_template_content(&update_data.template)
-            .await
-            .with_context(|| {
+        distri_types::prompt::validate_template_content(&update_data.template).with_context(
+            || {
                 format!(
                     "prompt template '{}' has invalid handlebars syntax",
                     update_data.name
                 )
-            })?;
+            },
+        )?;
         let mut conn = self.conn().await?;
         let now = Utc::now().naive_utc();
 
@@ -4191,7 +4189,6 @@ where
     async fn create(&self, skill: NewSkill) -> Result<SkillRecord> {
         use crate::schema::skills::dsl::*;
         distri_types::prompt::validate_template_content(&skill.content)
-            .await
             .with_context(|| format!("skill '{}' has invalid handlebars template", skill.name))?;
         let mut conn = self.conn().await?;
         let now = Utc::now().naive_utc();
@@ -4227,11 +4224,9 @@ where
     async fn update(&self, skill_id_val: &str, update: UpdateSkill) -> Result<SkillRecord> {
         use crate::schema::skills::dsl::*;
         if let Some(ref c) = update.content {
-            distri_types::prompt::validate_template_content(c)
-                .await
-                .with_context(|| {
-                    format!("skill '{}' has invalid handlebars template", skill_id_val)
-                })?;
+            distri_types::prompt::validate_template_content(c).with_context(|| {
+                format!("skill '{}' has invalid handlebars template", skill_id_val)
+            })?;
         }
         let mut conn = self.conn().await?;
         let now = Utc::now().naive_utc();

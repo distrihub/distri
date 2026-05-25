@@ -534,24 +534,30 @@ impl PromptRegistry {
     }
 }
 
-/// Validate that a user-authored handlebars template (skill body, agent
-/// `instructions`, or stored prompt-template content) renders cleanly under
-/// the same strict-mode pipeline used at execution.
+/// Parse-only validation for a user-authored handlebars template (skill
+/// body, agent `instructions`, or stored prompt-template content).
 ///
-/// Catches unbalanced `{{` / `}}`, references to partials that aren't
-/// registered, and strict-mode variable lookups against the default
-/// `TemplateData`. Called from `SkillStore`, `AgentStore`, and
-/// `PromptTemplateStore` create/update paths so authors see template
-/// errors at push time instead of at the next agent run.
+/// Catches real syntax errors — unbalanced `{{` / `}}`, malformed block
+/// helpers (`{{#if …}}` without `{{/if}}`), broken partial directives — so
+/// authors see template errors at push time instead of at the next agent
+/// run.
 ///
-/// Empty input is a no-op: an agent with no instructions or a freshly
-/// stubbed-out skill is valid.
-pub async fn validate_template_content(content: &str) -> Result<(), AgentError> {
+/// Does NOT attempt a strict-mode render: at push time we only have the
+/// built-in partials registered, but templates legitimately reference
+/// workspace-scoped partials (other prompt-templates, skill includes) and
+/// runtime-only variables (`dynamic_values`, `session_values`, per-tool
+/// fields). Those resolve at render time against the live `PromptRegistry`
+/// + `TemplateData`, not against `TemplateData::default()`.
+///
+/// Empty input is a no-op.
+pub fn validate_template_content(content: &str) -> Result<(), AgentError> {
     if content.trim().is_empty() {
         return Ok(());
     }
-    let registry = PromptRegistry::with_defaults().await?;
-    registry.validate_template(content).await
+    let mut handlebars = Handlebars::new();
+    handlebars
+        .register_template_string("__validation__", content)
+        .map_err(|e| AgentError::Planning(format!("Invalid handlebars template: {}", e)))
 }
 
 impl Default for PromptRegistry {
@@ -825,6 +831,31 @@ pub async fn build_prompt_messages_with_budget<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_template_content_accepts_unknown_partials_and_variables() {
+        // Workspace-scoped partials and runtime-only variables aren't
+        // available at push time — they resolve at render. The validator
+        // must not reject them.
+        validate_template_content("{{> workspace_partial}}").unwrap();
+        validate_template_content("{{some_runtime_var}}").unwrap();
+        validate_template_content("{{session.key}} {{dynamic_values.foo}}").unwrap();
+        validate_template_content("{{#if (eq runtime_mode \"cli\")}}cli{{/if}}").unwrap();
+    }
+
+    #[test]
+    fn validate_template_content_rejects_syntax_errors() {
+        // Unclosed block helper.
+        assert!(validate_template_content("{{#if foo}}no close").is_err());
+        // Mismatched braces.
+        assert!(validate_template_content("{{foo").is_err());
+    }
+
+    #[test]
+    fn validate_template_content_empty_is_ok() {
+        validate_template_content("").unwrap();
+        validate_template_content("   \n  ").unwrap();
+    }
 
     #[tokio::test]
     async fn renders_templates_and_messages() {
