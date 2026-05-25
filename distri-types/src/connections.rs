@@ -113,19 +113,190 @@ fn default_required() -> bool {
     true
 }
 
-/// RFC 8414 metadata for OAuth Authorization Servers discovered via the
-/// `.well-known/oauth-authorization-server` endpoint. Used for MCP servers
-/// (Dynamic Client Registration / non-built-in providers). Built-in providers
-/// (google, github, …) leave this as `None` and use the registry-known endpoints.
+/// Category for grouping Directory tiles. Entries that share a group
+/// cluster under one heading (e.g. `Google` covers the vanilla `google`
+/// tile + the four `*_mcp` Workspace tiles). Enumerated so the UI's
+/// grouping logic and section headings stay type-safe — adding a tag
+/// requires editing this enum, not just typing a new string in JSON.
+///
+/// `Other` is the catch-all for entries we haven't categorised
+/// explicitly; the UI renders them in a trailing "Other" section.
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq, Eq, Hash,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderGroup {
+    Google,
+    Slack,
+    Github,
+    Notion,
+    Microsoft,
+    Twitter,
+    Linear,
+    Atlassian,
+    Discord,
+    #[serde(other)]
+    Other,
+}
+
+impl ProviderGroup {
+    /// Heading rendered above the group's tiles in the Directory.
+    pub fn display(&self) -> &'static str {
+        match self {
+            Self::Google => "Google",
+            Self::Slack => "Slack",
+            Self::Github => "GitHub",
+            Self::Notion => "Notion",
+            Self::Microsoft => "Microsoft",
+            Self::Twitter => "Twitter / X",
+            Self::Linear => "Linear",
+            Self::Atlassian => "Atlassian",
+            Self::Discord => "Discord",
+            Self::Other => "Other",
+        }
+    }
+}
+
+/// Full OAuth provider declaration carried inline on a Connection.
+///
+/// One canonical shape across three sources:
+///   * **Built-in catalog** (`additional_providers.json`) — seeded into
+///     the create form when the user picks a known provider tile.
+///   * **MCP discovery** (RFC 8414 + 9728) — seeded from
+///     `POST /v1/connections/oauth/discover` when the user pastes an
+///     MCP URL whose server publishes auth-server metadata.
+///   * **Admin-entered** — workspace admin types the values into the
+///     custom-connection form directly.
+///
+/// Once a Connection is created, the config is *frozen* on the row —
+/// catalog edits do not retroactively apply. Use
+/// `POST /v1/connections/{id}/resync-provider` to re-apply the catalog
+/// over an existing connection.
+///
+/// **Always USER-scoped.** Connections authorize an individual end-user's
+/// identity at the third party (Slack `xoxp-…`, Google as user X, …).
+/// Bot install flows use channel-setup paths (`channels.bot_token`),
+/// NOT this config.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
-pub struct OAuthMetadata {
-    pub issuer: String,
-    pub authorization_endpoint: String,
-    pub token_endpoint: String,
+pub struct OAuthProviderConfig {
+    /// Stable slug (`slack`, `github`, `linear`, …) — drives the
+    /// catalog-resync lookup and the secret-store namespace prefix.
+    pub name: String,
+    /// Friendly label for the UI. Falls back to title-cased `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub authorization_url: String,
+    pub token_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_url: Option<String>,
+    /// RFC 7591 registration endpoint, when the auth server publishes one
+    /// (discovery sets this; catalog entries usually don't).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration_endpoint: Option<String>,
     #[serde(default)]
     pub scopes_supported: Vec<String>,
+    #[serde(default)]
+    pub default_scopes: Vec<String>,
+    /// Extra auth-URL query params the provider always wants set
+    /// (Google's `access_type=offline`, Twitter PKCE flag, …).
+    #[serde(default)]
+    pub default_auth_params: HashMap<String, String>,
+    /// JSON Schema describing caller-overridable auth-URL params
+    /// (Slack's `team`, Microsoft's `tenant`, …). UI auto-renders inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_params_schema: Option<serde_json::Value>,
+    #[serde(default)]
+    pub pkce_required: bool,
+    /// Env-var names that hold the platform's pre-registered OAuth client
+    /// (`SLACK_CLIENT_ID`/`_SECRET`). Both `None` ⇒ no platform creds,
+    /// BYOK required. UI offers BYOK alongside platform when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+}
+
+/// Directory tile wire shape served by `GET /v1/connections/providers`.
+/// Tagged union on `kind` so the UI's MCP-vs-REST switching is
+/// exhaustive (no nullable `transport_url` to leak through type holes).
+///
+/// **Rest** — vanilla OAuth (Google OIDC, GitHub, Notion). Workflows
+/// use the stored token against the provider's REST API directly.
+///
+/// **Mcp** — OAuth + pinned `transport_url`. Picking this tile creates
+/// an MCP-kind Connection with `Connection.kind.mcp.transport.url`
+/// pre-pinned. The OAuth fields are still used for the consent flow.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CatalogProvider {
+    Rest {
+        #[serde(flatten)]
+        oauth: OAuthProviderConfig,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<ProviderGroup>,
+    },
+    Mcp {
+        #[serde(flatten)]
+        oauth: OAuthProviderConfig,
+        /// Streamable-HTTP endpoint the connection's MCP transport will
+        /// be pinned to.
+        transport_url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<ProviderGroup>,
+    },
+}
+
+impl CatalogProvider {
+    /// Borrow the OAuth bag shared by both variants.
+    pub fn oauth(&self) -> &OAuthProviderConfig {
+        match self {
+            Self::Rest { oauth, .. } | Self::Mcp { oauth, .. } => oauth,
+        }
+    }
+
+    /// Borrow the group label shared by both variants.
+    pub fn group(&self) -> Option<ProviderGroup> {
+        match self {
+            Self::Rest { group, .. } | Self::Mcp { group, .. } => *group,
+        }
+    }
+
+    /// Borrow the pinned MCP transport URL when the entry is MCP-flavored.
+    pub fn transport_url(&self) -> Option<&str> {
+        match self {
+            Self::Mcp { transport_url, .. } => Some(transport_url.as_str()),
+            _ => None,
+        }
+    }
+}
+
+impl OAuthProviderConfig {
+    /// Effective display name — friendly label or title-cased slug.
+    pub fn display(&self) -> String {
+        self.display_name.clone().unwrap_or_else(|| {
+            let mut chars = self.name.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+    }
+
+    /// Project this provider config to the `AuthType::OAuth2 { ... }`
+    /// shape consumed by `OAuthHandler`. `scopes` is the per-connection
+    /// requested scopes (different from the catalog's `scopes_supported`).
+    pub fn to_auth_type(&self, scopes: Vec<String>) -> crate::auth::AuthType {
+        crate::auth::AuthType::OAuth2 {
+            flow_type: crate::auth::OAuth2FlowType::AuthorizationCode,
+            authorization_url: self.authorization_url.clone(),
+            token_url: self.token_url.clone(),
+            refresh_url: self.refresh_url.clone(),
+            scopes,
+            send_redirect_uri: true,
+        }
+    }
 }
 
 /// What kind of authn this Connection holds. Lives directly on the Connection
@@ -137,15 +308,14 @@ pub struct OAuthMetadata {
 pub enum ConnectionAuth {
     /// No auth needed. Used by open MCP servers and test connections.
     None,
-    /// OAuth (platform-managed, BYOK, or DCR for MCP).
+    /// OAuth (platform-managed, BYOK, or DCR for MCP). The provider's full
+    /// declaration (auth URL, token URL, scopes, PKCE, env-var refs for
+    /// platform client creds, …) is carried inline so the connection is
+    /// self-sufficient: no runtime catalog lookup needed for OAuth flow.
     Oauth {
-        provider: String,
+        provider: OAuthProviderConfig,
         #[serde(default)]
         scopes: Vec<String>,
-        /// RFC 8414 metadata for DCR / non-built-in providers. None for
-        /// built-in (google, github, …) where the registry knows the endpoints.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        oauth_metadata: Option<OAuthMetadata>,
     },
     /// User-supplied named fields (API keys, custom headers). Values live in
     /// the `secrets` table under key `connection.<id>.<field_key>`.
@@ -161,9 +331,17 @@ impl ConnectionAuth {
     pub fn provider_name(&self) -> &str {
         match self {
             Self::None => "none",
-            Self::Oauth { provider, .. } => provider.as_str(),
+            Self::Oauth { provider, .. } => provider.name.as_str(),
             Self::Custom { .. } => "custom",
             Self::DistriNative => "distri",
+        }
+    }
+
+    /// Borrow the inline OAuth provider config when this is the `Oauth` variant.
+    pub fn oauth_config(&self) -> Option<&OAuthProviderConfig> {
+        match self {
+            Self::Oauth { provider, .. } => Some(provider),
+            _ => None,
         }
     }
 

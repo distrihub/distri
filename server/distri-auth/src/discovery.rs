@@ -17,7 +17,7 @@
 //!    `connection.<id>.oauth_client_id` / `_secret` (same slot as BYOK).
 
 use distri_types::auth::AuthError;
-use distri_types::connections::OAuthMetadata;
+use distri_types::connections::OAuthProviderConfig;
 use reqwest::{header::WWW_AUTHENTICATE, Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -85,9 +85,10 @@ struct ProtectedResourceMetadata {
 }
 
 /// Raw shape of RFC 8414 authorization-server metadata. Only the fields
-/// we map onto `OAuthMetadata` here.
+/// we map onto `OAuthProviderConfig` here.
 #[derive(Debug, Clone, Deserialize)]
 struct AuthServerMetadataWire {
+    #[allow(dead_code)]
     issuer: String,
     authorization_endpoint: String,
     token_endpoint: String,
@@ -95,6 +96,11 @@ struct AuthServerMetadataWire {
     registration_endpoint: Option<String>,
     #[serde(default)]
     scopes_supported: Vec<String>,
+    /// RFC 8414 §2 — present when the auth server supports PKCE. Most
+    /// public-client / DCR flows require it, so when this is non-empty
+    /// the discovered provider config is marked `pkce_required = true`.
+    #[serde(default)]
+    code_challenge_methods_supported: Vec<String>,
 }
 
 fn build_http_client() -> Result<Client, AuthError> {
@@ -134,8 +140,10 @@ fn origin_of(url: &Url) -> String {
 }
 
 /// Discover the OAuth authorization-server metadata that protects an MCP
-/// server URL. See module-level docs for the fallback chain.
-pub async fn discover_for_mcp_url(mcp_url: &str) -> Result<OAuthMetadata, AuthError> {
+/// server URL. See module-level docs for the fallback chain. The result
+/// is a *partial* `OAuthProviderConfig` — `name` defaults to the host slug
+/// and the caller (handler/UI) can override before persisting.
+pub async fn discover_for_mcp_url(mcp_url: &str) -> Result<OAuthProviderConfig, AuthError> {
     let client = build_http_client()?;
     let url = Url::parse(mcp_url)
         .map_err(|e| AuthError::InvalidConfig(format!("Invalid MCP URL '{mcp_url}': {e}")))?;
@@ -143,9 +151,10 @@ pub async fn discover_for_mcp_url(mcp_url: &str) -> Result<OAuthMetadata, AuthEr
     // 1. RFC 9728 — `<origin>/.well-known/oauth-protected-resource`. Try
     //    against the MCP URL's path first (some servers serve it on the
     //    full path), then origin.
-    let candidates = [
-        format!("{}/.well-known/oauth-protected-resource", origin_of(&url)),
-    ];
+    let candidates = [format!(
+        "{}/.well-known/oauth-protected-resource",
+        origin_of(&url)
+    )];
     let mut issuer: Option<String> = None;
     for cand in &candidates {
         if let Ok(resp) = client.get(cand).send().await {
@@ -172,8 +181,7 @@ pub async fn discover_for_mcp_url(mcp_url: &str) -> Result<OAuthMetadata, AuthEr
                                     if let Ok(meta) =
                                         meta_resp.json::<ProtectedResourceMetadata>().await
                                     {
-                                        issuer =
-                                            meta.authorization_servers.into_iter().next();
+                                        issuer = meta.authorization_servers.into_iter().next();
                                     }
                                 }
                             }
@@ -196,21 +204,37 @@ pub async fn discover_for_mcp_url(mcp_url: &str) -> Result<OAuthMetadata, AuthEr
         .get(&meta_url)
         .send()
         .await
-        .map_err(|e| {
-            AuthError::OAuth2Flow(format!("GET {meta_url}: {e}"))
-        })?
+        .map_err(|e| AuthError::OAuth2Flow(format!("GET {meta_url}: {e}")))?
         .error_for_status()
         .map_err(|e| AuthError::OAuth2Flow(format!("auth-server metadata {meta_url}: {e}")))?
         .json()
         .await
         .map_err(|e| AuthError::OAuth2Flow(format!("parse auth-server metadata: {e}")))?;
 
-    Ok(OAuthMetadata {
-        issuer: wire.issuer,
-        authorization_endpoint: wire.authorization_endpoint,
-        token_endpoint: wire.token_endpoint,
+    // Derive a default slug name from the issuer host so the connection
+    // can be referenced consistently; the UI / admin may override.
+    let name = Url::parse(&issuer)
+        .ok()
+        .and_then(|u| u.host_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "discovered".to_string());
+
+    let pkce_required = !wire.code_challenge_methods_supported.is_empty();
+
+    Ok(OAuthProviderConfig {
+        name,
+        display_name: None,
+        authorization_url: wire.authorization_endpoint,
+        token_url: wire.token_endpoint,
+        refresh_url: None,
         registration_endpoint: wire.registration_endpoint,
         scopes_supported: wire.scopes_supported,
+        default_scopes: vec![],
+        default_auth_params: std::collections::HashMap::new(),
+        auth_params_schema: None,
+        pkce_required,
+        env_client_id: None,
+        env_client_secret: None,
+        icon_url: None,
     })
 }
 
