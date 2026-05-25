@@ -1,3 +1,18 @@
+//! Built-in OAuth provider catalog.
+//!
+//! Loaded from `additional_providers.json` (+ `default_providers.json`)
+//! at startup. The catalog is a **seed source** for the connection
+//! create form — the UI fetches the list at create time, the user picks
+//! a tile, and the form is pre-filled with that entry's
+//! `OAuthProviderConfig`. Once persisted on a Connection the config is
+//! frozen there; this registry is NOT consulted at OAuth-flow time.
+//!
+//! Workspaces that need a non-catalog OAuth provider enter the URLs
+//! directly into the custom-connection form; admins do not register
+//! providers as a separate entity.
+//!
+//! See `additional_providers.json` for the on-disk schema.
+
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -9,22 +24,39 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::providers::OAuth2Provider;
-use distri_types::api::connections::{ByokPolicy, Provider};
 use distri_types::auth::{
     AuthProvider, AuthType, OAuth2FlowType, ProviderRegistry as BaseProviderRegistry,
 };
+use distri_types::connections::{CatalogProvider, OAuthProviderConfig, ProviderGroup};
 
-/// Configuration for a single authentication provider
+/// Common OAuth fields shared by both REST and MCP catalog entries.
+/// Lifted to its own struct + composed via newtype variants on
+/// `ProviderConfig` — serde's `#[serde(tag)]` + `#[serde(flatten)]`
+/// interaction is buggy on internally-tagged enums (parses fields out
+/// of order, produces misleading "missing field" panics). Newtype
+/// variants with the inner struct directly avoid the issue.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ProviderConfig {
+pub struct ProviderOAuthFields {
     pub name: String,
-    pub r#type: String,
+    /// Human-readable label for the Directory tile. Falls back to
+    /// `title_case(name)` when absent.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Directory group enum. Tiles sharing a group cluster under one
+    /// heading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<ProviderGroup>,
     pub authorization_url: String,
     pub token_url: String,
+    #[serde(default)]
     pub refresh_url: Option<String>,
+    #[serde(default)]
     pub scopes_supported: Vec<String>,
+    #[serde(default)]
     pub default_scopes: Option<Vec<String>>,
+    #[serde(default)]
     pub scope_mappings: Option<HashMap<String, String>>,
+    #[serde(default)]
     pub env_vars: HashMap<String, String>,
     #[serde(default = "default_send_redirect_uri")]
     pub send_redirect_uri: bool,
@@ -32,21 +64,56 @@ pub struct ProviderConfig {
     pub pkce_required: bool,
     /// Extra auth-URL query params this provider always wants set
     /// (e.g. Google needs `access_type=offline&prompt=consent` to mint
-    /// refresh tokens). Declared in the catalog JSON, not hardcoded in
-    /// `oauth2.rs`. Merged with caller-supplied `extra_params` at URL build
-    /// time — caller wins on key collision.
+    /// refresh tokens).
     #[serde(default)]
     pub default_auth_params: HashMap<String, String>,
     /// JSON Schema describing caller-overridable auth-URL params for this
-    /// provider. The UI consumes this to auto-render form inputs (e.g.
-    /// Slack's "Workspace ID" → `team=`); the server validates incoming
-    /// `extra_auth_params` against it before passing through to OAuth.
-    ///
-    /// Schema is expected to be `{"type": "object", "properties": {...}}`.
-    /// Property names become OAuth URL param keys; property metadata
-    /// (`title`, `description`, `pattern`, etc.) drives form rendering.
+    /// provider (e.g. Slack's `team` workspace-id input).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_params_schema: Option<serde_json::Value>,
+}
+
+/// Catalog entry as serialized in `additional_providers.json` /
+/// `default_providers.json`. Tagged union on `kind` so REST vs MCP
+/// flavors are exhaustively distinguished — no nullable
+/// `transport_url`. Newtype variants (not struct variants with
+/// `flatten`) because internally-tagged + flatten is broken in serde.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProviderConfig {
+    /// Vanilla OAuth provider (Google OIDC, GitHub, Notion, …). No MCP
+    /// server pinned; workflows use the token directly against the
+    /// provider's REST API.
+    Rest(ProviderOAuthFields),
+    /// OAuth + a pinned MCP transport URL. Picking this tile creates
+    /// an MCP-kind Connection with `Connection.kind.mcp.transport.url`
+    /// pre-set to `transport_url`.
+    Mcp(McpProviderFields),
+}
+
+/// `Mcp` variant body — OAuth fields + the pinned transport URL.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct McpProviderFields {
+    pub transport_url: String,
+    #[serde(flatten)]
+    pub oauth: ProviderOAuthFields,
+}
+
+impl ProviderConfig {
+    pub fn oauth(&self) -> &ProviderOAuthFields {
+        match self {
+            Self::Rest(oauth) => oauth,
+            Self::Mcp(mcp) => &mcp.oauth,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.oauth().name
+    }
+
+    pub fn group(&self) -> Option<ProviderGroup> {
+        self.oauth().group
+    }
 }
 
 /// Root configuration containing all providers
@@ -59,67 +126,6 @@ fn default_send_redirect_uri() -> bool {
     true
 }
 
-impl ProviderConfig {
-    /// Map a catalog entry to the wire `Provider` shape served on
-    /// `GET /v1/connection-providers`. `BYOK policy` is derived from the
-    /// presence of registration metadata / env vars: a `registration_endpoint`
-    /// implies DCR; otherwise we assume the platform manages the OAuth client
-    /// via the env vars declared in `env_vars`.
-    pub fn to_provider(&self) -> Provider {
-        let byok_policy = match (
-            self.env_vars.get("client_id").cloned(),
-            self.env_vars.get("client_secret").cloned(),
-        ) {
-            (Some(env_client_id), Some(env_client_secret)) => ByokPolicy::PlatformDefault {
-                env_client_id,
-                env_client_secret,
-            },
-            _ => ByokPolicy::Required,
-        };
-        let available = match &byok_policy {
-            ByokPolicy::PlatformDefault {
-                env_client_id,
-                env_client_secret,
-            } => env::var(env_client_id).is_ok() && env::var(env_client_secret).is_ok(),
-            ByokPolicy::Dcr => true,
-            ByokPolicy::Required => false,
-        };
-        Provider {
-            // Built-in catalog rows don't have a UUID — use the slug
-            // as the public id. The UI and discovery match by `name`/issuer
-            // anyway, so this is unambiguous.
-            id: self.name.clone(),
-            workspace_id: None,
-            name: self.name.clone(),
-            display_name: title_case(&self.name),
-            authorization_url: self.authorization_url.clone(),
-            token_url: self.token_url.clone(),
-            refresh_url: self.refresh_url.clone(),
-            registration_endpoint: None,
-            scopes_supported: self.scopes_supported.clone(),
-            default_scopes: self.default_scopes.clone().unwrap_or_default(),
-            default_auth_params: self.default_auth_params.clone(),
-            auth_params_schema: self.auth_params_schema.clone(),
-            byok_policy,
-            icon_url: None,
-            available,
-        }
-    }
-}
-
-/// True when `a` is `b` or a sub/parent domain of `b` (one direction is
-/// enough since `find_config_by_issuer` only matches forward). Examples:
-/// `slack.com` vs `slack.com` → true; `mcp.slack.com` vs `slack.com` → true;
-/// `evil.com` vs `slack.com` → false; `slack.com` vs `notslack.com` → false.
-fn host_suffix_match(host_a: &str, host_b: &str) -> bool {
-    let a = host_a.to_ascii_lowercase();
-    let b = host_b.to_ascii_lowercase();
-    if a == b {
-        return true;
-    }
-    a.ends_with(&format!(".{}", b)) || b.ends_with(&format!(".{}", a))
-}
-
 fn title_case(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
@@ -128,14 +134,66 @@ fn title_case(s: &str) -> String {
     }
 }
 
-/// Registry for dynamically managing authentication providers
+impl ProviderConfig {
+    /// Project this catalog entry to the OAuth-only shape carried inline
+    /// on a persisted Connection. The form seeds itself from this value;
+    /// once persisted the config is frozen on the row. Variant-specific
+    /// metadata (`transport_url`, `group`) does NOT round-trip onto the
+    /// connection — it lives only on the catalog `CatalogProvider`.
+    pub fn to_oauth_provider_config(&self) -> OAuthProviderConfig {
+        let f = self.oauth();
+        OAuthProviderConfig {
+            name: f.name.clone(),
+            display_name: Some(
+                f.display_name
+                    .clone()
+                    .unwrap_or_else(|| title_case(&f.name)),
+            ),
+            authorization_url: f.authorization_url.clone(),
+            token_url: f.token_url.clone(),
+            refresh_url: f.refresh_url.clone(),
+            registration_endpoint: None,
+            scopes_supported: f.scopes_supported.clone(),
+            default_scopes: f.default_scopes.clone().unwrap_or_default(),
+            default_auth_params: f.default_auth_params.clone(),
+            auth_params_schema: f.auth_params_schema.clone(),
+            pkce_required: f.pkce_required,
+            env_client_id: f.env_vars.get("client_id").cloned(),
+            env_client_secret: f.env_vars.get("client_secret").cloned(),
+            icon_url: None,
+        }
+    }
+
+    /// Project to the wire `CatalogProvider` shape served on
+    /// `GET /v1/connections/providers`. Variant-preserving so the UI sees
+    /// REST vs MCP as a discriminated union.
+    pub fn to_catalog_provider(&self) -> CatalogProvider {
+        let oauth = self.to_oauth_provider_config();
+        let group = self.group();
+        match self {
+            ProviderConfig::Rest(_) => CatalogProvider::Rest { oauth, group },
+            ProviderConfig::Mcp(mcp) => CatalogProvider::Mcp {
+                oauth,
+                transport_url: mcp.transport_url.clone(),
+                group,
+            },
+        }
+    }
+}
+
+/// In-memory catalog of built-in OAuth providers. Cheap to clone via Arc.
 pub struct ProviderRegistry {
     providers: Arc<RwLock<HashMap<String, ProviderConfig>>>,
+    /// Default redirect URI used when constructing a catalog-resolved
+    /// `OAuth2Provider` (legacy single-tenant flows). Cloud paths supply
+    /// their own per-connection redirect via `provider_override` and
+    /// don't consult this.
     default_redirect_uri: String,
 }
 
 impl ProviderRegistry {
-    /// Create a new provider registry with an explicit callback URL
+    /// Create an empty registry with an explicit callback URL. Call
+    /// `load_default_providers` etc. to populate the catalog.
     pub fn new(callback_url: impl Into<String>) -> Self {
         Self {
             providers: Arc::new(RwLock::new(HashMap::new())),
@@ -155,7 +213,6 @@ impl ProviderRegistry {
         Ok(registry)
     }
 
-    /// Get the configured redirect URI
     pub fn redirect_uri(&self) -> &str {
         &self.default_redirect_uri
     }
@@ -185,118 +242,10 @@ impl ProviderRegistry {
         let mut providers_map = self.providers.write().await;
 
         for provider_config in &config.providers {
-            providers_map.insert(provider_config.name.clone(), provider_config.clone());
+            providers_map.insert(provider_config.name().to_string(), provider_config.clone());
         }
 
         Ok(())
-    }
-
-    /// Create a provider instance from configuration
-    fn create_provider_from_config(
-        &self,
-        config: &ProviderConfig,
-    ) -> Result<Option<Arc<dyn AuthProvider>>> {
-        match config.r#type.as_str() {
-            "oauth2" => {
-                // Check if all required environment variables are present
-                let client_id = env::var(&config.env_vars["client_id"]);
-                let client_secret = env::var(&config.env_vars["client_secret"]);
-
-                match (client_id, client_secret) {
-                    (Ok(client_id), Ok(client_secret)) => {
-                        let provider = OAuth2Provider::new(
-                            config.name.clone(),
-                            client_id,
-                            client_secret,
-                            self.default_redirect_uri.clone(),
-                            config.default_auth_params.clone(),
-                        );
-                        Ok(Some(Arc::new(provider)))
-                    }
-                    _ => {
-                        tracing::debug!(
-                            "Environment variables not set for provider {}: {} and {}",
-                            config.name,
-                            config.env_vars["client_id"],
-                            config.env_vars["client_secret"]
-                        );
-                        Ok(None)
-                    }
-                }
-            }
-
-            _ => {
-                tracing::warn!("Unsupported provider type: {}", config.r#type);
-                Ok(None)
-            }
-        }
-    }
-
-    /// Get a provider by name
-    pub async fn get_provider(&self, name: &str) -> Option<Arc<dyn AuthProvider>> {
-        let providers = self.providers.read().await;
-        let config = providers.get(name).cloned();
-
-        if let Some(config) = config {
-            return match self.create_provider_from_config(&config) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::warn!("{e}");
-                    None
-                }
-            };
-        }
-        None
-    }
-
-    /// Get a known provider but built with caller-supplied client_id /
-    /// client_secret instead of the env-var-resolved platform creds. Used
-    /// by BYOK flows where the workspace admin pastes their own OAuth app
-    /// creds at create time. Falls back to None if `name` isn't in the
-    /// catalog (use `build_synthetic_provider` for discovery-only providers).
-    pub async fn get_provider_with_credentials(
-        &self,
-        name: &str,
-        client_id: String,
-        client_secret: String,
-    ) -> Option<Arc<dyn AuthProvider>> {
-        let providers = self.providers.read().await;
-        let config = providers.get(name).cloned()?;
-        if config.r#type != "oauth2" {
-            return None;
-        }
-        let provider = OAuth2Provider::new(
-            config.name,
-            client_id,
-            client_secret,
-            self.default_redirect_uri.clone(),
-            config.default_auth_params,
-        );
-        Some(Arc::new(provider))
-    }
-
-    /// Build an OAuth2Provider entirely from caller-supplied parameters —
-    /// no catalog lookup. Used by discovery + DCR flows where the auth
-    /// server's endpoints aren't in the platform catalog and the client
-    /// creds come from `secret_store` (DCR-issued or BYOK).
-    ///
-    /// `name` is a stable handle (typically the connection's `name`)
-    /// used only for logging; the actual authorization / token URLs
-    /// flow through the `AuthType::OAuth2` passed at flow time.
-    pub fn build_synthetic_provider(
-        &self,
-        name: impl Into<String>,
-        client_id: String,
-        client_secret: String,
-        default_auth_params: HashMap<String, String>,
-    ) -> Arc<dyn AuthProvider> {
-        Arc::new(OAuth2Provider::new(
-            name.into(),
-            client_id,
-            client_secret,
-            self.default_redirect_uri.clone(),
-            default_auth_params,
-        ))
     }
 
     /// List all available provider names
@@ -313,77 +262,31 @@ impl ProviderRegistry {
         providers.get(name).cloned()
     }
 
-    /// Snapshot every catalog entry. Cloud merges this with workspace-custom
-    /// rows in `workspace_provider_store` to serve a unified directory.
-    pub async fn list_provider_configs(&self) -> Vec<ProviderConfig> {
+    /// Catalog projected to the wire `CatalogProvider` shape served on
+    /// `GET /v1/connections/providers`. Variant-preserving (Rest vs Mcp).
+    /// Sorted by name.
+    pub async fn list_catalog_providers(&self) -> Vec<CatalogProvider> {
         let providers = self.providers.read().await;
-        let mut list: Vec<ProviderConfig> = providers.values().cloned().collect();
-        list.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut list: Vec<CatalogProvider> = providers
+            .values()
+            .map(|c| c.to_catalog_provider())
+            .collect();
+        list.sort_by(|a, b| a.oauth().name.cmp(&b.oauth().name));
         list
     }
 
-    /// Find a catalog provider whose `authorization_url` shares an origin
-    /// (host suffix) with the supplied `issuer_or_url`. Used by the
-    /// discovery flow to recognize that an MCP server's OAuth issuer
-    /// (e.g. `https://slack.com`) belongs to a built-in provider. Returns
-    /// `None` for unknown issuers — caller falls through to the
-    /// workspace-custom registry.
-    pub async fn find_config_by_issuer(&self, issuer_or_url: &str) -> Option<ProviderConfig> {
-        let target_host = url::Url::parse(issuer_or_url)
-            .ok()
-            .and_then(|u| u.host_str().map(|s| s.to_string()))?;
+    /// Look up a catalog entry's `OAuthProviderConfig` by name. Used by
+    /// `POST /v1/connections/{id}/resync-provider` to overwrite a stale
+    /// inline config.
+    pub async fn oauth_provider_config(&self, name: &str) -> Option<OAuthProviderConfig> {
         let providers = self.providers.read().await;
-        for cfg in providers.values() {
-            if let Ok(auth_url) = url::Url::parse(&cfg.authorization_url) {
-                if let Some(cfg_host) = auth_url.host_str() {
-                    if host_suffix_match(&target_host, cfg_host) {
-                        return Some(cfg.clone());
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    pub async fn requires_pkce(&self, name: &str) -> bool {
-        self.get_provider_config(name)
-            .await
-            .map(|config| config.pkce_required)
-            .unwrap_or(false)
-    }
-
-    /// Get provider configuration by name
-    pub async fn get_auth_type(&self, name: &str) -> Option<AuthType> {
-        let config = self.get_provider_config(name).await;
-        if let Some(provider_config) = config {
-            match provider_config.r#type.as_str() {
-                "oauth2" => Some(AuthType::OAuth2 {
-                    flow_type: OAuth2FlowType::AuthorizationCode,
-                    authorization_url: provider_config.authorization_url,
-                    token_url: provider_config.token_url,
-                    refresh_url: provider_config.refresh_url,
-                    scopes: provider_config
-                        .default_scopes
-                        .unwrap_or_else(|| provider_config.scopes_supported.clone()),
-                    send_redirect_uri: provider_config.send_redirect_uri,
-                }),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Check if a provider is available (configured with credentials)
-    pub async fn is_provider_available(&self, name: &str) -> bool {
-        let providers = self.providers.read().await;
-        providers.contains_key(name)
+        providers.get(name).map(|c| c.to_oauth_provider_config())
     }
 
     /// Expand scope aliases to full OAuth scope URLs for a provider
     pub async fn expand_scopes(&self, provider_name: &str, scopes: &[String]) -> Vec<String> {
         if let Some(provider_config) = self.get_provider_config(provider_name).await {
-            if let Some(scope_mappings) = &provider_config.scope_mappings {
+            if let Some(scope_mappings) = &provider_config.oauth().scope_mappings {
                 return scopes
                     .iter()
                     .map(|scope| {
@@ -395,7 +298,6 @@ impl ProviderRegistry {
                     .collect();
             }
         }
-        // No provider config or mappings, return original scopes
         scopes.to_vec()
     }
 
@@ -414,20 +316,69 @@ impl ProviderRegistry {
             .filter(|scope| !expanded_available.contains(scope))
             .collect()
     }
+
+    /// True when the platform OAuth client creds named in this provider's
+    /// `env_vars` resolve at runtime. Used by the UI to mark a tile as
+    /// "platform creds available" vs "BYOK required".
+    pub async fn platform_creds_available(&self, name: &str) -> bool {
+        let Some(cfg) = self.get_provider_config(name).await else {
+            return false;
+        };
+        let f = cfg.oauth();
+        let cid = f.env_vars.get("client_id");
+        let csec = f.env_vars.get("client_secret");
+        match (cid, csec) {
+            (Some(cid), Some(csec)) => env::var(cid).is_ok() && env::var(csec).is_ok(),
+            _ => false,
+        }
+    }
+
+    /// Build an `OAuth2Provider` for a catalog provider using env-resolved
+    /// platform client creds + the registry's default redirect URI. Returns
+    /// `None` when the env vars are missing. Used by legacy single-tenant
+    /// flows (CLI / orchestrator); cloud always supplies its own
+    /// `provider_override`.
+    fn build_provider_from_catalog(&self, cfg: &ProviderConfig) -> Option<Arc<dyn AuthProvider>> {
+        let f = cfg.oauth();
+        let cid_env = f.env_vars.get("client_id")?;
+        let csec_env = f.env_vars.get("client_secret")?;
+        let cid = env::var(cid_env).ok()?;
+        let csec = env::var(csec_env).ok()?;
+        Some(Arc::new(OAuth2Provider::new(
+            cfg.to_oauth_provider_config(),
+            cid,
+            csec,
+            self.default_redirect_uri.clone(),
+        )))
+    }
 }
 
 #[async_trait::async_trait]
 impl BaseProviderRegistry for ProviderRegistry {
     async fn get_provider(&self, provider_name: &str) -> Option<Arc<dyn AuthProvider>> {
-        self.get_provider(provider_name).await
+        let cfg = self.get_provider_config(provider_name).await?;
+        self.build_provider_from_catalog(&cfg)
     }
 
     async fn get_auth_type(&self, provider_name: &str) -> Option<AuthType> {
-        self.get_auth_type(provider_name).await
+        let cfg = self.get_provider_config(provider_name).await?;
+        let f = cfg.oauth();
+        Some(AuthType::OAuth2 {
+            flow_type: OAuth2FlowType::AuthorizationCode,
+            authorization_url: f.authorization_url.clone(),
+            token_url: f.token_url.clone(),
+            refresh_url: f.refresh_url.clone(),
+            scopes: f
+                .default_scopes
+                .clone()
+                .unwrap_or_else(|| f.scopes_supported.clone()),
+            send_redirect_uri: f.send_redirect_uri,
+        })
     }
 
     async fn is_provider_available(&self, provider_name: &str) -> bool {
-        self.is_provider_available(provider_name).await
+        let providers = self.providers.read().await;
+        providers.contains_key(provider_name)
     }
 
     async fn list_providers(&self) -> Vec<String> {
@@ -435,7 +386,10 @@ impl BaseProviderRegistry for ProviderRegistry {
     }
 
     async fn requires_pkce(&self, provider_name: &str) -> bool {
-        self.requires_pkce(provider_name).await
+        self.get_provider_config(provider_name)
+            .await
+            .map(|c| c.oauth().pkce_required)
+            .unwrap_or(false)
     }
 }
 
@@ -446,75 +400,56 @@ mod tests {
 
     #[tokio::test]
     async fn test_provider_registry_creation() {
-        let registry = ProviderRegistry::new("http://localhost:8080/auth/callback");
+        let registry = ProviderRegistry::new("http://localhost/cb");
         let providers = registry.list_providers().await;
         assert!(providers.is_empty());
     }
 
     #[tokio::test]
     async fn test_load_default_providers() {
-        let registry = ProviderRegistry::new("http://localhost:8080/auth/callback");
-
-        // Set up test environment variables
-        env::set_var("GOOGLE_CLIENT_ID", "test_google_client_id");
-        env::set_var("GOOGLE_CLIENT_SECRET", "test_google_client_secret");
-
+        let registry = ProviderRegistry::new("http://localhost/cb");
         let result = registry.load_default_providers().await;
         assert!(result.is_ok());
 
         let providers = registry.list_providers().await;
         assert!(providers.contains(&"google".to_string()));
-
-        // Clean up
-        env::remove_var("GOOGLE_CLIENT_ID");
-        env::remove_var("GOOGLE_CLIENT_SECRET");
     }
 
     #[tokio::test]
-    async fn test_provider_availability() {
-        let registry = ProviderRegistry::new("http://localhost:8080/auth/callback");
-
-        // Initially no providers available
-        assert!(!registry.is_provider_available("google").await);
-
-        // Set credentials and load providers
-        env::set_var("GOOGLE_CLIENT_ID", "test_client_id");
-        env::set_var("GOOGLE_CLIENT_SECRET", "test_client_secret");
-
+    async fn test_to_oauth_provider_config() {
+        let registry = ProviderRegistry::new("http://localhost/cb");
         registry.load_default_providers().await.unwrap();
-        assert!(registry.is_provider_available("google").await);
-
-        // Clean up
-        env::remove_var("GOOGLE_CLIENT_ID");
-        env::remove_var("GOOGLE_CLIENT_SECRET");
+        let cfg = registry
+            .oauth_provider_config("google")
+            .await
+            .expect("google in catalog");
+        assert_eq!(cfg.name, "google");
+        assert_eq!(
+            cfg.authorization_url,
+            "https://accounts.google.com/o/oauth2/v2/auth"
+        );
+        assert_eq!(cfg.token_url, "https://oauth2.googleapis.com/token");
+        // env_vars present in catalog
+        assert_eq!(cfg.env_client_id.as_deref(), Some("GOOGLE_CLIENT_ID"));
+        assert_eq!(
+            cfg.env_client_secret.as_deref(),
+            Some("GOOGLE_CLIENT_SECRET")
+        );
     }
 
     #[tokio::test]
-    async fn test_get_provider_config() {
-        let registry = ProviderRegistry::new("http://localhost:8080/auth/callback");
+    async fn test_platform_creds_available_reflects_env() {
+        let registry = ProviderRegistry::new("http://localhost/cb");
+        registry.load_default_providers().await.unwrap();
+        // With env unset, platform creds should be unavailable.
+        env::remove_var("GOOGLE_CLIENT_ID");
+        env::remove_var("GOOGLE_CLIENT_SECRET");
+        assert!(!registry.platform_creds_available("google").await);
 
-        // Load providers first (requires env vars for credentials)
         env::set_var("GOOGLE_CLIENT_ID", "test_client_id");
         env::set_var("GOOGLE_CLIENT_SECRET", "test_client_secret");
-        registry.load_default_providers().await.unwrap();
+        assert!(registry.platform_creds_available("google").await);
 
-        let config = registry.get_auth_type("google").await;
-        assert!(config.is_some());
-
-        if let Some(AuthType::OAuth2 {
-            authorization_url,
-            token_url,
-            ..
-        }) = config
-        {
-            assert_eq!(
-                authorization_url,
-                "https://accounts.google.com/o/oauth2/v2/auth"
-            );
-            assert_eq!(token_url, "https://oauth2.googleapis.com/token");
-        }
-
-        // Clean up
         env::remove_var("GOOGLE_CLIENT_ID");
         env::remove_var("GOOGLE_CLIENT_SECRET");
     }

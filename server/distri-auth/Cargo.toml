@@ -24,6 +24,7 @@ actix-cors.workspace = true
 rand.workspace = true
 open = "5.0"
 dirs = "5.0"
+oauth2 = { version = "5", features = ["reqwest"], default-features = false }
 
 # Internal dependencies
 distri-types = { path = "../../distri-types", version = "0.3.9" }

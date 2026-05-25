@@ -11,7 +11,13 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::connections::{AuthScope, Connection, ConnectionAuth, ConnectionKind};
+use crate::connections::{
+    AuthScope, Connection, ConnectionAuth, ConnectionKind, OAuthProviderConfig,
+};
+
+// Re-export the inline provider config from `crate::connections` so the
+// API module is a one-stop import for handlers.
+pub use crate::connections::OAuthProviderConfig as ApiOAuthProviderConfig;
 
 /// Stored in `Connection.config` to carry provider-level metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
@@ -65,158 +71,7 @@ pub struct DiscoverOAuthRequest {
     pub url: String,
 }
 
-/// Response body for `POST /v1/connections/oauth/discover`.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
-pub struct DiscoverOAuthResponse {
-    /// Authorization-server metadata (issuer, endpoints, optional
-    /// registration endpoint). Forward verbatim into `auth.oauth_metadata`
-    /// on the create body.
-    pub metadata: crate::connections::OAuthMetadata,
-    /// Scopes advertised by the auth server — UI pre-fills its scope picker.
-    pub suggested_scopes: Vec<String>,
-    /// True when `metadata.registration_endpoint` is set. UI uses this to
-    /// hide the "Bring your own OAuth client" fields (DCR will populate
-    /// them automatically) or surface them as a fallback.
-    pub supports_dcr: bool,
-    /// Registered provider whose `authorization_url` host matches the
-    /// discovered `issuer`. Includes both built-in catalog providers and
-    /// workspace-custom registrations. `None` means the UI should offer
-    /// the workspace admin a "Register this provider" inline form.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub matched_provider: Option<Provider>,
-}
-
-/// How OAuth client credentials are sourced for a provider. Three sources
-/// per the docs/specs/oauth-client-sources-review.md model:
-///   * `PlatformDefault` — distri's pre-registered creds (env vars).
-///     Workspaces may override via BYOK.
-///   * `Required` — the workspace must supply its own client_id/secret;
-///     distri ships no creds for this provider.
-///   * `Dcr` — the provider's auth server publishes a registration
-///     endpoint; distri auto-registers per RFC 7591 on first authorize.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ByokPolicy {
-    PlatformDefault {
-        env_client_id: String,
-        env_client_secret: String,
-    },
-    Required,
-    Dcr,
-}
-
-/// Canonical declarative description of an OAuth-shaped credential source.
-/// Drives the directory tile, the create-form schema-driven inputs, the
-/// discovery match, the configure page's per-user extras, and the BYOK
-/// policy. Same shape applies to built-in (file catalog) and workspace-
-/// custom (DB-backed) providers.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
-pub struct Provider {
-    /// Stable identifier. For built-ins this is just the provider name
-    /// (`slack`, `github`, …) — the file catalog has no UUID. For
-    /// workspace-custom rows this is the DB row's UUID stringified.
-    pub id: String,
-    /// `None` for built-in catalog entries; `Some(workspace_id)` for
-    /// workspace-custom registrations.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<Uuid>,
-    /// Slug used as the OAuth-handler entity key, secret-store namespace
-    /// prefix, and connection.auth.provider value. Lowercase
-    /// `[a-z0-9_-]+`. Built-ins use the catalog name; workspace-custom
-    /// rows are admin-chosen at registration time (defaulted from the
-    /// discovered URL host).
-    pub name: String,
-    /// Friendly label for the UI (`Slack`, `Linear`, …). Defaulted to
-    /// `Title Case(name)` when the admin doesn't override.
-    pub display_name: String,
-    pub authorization_url: String,
-    pub token_url: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refresh_url: Option<String>,
-    /// Populated by the discovery flow when the server publishes one,
-    /// or by the admin at registration time. Drives `byok_policy = Dcr`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registration_endpoint: Option<String>,
-    #[serde(default)]
-    pub scopes_supported: Vec<String>,
-    #[serde(default)]
-    pub default_scopes: Vec<String>,
-    /// Extra OAuth-URL params the provider always wants set (e.g.
-    /// Google's `access_type=offline`). Merged with caller-supplied
-    /// extras at URL build time.
-    #[serde(default)]
-    pub default_auth_params: HashMap<String, String>,
-    /// JSON Schema for caller-overridable extras (e.g. Slack's `team`
-    /// workspace ID). UI renders one input per schema property; server
-    /// validates extras against this before injecting into the OAuth URL.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_params_schema: Option<serde_json::Value>,
-    pub byok_policy: ByokPolicy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub icon_url: Option<String>,
-    /// Set on workspace-custom rows whose env vars + DB lookups have
-    /// surfaced credentials at runtime. UI uses this to mark the
-    /// directory tile as `UNAVAILABLE`. For built-ins this is also the
-    /// runtime "env present + secret matches" check.
-    #[serde(default)]
-    pub available: bool,
-}
-
-/// Request body for `POST /v1/connection-providers` — register a
-/// workspace-custom OAuth provider that distri doesn't ship in the
-/// built-in catalog.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
-pub struct CreateProviderRequest {
-    pub name: String,
-    pub display_name: String,
-    pub authorization_url: String,
-    pub token_url: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refresh_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registration_endpoint: Option<String>,
-    #[serde(default)]
-    pub scopes_supported: Vec<String>,
-    #[serde(default)]
-    pub default_scopes: Vec<String>,
-    #[serde(default)]
-    pub default_auth_params: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_params_schema: Option<serde_json::Value>,
-    pub byok_policy: ByokPolicy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub icon_url: Option<String>,
-}
-
-/// PATCH body for `PATCH /v1/connection-providers/{id}`. Every field
-/// optional — missing fields keep their current value.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
-pub struct UpdateProviderRequest {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub authorization_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refresh_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registration_endpoint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scopes_supported: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_scopes: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_auth_params: Option<HashMap<String, String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_params_schema: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub byok_policy: Option<ByokPolicy>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub icon_url: Option<String>,
-}
-
-/// Response body for `POST /v1/connections/{id}/test` — run a one-shot
+/// Response body for `POST /v1/connections/{id}/test` — runs a one-shot
 /// MCP probe using the connection's resolved auth headers (Bearer token
 /// from Redis for OAuth, custom field values for Custom auth).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
@@ -229,6 +84,21 @@ pub enum McpProbeResponse {
     Error {
         message: String,
     },
+}
+
+/// Response body for `POST /v1/connections/oauth/discover`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+pub struct DiscoverOAuthResponse {
+    /// Full provider declaration built from the discovered RFC 8414
+    /// metadata. Forwarded verbatim into `auth.provider` on the
+    /// create body. UI may pre-populate `name` from the URL host, and
+    /// `display_name` is left for the admin to set.
+    pub provider_config: OAuthProviderConfig,
+    /// Scopes advertised by the auth server — UI pre-fills its scope picker.
+    pub suggested_scopes: Vec<String>,
+    /// True when `provider_config.registration_endpoint` is set. UI uses
+    /// this to surface DCR as an option (rarely exercised in practice).
+    pub supports_dcr: bool,
 }
 
 /// Request body for `POST /v1/connections`.
@@ -308,6 +178,15 @@ pub struct AuthorizeConnectionRequest {
     /// Google `{"login_hint":"..."}`.
     #[serde(default)]
     pub extra_auth_params: HashMap<String, String>,
+    /// OAuth provider redirect URL. Caller (UI) should pass
+    /// `<window.location.origin>/auth/callback` so the consent flow
+    /// returns to whatever domain the user is currently on (localhost
+    /// dev vs prod app domain). The URL must be registered with the
+    /// OAuth provider; the server uses what the caller provides
+    /// verbatim. Falls back to the server's static `WEB_APP_URL` if
+    /// absent — for legacy / non-browser callers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_uri: Option<String>,
 }
 
 /// Response body for `POST /v1/connections/{id}/authorize`.

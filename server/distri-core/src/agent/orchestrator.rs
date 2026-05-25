@@ -2274,7 +2274,7 @@ async fn resolve_declared_connections(
                 let provider_tag = match &c.auth {
                     distri_types::connections::ConnectionAuth::Oauth {
                         provider, scopes, ..
-                    } => format!(", provider: {}, scopes: [{}]", provider, scopes.join(", ")),
+                    } => format!(", provider: {}, scopes: [{}]", provider.name, scopes.join(", ")),
                     _ => String::new(),
                 };
                 connected_lines.push(format!(
@@ -2294,7 +2294,7 @@ async fn resolve_declared_connections(
             for c in ws_connections.iter() {
                 let matches_provider = match &c.auth {
                     distri_types::connections::ConnectionAuth::Oauth { provider: p, .. } => {
-                        p == provider
+                        p.name == provider
                     }
                     distri_types::connections::ConnectionAuth::Custom { .. } => c.name == provider,
                     distri_types::connections::ConnectionAuth::DistriNative => provider == "distri",
