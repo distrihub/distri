@@ -138,9 +138,18 @@ impl ConnectionResolver for DefaultResolver {
                 env_vars: HashMap::new(),
                 http_headers: HashMap::new(),
             }),
-            ConnectionAuth::Oauth { provider, .. } => {
-                resolve_oauth(&connection, provider.name.as_str(), ctx).await
-            }
+            ConnectionAuth::Oauth { provider, .. } => match connection.auth_scope {
+                AuthScope::Workspace => {
+                    resolve_oauth_workspace(&connection, provider.name.as_str(), ctx).await
+                }
+                AuthScope::User => {
+                    resolve_oauth_user(&connection, provider.name.as_str(), ctx).await
+                }
+                AuthScope::Public => Err(format!(
+                    "connection '{}' is OAuth + Public scope; that combination is not valid",
+                    connection.name
+                )),
+            },
             ConnectionAuth::Custom { fields } => {
                 let fields = fields.clone();
                 resolve_custom(&connection, &fields, ctx).await
@@ -150,7 +159,9 @@ impl ConnectionResolver for DefaultResolver {
     }
 }
 
-async fn resolve_oauth(
+/// Workspace-scope OAuth resolution. One token slot per connection in
+/// `connection_token_store`, shared by every member of the workspace.
+async fn resolve_oauth_workspace(
     connection: &Connection,
     provider: &str,
     ctx: &ResolveCtx<'_>,
@@ -169,12 +180,11 @@ async fn resolve_oauth(
         .map_err(|e| format!("failed to get token: {e}"))?
         .ok_or_else(|| {
             format!(
-                "no token for connection '{}'. Connect it first.",
+                "no workspace token for connection '{}'. Connect it first.",
                 connection.name
             )
         })?;
 
-    // Refresh if expired.
     let access_token = if token.is_expired() {
         match token_store.refresh_token(&conn_id_str, connection).await {
             Ok(Some(refreshed)) => refreshed.access_token,
@@ -189,8 +199,79 @@ async fn resolve_oauth(
         token.access_token
     };
 
-    let env_var_name = ctx
-        .env_var_override
+    Ok(build_oauth_resolution(
+        connection,
+        provider,
+        access_token,
+        ctx.env_var_override,
+    ))
+}
+
+/// User-scope OAuth resolution. Each end-user has their own session stored
+/// per `(connection, user)`. Hard-requires `ctx.user_id`; never falls back
+/// to the workspace slot — that would silently impersonate another user's
+/// identity at the third party.
+async fn resolve_oauth_user(
+    connection: &Connection,
+    provider: &str,
+    ctx: &ResolveCtx<'_>,
+) -> Result<ResolvedConnection, String> {
+    let user_id = ctx.user_id.ok_or_else(|| {
+        format!(
+            "connection '{}' has auth_scope=User but no user_id was supplied; \
+             this is a resolver wiring bug — refusing to fall back to workspace token",
+            connection.name
+        )
+    })?;
+
+    let token_store = ctx
+        .stores
+        .connection_token_store
+        .as_ref()
+        .ok_or_else(|| "connection token store not configured".to_string())?;
+
+    let session = token_store
+        .get_user_session(connection, user_id)
+        .await
+        .map_err(|e| format!("failed to read user OAuth session: {e}"))?
+        .ok_or_else(|| {
+            format!(
+                "no per-user OAuth session for connection '{}' and user '{}'. \
+                 The user must complete the configure flow first.",
+                connection.name, user_id
+            )
+        })?;
+
+    let access_token = if session.needs_refresh() {
+        match token_store.refresh_user_session(connection, user_id).await {
+            Ok(Some(refreshed)) => refreshed.access_token,
+            Ok(None) | Err(_) => {
+                return Err(format!(
+                    "OAuth session expired for connection '{}' and user '{}'. \
+                     Re-run the configure flow.",
+                    connection.name, user_id
+                ));
+            }
+        }
+    } else {
+        session.access_token
+    };
+
+    Ok(build_oauth_resolution(
+        connection,
+        provider,
+        access_token,
+        ctx.env_var_override,
+    ))
+}
+
+fn build_oauth_resolution(
+    connection: &Connection,
+    provider: &str,
+    access_token: String,
+    env_var_override: Option<&str>,
+) -> ResolvedConnection {
+    let env_var_name = env_var_override
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("{}_TOKEN", provider.to_uppercase()));
 
@@ -203,14 +284,14 @@ async fn resolve_oauth(
         format!("Bearer {}", access_token),
     );
 
-    Ok(ResolvedConnection {
-        connection_id: conn_id_str,
+    ResolvedConnection {
+        connection_id: connection.id.to_string(),
         provider: provider.to_string(),
         auth_scope: connection.auth_scope,
         name: connection.name.clone(),
         env_vars,
         http_headers,
-    })
+    }
 }
 
 async fn resolve_custom(
@@ -402,20 +483,86 @@ mod tests {
         }
     }
 
-    struct MemTokenStore(tokio::sync::RwLock<std::collections::HashMap<String, ConnectionToken>>);
+    /// In-memory `ConnectionTokenStore` covering BOTH scopes:
+    ///   - Workspace tokens keyed by `connection_id`.
+    ///   - User sessions keyed by `(connection_id, user_id)`.
+    ///   - `refresh_user_session` returns the "next" session pre-seeded
+    ///     by the test; lets us assert refresh wrote under the right key.
+    struct MemTokenStore {
+        ws_tokens: tokio::sync::RwLock<std::collections::HashMap<String, ConnectionToken>>,
+        user_sessions: tokio::sync::RwLock<
+            std::collections::HashMap<(String, String), distri_types::auth::AuthSession>,
+        >,
+        next_refreshed: tokio::sync::RwLock<Option<distri_types::auth::AuthSession>>,
+    }
+
+    impl MemTokenStore {
+        fn new(tokens: Vec<(String, ConnectionToken)>) -> Self {
+            Self {
+                ws_tokens: tokio::sync::RwLock::new(tokens.into_iter().collect()),
+                user_sessions: Default::default(),
+                next_refreshed: Default::default(),
+            }
+        }
+
+        async fn put_user_session(
+            &self,
+            conn_id: &str,
+            user_id: &str,
+            session: distri_types::auth::AuthSession,
+        ) {
+            self.user_sessions
+                .write()
+                .await
+                .insert((conn_id.to_string(), user_id.to_string()), session);
+        }
+
+        async fn set_next_refreshed(&self, session: distri_types::auth::AuthSession) {
+            *self.next_refreshed.write().await = Some(session);
+        }
+    }
 
     #[async_trait]
     impl ConnectionTokenStore for MemTokenStore {
         async fn store_token(&self, id: &str, t: ConnectionToken) -> anyhow::Result<()> {
-            self.0.write().await.insert(id.to_string(), t);
+            self.ws_tokens.write().await.insert(id.to_string(), t);
             Ok(())
         }
         async fn get_token(&self, id: &str) -> anyhow::Result<Option<ConnectionToken>> {
-            Ok(self.0.read().await.get(id).cloned())
+            Ok(self.ws_tokens.read().await.get(id).cloned())
         }
         async fn remove_token(&self, _id: &str) -> anyhow::Result<()> {
             unimplemented!()
         }
+
+        async fn get_user_session(
+            &self,
+            connection: &Connection,
+            user_id: &str,
+        ) -> anyhow::Result<Option<distri_types::auth::AuthSession>> {
+            Ok(self
+                .user_sessions
+                .read()
+                .await
+                .get(&(connection.id.to_string(), user_id.to_string()))
+                .cloned())
+        }
+
+        async fn refresh_user_session(
+            &self,
+            connection: &Connection,
+            user_id: &str,
+        ) -> anyhow::Result<Option<distri_types::auth::AuthSession>> {
+            let next = self.next_refreshed.read().await.clone();
+            if let Some(s) = next.as_ref() {
+                self.user_sessions
+                    .write()
+                    .await
+                    .insert((connection.id.to_string(), user_id.to_string()), s.clone());
+            }
+            Ok(next)
+        }
+
         async fn store_oauth_state(&self, _k: &str, _v: serde_json::Value) -> anyhow::Result<()> {
             unimplemented!()
         }
@@ -478,6 +625,15 @@ mod tests {
         tokens: Vec<(String, ConnectionToken)>,
         secrets: Vec<(String, String)>,
     ) -> InitializedStores {
+        let (stores, _) = build_stores_with_token_handle(conns, tokens, secrets).await;
+        stores
+    }
+
+    async fn build_stores_with_token_handle(
+        conns: Vec<Connection>,
+        tokens: Vec<(String, ConnectionToken)>,
+        secrets: Vec<(String, String)>,
+    ) -> (InitializedStores, Arc<MemTokenStore>) {
         let db_name = Uuid::new_v4();
         let cfg = distri_types::configuration::StoreConfig {
             metadata: distri_types::configuration::MetadataStoreConfig {
@@ -490,17 +646,39 @@ mod tests {
             ..Default::default()
         };
         let mut stores = distri_stores::initialize_stores(&cfg).await.unwrap();
+        let token_store = Arc::new(MemTokenStore::new(tokens));
         stores.connection_store = Some(Arc::new(MemConnStore(tokio::sync::RwLock::new(conns))));
-        stores.connection_token_store = Some(Arc::new(MemTokenStore(tokio::sync::RwLock::new(
-            tokens.into_iter().collect(),
-        ))));
+        stores.connection_token_store = Some(token_store.clone());
         stores.secret_store = Some(Arc::new(MemSecretStore(tokio::sync::RwLock::new(
             secrets.into_iter().collect(),
         ))));
-        stores
+        (stores, token_store)
+    }
+
+    fn make_provider_config(name: &str) -> distri_types::connections::OAuthProviderConfig {
+        distri_types::connections::OAuthProviderConfig {
+            name: name.to_string(),
+            display_name: None,
+            authorization_url: format!("https://example.com/{name}/authorize"),
+            token_url: format!("https://example.com/{name}/token"),
+            refresh_url: None,
+            registration_endpoint: None,
+            scopes_supported: vec![],
+            default_scopes: vec![],
+            default_auth_params: std::collections::HashMap::new(),
+            auth_params_schema: None,
+            pkce_required: false,
+            env_client_id: None,
+            env_client_secret: None,
+            icon_url: None,
+        }
     }
 
     fn oauth_connection(id: Uuid, provider: &str) -> Connection {
+        oauth_connection_scoped(id, provider, AuthScope::Workspace)
+    }
+
+    fn oauth_connection_scoped(id: Uuid, provider: &str, scope: AuthScope) -> Connection {
         Connection {
             id,
             workspace_id: Uuid::new_v4(),
@@ -511,11 +689,10 @@ mod tests {
             connected_by: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            auth_scope: AuthScope::Workspace,
+            auth_scope: scope,
             auth: ConnectionAuth::Oauth {
-                provider: provider.to_string(),
+                provider: make_provider_config(provider),
                 scopes: vec![],
-                oauth_metadata: None,
             },
             kind: ConnectionKind::Default {
                 skill_content: None,
@@ -638,6 +815,196 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("missing required fields"), "got: {}", err);
+    }
+
+    // ── User-scope OAuth resolution ─────────────────────────────────
+    //
+    // Cover all four authoritative states the cloud OAuth flow can put
+    // resolution into. No fallbacks: each error path is asserted on its
+    // own error message so a future refactor that "helps" by silently
+    // falling back to the workspace slot would break a named test.
+
+    fn user_session(
+        access_token: &str,
+        expires_in_secs: Option<i64>,
+    ) -> distri_types::auth::AuthSession {
+        distri_types::auth::AuthSession::new(
+            access_token.to_string(),
+            Some("Bearer".to_string()),
+            expires_in_secs,
+            None,
+            vec![],
+        )
+    }
+
+    #[tokio::test]
+    async fn user_scope_oauth_returns_authorization_for_owning_user() {
+        let id = Uuid::new_v4();
+        let conn = oauth_connection_scoped(id, "google", AuthScope::User);
+        let (stores, tokens) = build_stores_with_token_handle(vec![conn], vec![], vec![]).await;
+        let user_id = Uuid::new_v4().to_string();
+        tokens
+            .put_user_session(
+                &id.to_string(),
+                &user_id,
+                user_session("ya29.user-xyz", Some(3600)),
+            )
+            .await;
+
+        let user_str = user_id.clone();
+        let ctx = ResolveCtx::new(&stores).with_user(&user_str);
+        let r = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .expect("resolver should find the per-user session");
+
+        assert_eq!(r.env_vars.get("GOOGLE_TOKEN").unwrap(), "ya29.user-xyz");
+        assert_eq!(
+            r.http_headers.get("Authorization").unwrap(),
+            "Bearer ya29.user-xyz"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_scope_oauth_refuses_unknown_user() {
+        // A workspace-slot token MUST NOT bleed into user-scope reads: a
+        // pre-existing workspace token here would be a tempting fallback
+        // but the resolver must refuse.
+        let id = Uuid::new_v4();
+        let conn = oauth_connection_scoped(id, "google", AuthScope::User);
+        let owning_user = Uuid::new_v4().to_string();
+        let (stores, tokens) = build_stores_with_token_handle(
+            vec![conn],
+            vec![(
+                id.to_string(),
+                ConnectionToken {
+                    access_token: "do-not-leak-me".into(),
+                    refresh_token: None,
+                    expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+                    token_type: "Bearer".into(),
+                    scopes: vec![],
+                },
+            )],
+            vec![],
+        )
+        .await;
+        tokens
+            .put_user_session(
+                &id.to_string(),
+                &owning_user,
+                user_session("owner-tok", Some(3600)),
+            )
+            .await;
+
+        let other_user = Uuid::new_v4().to_string();
+        let ctx = ResolveCtx::new(&stores).with_user(&other_user);
+        let err = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .expect_err("resolver must not fall back to workspace slot for user-scope");
+
+        assert!(
+            err.contains("no per-user OAuth session"),
+            "expected no-per-user-session error, got: {err}"
+        );
+        // And under no circumstances should the workspace token leak.
+        assert!(
+            !err.contains("do-not-leak-me"),
+            "workspace token leaked into error message: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_scope_oauth_requires_user_id() {
+        let id = Uuid::new_v4();
+        let conn = oauth_connection_scoped(id, "google", AuthScope::User);
+        let stores = build_stores(vec![conn], vec![], vec![]).await;
+
+        // No `with_user(..)` — ctx.user_id is None.
+        let ctx = ResolveCtx::new(&stores);
+        let err = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .expect_err("user-scope resolver must hard-error on missing user_id");
+
+        assert!(
+            err.contains("auth_scope=User") && err.contains("user_id"),
+            "expected missing-user_id wiring error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_scope_oauth_refresh_writes_under_user_key() {
+        let id = Uuid::new_v4();
+        let conn = oauth_connection_scoped(id, "google", AuthScope::User);
+        let (stores, tokens) = build_stores_with_token_handle(vec![conn], vec![], vec![]).await;
+        let user_id = Uuid::new_v4().to_string();
+
+        // Seed an EXPIRED session (expires_in < 60 → AuthSession::needs_refresh = true).
+        tokens
+            .put_user_session(&id.to_string(), &user_id, user_session("expired", Some(0)))
+            .await;
+        // And a "refreshed" session the mock store will return on refresh.
+        tokens
+            .set_next_refreshed(user_session("ya29.refreshed", Some(3600)))
+            .await;
+
+        let user_str = user_id.clone();
+        let ctx = ResolveCtx::new(&stores).with_user(&user_str);
+        let r = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .expect("resolver should refresh and return new bearer");
+
+        assert_eq!(r.env_vars.get("GOOGLE_TOKEN").unwrap(), "ya29.refreshed");
+        // The refresh path must have updated the per-user slot, NOT the
+        // workspace slot. Verify both directly.
+        let stored = tokens
+            .user_sessions
+            .read()
+            .await
+            .get(&(id.to_string(), user_id.clone()))
+            .cloned()
+            .expect("refreshed user session present at the (conn, user) key");
+        assert_eq!(stored.access_token, "ya29.refreshed");
+        assert!(
+            tokens.ws_tokens.read().await.get(&id.to_string()).is_none(),
+            "refresh leaked into the workspace token slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_scope_oauth_unaffected_by_user_scope_changes() {
+        // Regression guard: the scope split must be exhaustive. A
+        // workspace-scope connection must keep resolving from the
+        // workspace token slot even if user_id is also supplied.
+        let id = Uuid::new_v4();
+        let conn = oauth_connection_scoped(id, "google", AuthScope::Workspace);
+        let token = ConnectionToken {
+            access_token: "ws-token".into(),
+            refresh_token: None,
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            token_type: "Bearer".into(),
+            scopes: vec![],
+        };
+        let (stores, tokens) =
+            build_stores_with_token_handle(vec![conn], vec![(id.to_string(), token)], vec![]).await;
+        // Pollute the user-scope slot with a different token — the
+        // resolver must NOT pick this one up for a workspace connection.
+        tokens
+            .put_user_session(
+                &id.to_string(),
+                "some-user",
+                user_session("user-leaked", Some(3600)),
+            )
+            .await;
+
+        let ctx = ResolveCtx::new(&stores).with_user("some-user");
+        let r = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(r.env_vars.get("GOOGLE_TOKEN").unwrap(), "ws-token");
     }
 
     #[tokio::test]

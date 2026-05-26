@@ -2274,7 +2274,11 @@ async fn resolve_declared_connections(
                 let provider_tag = match &c.auth {
                     distri_types::connections::ConnectionAuth::Oauth {
                         provider, scopes, ..
-                    } => format!(", provider: {}, scopes: [{}]", provider.name, scopes.join(", ")),
+                    } => format!(
+                        ", provider: {}, scopes: [{}]",
+                        provider.name,
+                        scopes.join(", ")
+                    ),
                     _ => String::new(),
                 };
                 connected_lines.push(format!(
