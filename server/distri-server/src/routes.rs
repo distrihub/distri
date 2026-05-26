@@ -77,6 +77,9 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
             web::resource(Route::EventHooks.path()).route(web::post().to(complete_hook_handler)),
         )
         .service(web::resource(Route::Tasks.path()).route(web::get().to(list_tasks)))
+        .service(
+            web::resource(Route::TaskCompact.path()).route(web::post().to(compact_task_handler)),
+        )
         .service(web::resource(Route::Tools.path()).route(web::get().to(list_tools)))
         // Webhook endpoint for triggering agents
         // Thread endpoints
@@ -1486,6 +1489,41 @@ async fn list_tasks(
         }
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to list tasks: {}", e)
+        })),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/tasks/{task_id}/compact",
+    tag = "Agents",
+    params(("task_id" = String, Path, description = "Task ID")),
+    responses((status = 200, description = "Compaction result"))
+)]
+async fn compact_task_handler(
+    path: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let task_id = path.into_inner();
+    match executor.compact_task(&task_id).await {
+        Ok(Some(result)) => HttpResponse::Ok().json(json!({
+            "compacted": true,
+            "tier": result.tier.as_ref().map(|t| match t {
+                distri_types::CompactionTier::Trim => "trim",
+                distri_types::CompactionTier::Summarize => "summarize",
+                distri_types::CompactionTier::Reset => "reset",
+            }),
+            "tokens_before": result.tokens_before,
+            "tokens_after": result.tokens_after,
+            "entries_affected": result.entries_affected,
+            "usage_ratio": result.usage_ratio,
+        })),
+        Ok(None) => HttpResponse::Ok().json(json!({
+            "compacted": false,
+            "reason": "No entries to compact",
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to compact task: {}", e)
         })),
     }
 }

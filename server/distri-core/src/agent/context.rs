@@ -1511,6 +1511,24 @@ impl ExecutorContext {
     pub async fn evaluate_compaction(
         &self,
     ) -> Result<Option<crate::agent::context_size_manager::CompactionResult>, AgentError> {
+        self.run_compaction("auto", false).await
+    }
+
+    /// Run compaction unconditionally — used by the manual `/compact` endpoint.
+    /// Skips threshold checks and always runs at the highest tier appropriate
+    /// for the current scratchpad size (falling back to Tier 1 Trim when usage
+    /// is below the configured `summarize_threshold`).
+    pub async fn force_compaction(
+        &self,
+    ) -> Result<Option<crate::agent::context_size_manager::CompactionResult>, AgentError> {
+        self.run_compaction("manual", true).await
+    }
+
+    async fn run_compaction(
+        &self,
+        source: &str,
+        force: bool,
+    ) -> Result<Option<crate::agent::context_size_manager::CompactionResult>, AgentError> {
         let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
             "Orchestrator not initialized".to_string(),
         ))?;
@@ -1528,10 +1546,34 @@ impl ExecutorContext {
         let max_tokens = self.get_scratchpad_token_limit();
         let manager =
             crate::agent::context_size_manager::ContextSizeManager::with_max_tokens(max_tokens);
-        let result = manager.evaluate_and_compact(&entries);
+        let mut result = manager.evaluate_and_compact(&entries);
+
+        // Force path: if no tier was selected, escalate to Trim so something happens.
+        if force && result.tier.is_none() {
+            let trimmed = manager.trim_scratchpad_entries(&entries);
+            let tokens_after = manager.estimate_scratchpad_tokens(&trimmed);
+            let entries_affected = entries.len().saturating_sub(trimmed.len());
+            result = crate::agent::context_size_manager::CompactionResult {
+                tier: Some(distri_types::events::CompactionTier::Trim),
+                tokens_before: result.tokens_before,
+                tokens_after,
+                entries_affected,
+                entries: trimmed,
+                usage_ratio: result.usage_ratio,
+            };
+        }
+
+        if force {
+            self.emit(AgentEventType::CompactionRequested {
+                source: source.to_string(),
+            })
+            .await;
+        }
 
         // If compaction was applied, re-inject skills and emit the event
         if let Some(ref tier) = result.tier {
+            let start = std::time::Instant::now();
+
             // Re-inject tracked skill content after compaction
             let reinjected_skills = match self.reinject_skills().await {
                 Ok(ids) => {
@@ -1551,6 +1593,8 @@ impl ExecutorContext {
                 }
             };
 
+            let duration_ms = start.elapsed().as_millis() as u64;
+
             self.emit(AgentEventType::ContextCompaction {
                 tier: tier.clone(),
                 tokens_before: result.tokens_before,
@@ -1561,12 +1605,15 @@ impl ExecutorContext {
                 summary: None,
                 reinjected_skills,
                 context_budget: Some(self.get_usage().await.context_budget.clone()),
+                source: source.to_string(),
+                duration_ms: Some(duration_ms),
             })
             .await;
 
             tracing::info!(
-                "Context compaction ({:?}): {} → {} tokens, {} entries affected, {:.0}% usage",
+                "Context compaction ({:?}, {}): {} → {} tokens, {} entries affected, {:.0}% usage",
                 tier,
+                source,
                 result.tokens_before,
                 result.tokens_after,
                 result.entries_affected,

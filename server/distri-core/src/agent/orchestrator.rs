@@ -1784,6 +1784,40 @@ impl AgentOrchestrator {
         task_store.update_task_status(task_id, status).await
     }
 
+    /// Run compaction unconditionally for a given task. Used by the manual
+    /// `/compact` endpoint and CLI slash command.
+    ///
+    /// Builds a minimal `ExecutorContext` (no event sink, no LLM executor)
+    /// pointing at the task + thread, then calls `force_compaction`. The
+    /// mechanical (Tier 1/Tier 3) compaction path runs entirely on stores —
+    /// no LLM is needed. Tier 2 (semantic) summarization is deferred to a
+    /// future patch that wires an `LLMExecutor` into this path.
+    pub async fn compact_task(
+        &self,
+        task_id: &str,
+    ) -> anyhow::Result<Option<crate::agent::context_size_manager::CompactionResult>> {
+        let task_store = self.stores.task_store.clone();
+        let task = task_store
+            .get_task(task_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Task not found: {task_id}"))?;
+
+        let ctx = ExecutorContext {
+            task_id: task.id.clone(),
+            thread_id: task.thread_id.clone(),
+            parent_task_id: task.parent_task_id.clone(),
+            orchestrator: Some(Arc::new(self.clone())),
+            stores: Some(self.stores.clone()),
+            ..Default::default()
+        };
+
+        let result = ctx
+            .force_compaction()
+            .await
+            .map_err(|e| anyhow::anyhow!("compaction failed: {e}"))?;
+        Ok(result)
+    }
+
     /// Get all available tools (MCP tools + plugin tools) - standardized method for tool discovery
     /// Uses the existing resolve_tools_config with a "get all tools" configuration
     /// Returns tools with both simple names and package.tool_name format for namespace support

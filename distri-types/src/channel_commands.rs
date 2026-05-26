@@ -9,6 +9,7 @@
 //! / tool triggers into one enum.
 
 use crate::channels::ChannelProvider;
+use crate::configuration::AgentConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -36,6 +37,78 @@ pub struct SlashCommand {
     /// Preset prompt sent to the agent when this command is invoked. Any text
     /// the user typed after the command is appended.
     pub prompt: String,
+}
+
+/// Built-in slash commands every agent gets without having to declare them.
+/// Resolved **client-side** without going through the agent loop:
+///
+/// - `/compact` → calls `POST /v1/tasks/{task_id}/compact`
+/// - `/usage`   → reads `ContextBudget` from local state, renders inline
+/// - `/clear`   → opens a new thread with the same agent
+/// - `/help`    → renders the resolved commands list
+///
+/// Channel surfaces (Slack/Telegram) get them via the gateway's
+/// `CommandRouter`, which short-circuits these names before dispatching to
+/// the agent. A per-agent command with the same name shadows the system one.
+pub fn system_commands() -> Vec<SlashCommand> {
+    vec![
+        SlashCommand {
+            name: "/compact".to_string(),
+            description: "Summarize prior turns to free context".to_string(),
+            aliases: vec![],
+            channels: vec![],
+            prompt: String::new(),
+        },
+        SlashCommand {
+            name: "/usage".to_string(),
+            description: "Show current context usage".to_string(),
+            aliases: vec![],
+            channels: vec![],
+            prompt: String::new(),
+        },
+        SlashCommand {
+            name: "/clear".to_string(),
+            description: "Start a new thread, keep the same agent".to_string(),
+            aliases: vec![],
+            channels: vec![],
+            prompt: String::new(),
+        },
+        SlashCommand {
+            name: "/help".to_string(),
+            description: "List available commands".to_string(),
+            aliases: vec![],
+            channels: vec![],
+            prompt: String::new(),
+        },
+    ]
+}
+
+/// Resolve the full slash-command surface for an agent: system commands
+/// first, then agent-declared ones. A duplicate name (by exact name) drops
+/// the system command — explicit override wins.
+pub fn resolve_commands(agent: &AgentConfig) -> Vec<SlashCommand> {
+    let mut out = system_commands();
+    let agent_cmds: Vec<SlashCommand> = match agent {
+        AgentConfig::StandardAgent(d) => d.commands.clone(),
+        // Workflow agents don't declare `SlashCommand`s — their commands live
+        // on `WorkflowTrigger::Slash` entry points. We only fold in system
+        // commands here so they get `/compact`, `/usage`, etc. for free.
+        AgentConfig::WorkflowAgent(_) => Vec::new(),
+    };
+
+    if !agent_cmds.is_empty() {
+        let declared: std::collections::HashSet<String> =
+            agent_cmds.iter().map(|c| c.name.clone()).collect();
+        out.retain(|c| !declared.contains(&c.name));
+        out.extend(agent_cmds);
+    }
+    out
+}
+
+/// Names of the built-in system commands. Useful for routers that need to
+/// short-circuit these before dispatching to per-agent surfaces.
+pub fn is_system_command(name: &str) -> bool {
+    matches!(name, "/compact" | "/usage" | "/clear" | "/help")
 }
 
 /// Author-facing button template inside a `StepKind::Reply`. Label/url/
@@ -140,6 +213,53 @@ mod tests {
     fn channel_bindings_defaults_are_none() {
         let b: ChannelBindings = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(b.telegram.is_none());
+    }
+
+    #[test]
+    fn system_commands_present_for_standard_agent_without_commands() {
+        let cfg: AgentConfig = serde_json::from_value(serde_json::json!({
+            "agent_type": "standard_agent",
+            "name": "s",
+            "description": "d",
+        }))
+        .unwrap();
+        let resolved = resolve_commands(&cfg);
+        let names: Vec<&str> = resolved.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"/compact"));
+        assert!(names.contains(&"/usage"));
+        assert!(names.contains(&"/clear"));
+        assert!(names.contains(&"/help"));
+    }
+
+    #[test]
+    fn agent_command_shadows_system_command() {
+        let cfg: AgentConfig = serde_json::from_value(serde_json::json!({
+            "agent_type": "standard_agent",
+            "name": "s",
+            "description": "d",
+            "commands": [
+                {"name":"/compact","description":"override","prompt":"do it"}
+            ]
+        }))
+        .unwrap();
+        let resolved = resolve_commands(&cfg);
+        let compact: Vec<&SlashCommand> =
+            resolved.iter().filter(|c| c.name == "/compact").collect();
+        assert_eq!(compact.len(), 1);
+        assert_eq!(compact[0].prompt, "do it");
+    }
+
+    #[test]
+    fn workflow_agent_still_gets_system_commands() {
+        let cfg: AgentConfig = serde_json::from_value(serde_json::json!({
+            "agent_type": "workflow_agent",
+            "name": "w",
+            "description": "d",
+            "definition": {}
+        }))
+        .unwrap();
+        let resolved = resolve_commands(&cfg);
+        assert!(resolved.iter().any(|c| c.name == "/compact"));
     }
 
     #[test]

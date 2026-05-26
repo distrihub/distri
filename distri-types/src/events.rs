@@ -280,6 +280,20 @@ pub enum AgentEventType {
         reinjected_skills: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context_budget: Option<ContextBudget>,
+        /// "auto" when fired by the agent loop's pre-plan trigger,
+        /// "manual" when invoked via the `/compact` endpoint or slash command.
+        #[serde(default = "default_compaction_source")]
+        source: String,
+        /// Wall-clock duration of the compaction operation, in milliseconds.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+    },
+
+    /// Emitted when a compaction has been requested but before it runs.
+    /// Lets observability distinguish manual vs auto triggers.
+    CompactionRequested {
+        /// "manual" | "auto"
+        source: String,
     },
 
     /// Emitted each turn with the current context budget breakdown.
@@ -295,6 +309,10 @@ pub enum AgentEventType {
     ChannelReply {
         reply: crate::channel_commands::ChannelReply,
     },
+}
+
+fn default_compaction_source() -> String {
+    "auto".to_string()
 }
 
 /// Tier of context compaction applied
