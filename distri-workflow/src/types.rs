@@ -25,7 +25,7 @@
 //! through the canonical task tree.
 
 use chrono::{DateTime, Utc};
-use distri_types::TaskStatus;
+pub use distri_types::TaskStatus;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -129,10 +129,11 @@ impl WorkflowDefinition {
     /// Validate the channel-command surface declared by entry-point
     /// triggers. Returns a precise error string on the first problem.
     pub fn validate_channel_surface(&self) -> Result<(), String> {
-        use distri_types::channel_commands::ChannelTrigger;
+        use distri_types::WorkflowTrigger;
         use std::collections::HashSet;
 
-        let step_ids: HashSet<&str> = self.steps.iter().map(|s| s.id.as_str()).collect();
+        let step_ids: HashSet<&str> =
+            self.steps.iter().map(|s| s.id.as_str()).collect();
         let mut slash_names: HashSet<String> = HashSet::new();
         let mut callback_ids: HashSet<String> = HashSet::new();
         let mut message_count = 0usize;
@@ -144,33 +145,37 @@ impl WorkflowDefinition {
                     ep.id, ep.starts_at
                 ));
             }
-            let Some(trigger) = &ep.trigger else { continue };
-            match trigger {
-                ChannelTrigger::Slash { name, aliases, .. } => {
-                    for n in std::iter::once(name).chain(aliases.iter()) {
-                        let lower = n.to_lowercase();
-                        if BUILTIN_CHANNEL_COMMANDS.contains(&lower.as_str()) {
-                            return Err(format!("slash command '{n}' shadows a built-in command"));
+            for trigger in &ep.triggers {
+                match trigger {
+                    WorkflowTrigger::Slash { name, aliases, .. } => {
+                        for n in std::iter::once(name).chain(aliases.iter()) {
+                            let lower = n.to_lowercase();
+                            if BUILTIN_CHANNEL_COMMANDS.contains(&lower.as_str()) {
+                                return Err(format!(
+                                    "slash command '{n}' shadows a built-in command"
+                                ));
+                            }
+                            if !slash_names.insert(lower.clone()) {
+                                return Err(format!(
+                                    "entry point '{}': slash command '{}' is already declared",
+                                    ep.id, n
+                                ));
+                            }
                         }
-                        if !slash_names.insert(lower.clone()) {
+                    }
+                    WorkflowTrigger::Callback { id, .. } => {
+                        if !callback_ids.insert(id.clone()) {
                             return Err(format!(
-                                "entry point '{}': slash command '{}' is already declared",
-                                ep.id, n
+                                "entry point '{}': callback id '{}' is already declared",
+                                ep.id, id
                             ));
                         }
                     }
+                    WorkflowTrigger::Message {} => message_count += 1,
+                    // Manual / Schedule / Webhook / Event / Tool don't
+                    // contribute to channel-command surface validation.
+                    _ => {}
                 }
-                ChannelTrigger::Callback { id, .. } => {
-                    // Note: cross-validating a Reply step's ReplyButtonSpec::Callback.callback_data
-                    // against declared callback ids is intentionally NOT done in v1 (out of plan scope).
-                    if !callback_ids.insert(id.clone()) {
-                        return Err(format!(
-                            "entry point '{}': callback id '{}' is already declared",
-                            ep.id, id
-                        ));
-                    }
-                }
-                ChannelTrigger::Message {} => message_count += 1,
             }
         }
         if message_count > 1 {
@@ -276,6 +281,7 @@ impl WorkflowDefinition {
     }
 }
 
+
 // ============================================================================
 // Workflow Run (execution state)
 // ============================================================================
@@ -306,7 +312,7 @@ pub struct WorkflowRun {
     #[serde(flatten)]
     pub definition: WorkflowDefinition,
     #[serde(default)]
-    pub status: WorkflowStatus,
+    pub status: TaskStatus,
     #[serde(default)]
     pub current_step: usize,
     #[serde(default = "default_empty_object")]
@@ -326,7 +332,7 @@ pub struct WorkflowRun {
 pub struct WorkflowStepRun {
     pub step_id: String,
     #[serde(default)]
-    pub status: StepStatus,
+    pub status: TaskStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -351,7 +357,7 @@ impl WorkflowRun {
             .collect();
         Self {
             definition,
-            status: WorkflowStatus::Pending,
+            status: TaskStatus::Pending,
             current_step: 0,
             context: serde_json::json!({}),
             notes: vec![],
@@ -438,7 +444,7 @@ impl WorkflowRun {
 
         for (i, step) in self.definition.steps.iter().enumerate() {
             if !reachable.contains(&step.id) {
-                self.step_runs[i].status = StepStatus::Skipped;
+                self.step_runs[i].status = TaskStatus::Canceled;
                 if let Some(result) = ep.preset_results.get(&step.id) {
                     self.step_runs[i].result = Some(result.clone());
                 }
@@ -483,7 +489,7 @@ impl WorkflowRun {
             ctx.insert("input".to_string(), input.clone());
         }
 
-        self.status = WorkflowStatus::Running;
+        self.status = TaskStatus::Running;
         self.updated_at = Utc::now();
         Ok(self)
     }
@@ -493,7 +499,7 @@ impl WorkflowRun {
         self.step_runs
             .iter()
             .enumerate()
-            .find(|(_, s)| s.status == StepStatus::Pending)
+            .find(|(_, s)| s.status == TaskStatus::Pending)
             .map(|(i, _)| (i, &self.definition.steps[i]))
     }
 
@@ -502,7 +508,7 @@ impl WorkflowRun {
     pub fn runnable_steps(&self) -> Vec<(usize, &WorkflowStep)> {
         let mut runnable = vec![];
         for (i, step) in self.definition.steps.iter().enumerate() {
-            if self.step_runs[i].status != StepStatus::Pending {
+            if self.step_runs[i].status != TaskStatus::Pending {
                 continue;
             }
             let deps_met = step.depends_on.iter().all(|dep_id| {
@@ -512,7 +518,7 @@ impl WorkflowRun {
                     .zip(self.step_runs.iter())
                     .any(|(s, sr)| {
                         &s.id == dep_id
-                            && matches!(sr.status, StepStatus::Done | StepStatus::Skipped)
+                            && matches!(sr.status, TaskStatus::Completed | TaskStatus::Canceled)
                     })
             });
             if deps_met {
@@ -526,7 +532,7 @@ impl WorkflowRun {
         self.step_runs.iter().all(|s| {
             matches!(
                 s.status,
-                StepStatus::Done | StepStatus::Skipped | StepStatus::Blocked
+                TaskStatus::Completed | TaskStatus::Canceled | TaskStatus::Failed
             )
         })
     }
@@ -534,14 +540,14 @@ impl WorkflowRun {
     pub fn is_waiting_for_input(&self) -> bool {
         self.step_runs
             .iter()
-            .any(|s| s.status == StepStatus::WaitingForInput)
+            .any(|s| s.status == TaskStatus::InputRequired)
     }
 
     pub fn waiting_step(&self) -> Option<(usize, &WorkflowStep)> {
         self.step_runs
             .iter()
             .enumerate()
-            .find(|(_, s)| s.status == StepStatus::WaitingForInput)
+            .find(|(_, s)| s.status == TaskStatus::InputRequired)
             .map(|(i, _)| (i, &self.definition.steps[i]))
     }
 
@@ -554,7 +560,7 @@ impl WorkflowRun {
         let idx = self
             .step_runs
             .iter()
-            .position(|s| s.step_id == step_id && s.status == StepStatus::WaitingForInput)
+            .position(|s| s.step_id == step_id && s.status == TaskStatus::InputRequired)
             .ok_or_else(|| {
                 format!(
                     "Step '{}' not found or not in waiting_for_input state",
@@ -562,7 +568,7 @@ impl WorkflowRun {
                 )
             })?;
 
-        self.step_runs[idx].status = StepStatus::Done;
+        self.step_runs[idx].status = TaskStatus::Completed;
         self.step_runs[idx].result = Some(result.clone());
         self.step_runs[idx].completed_at = Some(Utc::now());
 
@@ -575,7 +581,7 @@ impl WorkflowRun {
             steps.insert(step_id.to_string(), result);
         }
 
-        self.status = WorkflowStatus::Running;
+        self.status = TaskStatus::Running;
         self.updated_at = Utc::now();
         Ok(idx)
     }
@@ -585,15 +591,15 @@ impl WorkflowRun {
         let has_blocked = self
             .step_runs
             .iter()
-            .any(|s| s.status == StepStatus::Blocked);
+            .any(|s| s.status == TaskStatus::Failed);
         let has_pending = self
             .step_runs
             .iter()
-            .any(|s| s.status == StepStatus::Pending);
+            .any(|s| s.status == TaskStatus::Pending);
         let has_running = self
             .step_runs
             .iter()
-            .any(|s| s.status == StepStatus::Running);
+            .any(|s| s.status == TaskStatus::Running);
 
         if !has_blocked || has_running {
             return false;
@@ -609,7 +615,7 @@ impl WorkflowRun {
             .iter()
             .zip(self.step_runs.iter())
             .any(|(step, run)| {
-                run.status == StepStatus::Pending
+                run.status == TaskStatus::Pending
                     && step.depends_on.iter().all(|dep_id| {
                         self.definition
                             .steps
@@ -619,9 +625,9 @@ impl WorkflowRun {
                                 &s.id == dep_id
                                     && matches!(
                                         sr.status,
-                                        StepStatus::Done
-                                            | StepStatus::Pending
-                                            | StepStatus::Running
+                                        TaskStatus::Completed
+                                            | TaskStatus::Pending
+                                            | TaskStatus::Running
                                     )
                             })
                     })
@@ -631,7 +637,7 @@ impl WorkflowRun {
     pub fn has_failed(&self) -> bool {
         self.step_runs
             .iter()
-            .any(|s| s.status == StepStatus::Failed)
+            .any(|s| s.status == TaskStatus::Failed)
     }
 
     /// Append a note to the run's log.
@@ -675,11 +681,12 @@ pub struct EntryPoint {
     /// Required input fields for this entry point (for UI/validation).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<String>,
-    /// How a channel user reaches this entry point (slash command,
-    /// callback button, or free-text catch-all). `None` = not channel-
-    /// reachable (e.g. an internal or scheduled entry point).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trigger: Option<distri_types::channel_commands::ChannelTrigger>,
+    /// How this entry point is reached. Empty = default `Manual`
+    /// only (direct API/UI invocation). Multiple triggers can target
+    /// the same entry point — e.g. a slash command and a webhook
+    /// both starting the same run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub triggers: Vec<distri_types::WorkflowTrigger>,
 }
 
 // ============================================================================
@@ -983,7 +990,8 @@ pub enum StepKind {
         buttons_from: Option<String>,
         /// Template applied per `buttons_from` element.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        button_template: Option<distri_types::channel_commands::ReplyButtonSpec>,
+        button_template:
+            Option<distri_types::channel_commands::ReplyButtonSpec>,
     },
 }
 
@@ -1108,72 +1116,14 @@ pub struct CheckpointMeta {
 // Enums
 // ============================================================================
 
-/// Top-level run status. Engine-internal; external surfaces translate
-/// to `distri_types::TaskStatus` via `From`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowStatus {
-    #[default]
-    Pending,
-    Running,
-    /// Waiting for human/external input (`WaitForInput` step).
-    Paused,
-    Completed,
-    Failed,
-    /// All remaining steps are blocked — requirements cannot be met.
-    Blocked,
-}
-
-impl From<WorkflowStatus> for TaskStatus {
-    fn from(s: WorkflowStatus) -> Self {
-        match s {
-            WorkflowStatus::Pending => TaskStatus::Pending,
-            WorkflowStatus::Running => TaskStatus::Running,
-            WorkflowStatus::Paused => TaskStatus::InputRequired,
-            WorkflowStatus::Completed => TaskStatus::Completed,
-            WorkflowStatus::Failed => TaskStatus::Failed,
-            // No 1:1 TaskStatus for Blocked — surface as Failed; the
-            // step-level error fields carry the "missing skills:" reason.
-            WorkflowStatus::Blocked => TaskStatus::Failed,
-        }
-    }
-}
-
-/// Per-step phase. Engine-internal; richer than `TaskStatus` because
-/// the engine cares about the difference between "blocked on a missing
-/// requirement" (cannot start) and "failed during execution" (tried,
-/// errored). External surfaces translate via `From<StepStatus>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum StepStatus {
-    #[default]
-    Pending,
-    /// Requirements not met — cannot execute.
-    Blocked,
-    Running,
-    Done,
-    Failed,
-    Skipped,
-    /// Step is waiting for external/human input. Workflow is paused.
-    WaitingForInput,
-}
-
-impl From<StepStatus> for TaskStatus {
-    fn from(s: StepStatus) -> Self {
-        match s {
-            StepStatus::Pending => TaskStatus::Pending,
-            // No TaskStatus::Blocked — surface as Failed (with
-            // `step_run.error` carrying the missing-requirement reason).
-            StepStatus::Blocked => TaskStatus::Failed,
-            StepStatus::Running => TaskStatus::Running,
-            StepStatus::Done => TaskStatus::Completed,
-            StepStatus::Failed => TaskStatus::Failed,
-            // Intentionally not run; semantically a deliberate cancel.
-            StepStatus::Skipped => TaskStatus::Canceled,
-            StepStatus::WaitingForInput => TaskStatus::InputRequired,
-        }
-    }
-}
+// `TaskStatus` is the single status model for both workflow runs and
+// steps — the old `WorkflowStatus` and `StepStatus` enums are gone.
+// Two engine-level nuances are recorded where they already are
+// recorded:
+//   - a *blocked* step (unmet `StepRequirement`) → `TaskStatus::Failed`
+//     with the reason in `WorkflowStepRun.error` ("Missing skills: …");
+//   - a *skipped* step (`skip_if`, or unreachable from the entry point)
+//     → `TaskStatus::Canceled` with a run note.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -1207,7 +1157,7 @@ pub enum ShellType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepResult {
-    pub status: StepStatus,
+    pub status: TaskStatus,
     pub result: Option<serde_json::Value>,
     pub error: Option<String>,
     /// Updates to merge into workflow context for subsequent steps.
@@ -1218,7 +1168,7 @@ pub struct StepResult {
 impl StepResult {
     pub fn done(result: serde_json::Value) -> Self {
         Self {
-            status: StepStatus::Done,
+            status: TaskStatus::Completed,
             result: Some(result),
             error: None,
             context_updates: None,
@@ -1227,7 +1177,7 @@ impl StepResult {
 
     pub fn done_with_context(result: serde_json::Value, updates: serde_json::Value) -> Self {
         Self {
-            status: StepStatus::Done,
+            status: TaskStatus::Completed,
             result: Some(result),
             error: None,
             context_updates: Some(updates),
@@ -1236,7 +1186,7 @@ impl StepResult {
 
     pub fn failed(error: &str) -> Self {
         Self {
-            status: StepStatus::Failed,
+            status: TaskStatus::Failed,
             result: None,
             error: Some(error.to_string()),
             context_updates: None,
@@ -1245,7 +1195,7 @@ impl StepResult {
 
     pub fn skipped() -> Self {
         Self {
-            status: StepStatus::Skipped,
+            status: TaskStatus::Canceled,
             result: None,
             error: None,
             context_updates: None,
@@ -1300,7 +1250,7 @@ impl WorkflowRunSummary {
     /// `WorkflowStatus`. Translates statuses to `TaskStatus` at the
     /// boundary so consumers don't need to know about the engine's
     /// internal enums.
-    pub fn from_run(run: &WorkflowRun, status: WorkflowStatus) -> Self {
+    pub fn from_run(run: &WorkflowRun, status: TaskStatus) -> Self {
         let steps = run
             .steps()
             .iter()
@@ -1308,65 +1258,15 @@ impl WorkflowRunSummary {
             .map(|(step, sr)| WorkflowStepSummary {
                 id: step.id.clone(),
                 label: step.label.clone(),
-                status: sr.status.into(),
+                status: sr.status.clone(),
                 result: sr.result.clone(),
                 error: sr.error.clone(),
             })
             .collect();
         Self {
             workflow_id: run.id().to_string(),
-            status: status.into(),
+            status,
             steps,
         }
     }
-}
-
-// ============================================================================
-// Workflow Events (for streaming to clients)
-// ============================================================================
-
-/// Events emitted during workflow execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "event", rename_all = "snake_case")]
-pub enum WorkflowEvent {
-    /// Workflow started
-    WorkflowStarted {
-        workflow_id: String,
-        total_steps: usize,
-    },
-    /// A step started executing
-    StepStarted {
-        workflow_id: String,
-        step_id: String,
-        step_label: String,
-    },
-    /// A step completed successfully
-    StepCompleted {
-        workflow_id: String,
-        step_id: String,
-        step_label: String,
-        result: Option<serde_json::Value>,
-    },
-    /// A step failed
-    StepFailed {
-        workflow_id: String,
-        step_id: String,
-        step_label: String,
-        error: String,
-    },
-    /// A step is waiting for external/human input
-    StepWaiting {
-        workflow_id: String,
-        step_id: String,
-        step_label: String,
-        message: String,
-        schema: Option<serde_json::Value>,
-    },
-    /// Workflow completed (all steps done or failed)
-    WorkflowCompleted {
-        workflow_id: String,
-        status: WorkflowStatus,
-        steps_done: usize,
-        steps_failed: usize,
-    },
 }

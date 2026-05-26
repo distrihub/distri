@@ -1,4 +1,5 @@
 pub mod context;
+pub mod discovery;
 pub mod file_store;
 pub mod implementations;
 pub mod provider_registry;

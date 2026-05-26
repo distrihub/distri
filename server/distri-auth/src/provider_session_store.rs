@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::provider_registry::ProviderRegistry;
-use distri_types::auth::{AuthError, OAuthHandler};
+use distri_types::auth::{AuthError, OAuthHandler, ProviderRegistry as BaseProviderRegistry};
 use distri_types::AuthSession;
 
 /// Provider-based session store that integrates authentication with MCP sessions

@@ -79,30 +79,31 @@ pub fn resolve_template(template: &str, context: &Value) -> String {
 /// before `button_template` is resolved.
 fn resolve_reference(reference: &str, context: &Value) -> Option<Value> {
     let parts: Vec<&str> = reference.splitn(2, '.').collect();
-    if parts.len() < 2 {
-        return None;
-    }
-
-    let (namespace, path) = (parts[0], parts[1]);
+    let namespace = parts[0];
+    let path = parts.get(1).copied();
 
     match namespace {
         "input" | "steps" | "env" | "item" => {
             let ns_value = context.get(namespace)?;
-            resolve_path(ns_value, path)
+            match path {
+                Some(p) => resolve_path(ns_value, p),
+                None => Some(ns_value.clone()),
+            }
         }
         // Backward compat: {context.X} checks input, then steps, then env
         "context" => {
-            if let Some(v) = context.get("input").and_then(|inp| resolve_path(inp, path)) {
+            let p = path?;
+            if let Some(v) = context.get("input").and_then(|inp| resolve_path(inp, p)) {
                 return Some(v);
             }
-            if let Some(v) = context.get("steps").and_then(|s| resolve_path(s, path)) {
+            if let Some(v) = context.get("steps").and_then(|s| resolve_path(s, p)) {
                 return Some(v);
             }
-            if let Some(v) = context.get("env").and_then(|e| resolve_path(e, path)) {
+            if let Some(v) = context.get("env").and_then(|e| resolve_path(e, p)) {
                 return Some(v);
             }
             // Legacy flat context fallback
-            resolve_path(context, path)
+            resolve_path(context, p)
         }
         _ => None,
     }

@@ -139,7 +139,7 @@ impl ConnectionResolver for DefaultResolver {
                 http_headers: HashMap::new(),
             }),
             ConnectionAuth::Oauth { provider, .. } => {
-                resolve_oauth(&connection, provider.as_str(), ctx).await
+                resolve_oauth(&connection, provider.name.as_str(), ctx).await
             }
             ConnectionAuth::Custom { fields } => {
                 let fields = fields.clone();

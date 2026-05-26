@@ -508,13 +508,20 @@ impl OAuthHandler {
         }
     }
 
-    /// Generate authorization URL for OAuth2 flow
+    /// Generate authorization URL for OAuth2 flow. `extra_params` is
+    /// appended verbatim to the auth URL — provider-agnostic passthrough
+    /// for caller-supplied knobs (e.g. Slack `team=`, Microsoft `tenant=`).
+    /// `provider_override` lets the caller swap in a per-connection
+    /// `OAuth2Provider` built from BYOK creds or discovered metadata
+    /// instead of the registry's catalog provider.
     pub async fn get_auth_url(
         &self,
         auth_entity: &str,
         user_id: &str,
         auth_config: &AuthType,
         scopes: &[String],
+        extra_params: &HashMap<String, String>,
+        provider_override: Option<Arc<dyn AuthProvider>>,
     ) -> Result<String, AuthError> {
         tracing::debug!(
             "Getting auth URL for entity: {} user: {:?}",
@@ -560,8 +567,11 @@ impl OAuthHandler {
                 // Store the state
                 self.store.store_oauth2_state(state.clone()).await?;
 
-                // Get the appropriate provider using the auth_entity as provider name
-                let provider = self.get_provider(auth_entity).await?;
+                // Get the appropriate provider — caller-supplied override if any
+                // (per-connection BYOK / DCR), else look up by entity name.
+                let provider = self
+                    .effective_provider(auth_entity, provider_override)
+                    .await?;
 
                 // Build the authorization URL
                 let mut auth_url = provider.build_auth_url(
@@ -569,6 +579,7 @@ impl OAuthHandler {
                     &state.state,
                     scopes,
                     redirect_uri.as_deref(),
+                    extra_params,
                 )?;
 
                 if let Some(challenge) = pkce_challenge {
@@ -587,8 +598,15 @@ impl OAuthHandler {
         }
     }
 
-    /// Handle OAuth2 callback and exchange code for tokens
-    pub async fn handle_callback(&self, code: &str, state: &str) -> Result<AuthSession, AuthError> {
+    /// Handle OAuth2 callback and exchange code for tokens. `provider_override`
+    /// lets the caller (e.g. cloud's ConnectionService) plug in a per-connection
+    /// provider built from BYOK creds or discovered metadata.
+    pub async fn handle_callback(
+        &self,
+        code: &str,
+        state: &str,
+        provider_override: Option<Arc<dyn AuthProvider>>,
+    ) -> Result<AuthSession, AuthError> {
         tracing::debug!("Handling OAuth2 callback with state: {}", state);
 
         // Get and remove the state
@@ -623,8 +641,11 @@ impl OAuthHandler {
             ));
         };
 
-        // Get the appropriate provider
-        let provider = self.get_provider(&oauth2_state.provider_name).await?;
+        // Get the appropriate provider — caller-supplied override (BYOK / DCR)
+        // takes precedence over the registry lookup.
+        let provider = self
+            .effective_provider(&oauth2_state.provider_name, provider_override)
+            .await?;
 
         // Exchange the authorization code for tokens
         let redirect_uri = match &auth_config {
@@ -667,12 +688,16 @@ impl OAuthHandler {
         Ok(session)
     }
 
-    /// Refresh an expired session
+    /// Refresh an expired session. `provider_override` (when supplied) is used
+    /// instead of the registry-resolved provider — needed for BYOK and DCR
+    /// flows where the per-connection client creds are workspace secrets,
+    /// not in the catalog.
     pub async fn refresh_session(
         &self,
         auth_entity: &str,
         user_id: &str,
         auth_config: &AuthType,
+        provider_override: Option<Arc<dyn AuthProvider>>,
     ) -> Result<AuthSession, AuthError> {
         tracing::debug!(
             "Refreshing session for entity: {} user: {:?}",
@@ -698,8 +723,10 @@ impl OAuthHandler {
                 flow_type: OAuth2FlowType::ClientCredentials,
                 ..
             } => {
-                // For client credentials, get a new token instead of refreshing
-                let provider = self.get_provider(auth_entity).await?;
+                // For client credentials, get a new token instead of refreshing.
+                let provider = self
+                    .effective_provider(auth_entity, provider_override)
+                    .await?;
                 let new_session = provider.refresh_token(&refresh_token, auth_config).await?;
 
                 // Store the new session
@@ -709,8 +736,10 @@ impl OAuthHandler {
                 Ok(new_session)
             }
             auth_config @ AuthType::OAuth2 { .. } => {
-                // Get the appropriate provider
-                let provider = self.get_provider(auth_entity).await?;
+                // Get the appropriate provider — override wins if supplied.
+                let provider = self
+                    .effective_provider(auth_entity, provider_override)
+                    .await?;
 
                 // Refresh the token
                 let new_session = provider.refresh_token(&refresh_token, auth_config).await?;
@@ -727,12 +756,14 @@ impl OAuthHandler {
         }
     }
 
-    /// Get session, automatically refreshing if expired
+    /// Get session, automatically refreshing if expired. `provider_override`
+    /// is forwarded to `refresh_session` for BYOK / DCR client creds.
     pub async fn refresh_get_session(
         &self,
         auth_entity: &str,
         user_id: &str,
         auth_config: &AuthType,
+        provider_override: Option<Arc<dyn AuthProvider>>,
     ) -> Result<Option<AuthSession>, AuthError> {
         match self.store.get_session(auth_entity, user_id).await? {
             Some(session) => {
@@ -743,7 +774,7 @@ impl OAuthHandler {
                         user_id
                     );
                     match self
-                        .refresh_session(auth_entity, user_id, auth_config)
+                        .refresh_session(auth_entity, user_id, auth_config, provider_override)
                         .await
                     {
                         Ok(refreshed_session) => {
@@ -782,6 +813,21 @@ impl OAuthHandler {
             Err(AuthError::InvalidConfig(
                 "No provider registry configured".to_string(),
             ))
+        }
+    }
+
+    /// Return the caller-supplied provider if any, else fall back to the
+    /// registry-resolved provider. Used by the three flow methods so the
+    /// caller (cloud's ConnectionService) can swap in a per-connection
+    /// `OAuth2Provider` built from BYOK creds or discovered metadata.
+    async fn effective_provider(
+        &self,
+        provider_name: &str,
+        override_provider: Option<Arc<dyn AuthProvider>>,
+    ) -> Result<Arc<dyn AuthProvider>, AuthError> {
+        match override_provider {
+            Some(p) => Ok(p),
+            None => self.get_provider(provider_name).await,
         }
     }
 
@@ -889,12 +935,15 @@ pub trait AuthProvider: Send + Sync {
         auth_config: &AuthType,
     ) -> Result<AuthSession, AuthError>;
 
-    /// Build authorization URL
+    /// Build authorization URL. `extra_params` is appended verbatim to the
+    /// query string — no provider-name awareness in this layer; callers
+    /// pass through provider-specific knobs (e.g. Slack `team=`).
     fn build_auth_url(
         &self,
         auth_config: &AuthType,
         state: &str,
         scopes: &[String],
         redirect_uri: Option<&str>,
+        extra_params: &HashMap<String, String>,
     ) -> Result<String, AuthError>;
 }

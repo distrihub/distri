@@ -1543,6 +1543,24 @@ pub trait ConnectionStore: Send + Sync + 'static {
     /// Rename a connection. Editing the embedded `auth` schema goes through
     /// `update_auth` instead.
     async fn update(&self, id: &str, name: Option<String>) -> anyhow::Result<Connection>;
+    /// Replace the `config` JSONB. Used to round-trip workspace-scope
+    /// `extra_auth_params` so the Edit dialog can pre-fill them.
+    async fn update_config(&self, id: &str, config: serde_json::Value) -> anyhow::Result<()> {
+        let _ = (id, config);
+        Err(anyhow::anyhow!(
+            "update_config not implemented for this ConnectionStore"
+        ))
+    }
+    /// Replace the `auth` JSONB blob. Used by the
+    /// `POST /v1/connections/{id}/resync-provider` admin endpoint to re-apply
+    /// the catalog-provided `OAuthProviderConfig` onto an existing
+    /// connection. `auth` must be a serialized `ConnectionAuth`.
+    async fn update_auth(&self, id: &str, auth: serde_json::Value) -> anyhow::Result<()> {
+        let _ = (id, auth);
+        Err(anyhow::anyhow!(
+            "update_auth not implemented for this ConnectionStore"
+        ))
+    }
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
     /// Look up by `(workspace_id, provider)`. Resolution matches on
     /// `connections.auth->>'provider'` for OAuth.

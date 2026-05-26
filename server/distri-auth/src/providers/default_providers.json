@@ -1,8 +1,10 @@
 {
   "providers": [
     {
+      "kind": "rest",
       "name": "google",
-      "type": "oauth2",
+      "display_name": "Google",
+      "group": "identity",
       "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
       "token_url": "https://oauth2.googleapis.com/token",
       "refresh_url": "https://oauth2.googleapis.com/token",
@@ -41,11 +43,128 @@
       "env_vars": {
         "client_id": "GOOGLE_CLIENT_ID",
         "client_secret": "GOOGLE_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "access_type": "offline",
+        "prompt": "consent"
       }
     },
     {
+      "kind": "mcp",
+      "name": "gmail",
+      "display_name": "Gmail",
+      "group": "communication",
+      "transport_url": "https://gmailmcp.googleapis.com/mcp/v1",
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "pkce_required": true,
+      "scopes_supported": [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
+      "default_scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send"
+      ],
+      "env_vars": {
+        "client_id": "GOOGLE_CLIENT_ID",
+        "client_secret": "GOOGLE_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "access_type": "offline",
+        "prompt": "consent"
+      }
+    },
+    {
+      "kind": "mcp",
+      "name": "drive",
+      "display_name": "Drive",
+      "group": "files",
+      "transport_url": "https://drivemcp.googleapis.com/mcp/v1",
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "pkce_required": true,
+      "scopes_supported": [
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/drive"
+      ],
+      "default_scopes": [
+        "https://www.googleapis.com/auth/drive.readonly"
+      ],
+      "env_vars": {
+        "client_id": "GOOGLE_CLIENT_ID",
+        "client_secret": "GOOGLE_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "access_type": "offline",
+        "prompt": "consent"
+      }
+    },
+    {
+      "kind": "mcp",
+      "name": "calendar",
+      "display_name": "Calendar",
+      "group": "productivity",
+      "transport_url": "https://calendarmcp.googleapis.com/mcp/v1",
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "pkce_required": true,
+      "scopes_supported": [
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar"
+      ],
+      "default_scopes": [
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar.events"
+      ],
+      "env_vars": {
+        "client_id": "GOOGLE_CLIENT_ID",
+        "client_secret": "GOOGLE_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "access_type": "offline",
+        "prompt": "consent"
+      }
+    },
+    {
+      "kind": "mcp",
+      "name": "chat",
+      "display_name": "Chat",
+      "group": "communication",
+      "transport_url": "https://chatmcp.googleapis.com/mcp/v1",
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "pkce_required": true,
+      "scopes_supported": [
+        "https://www.googleapis.com/auth/chat.messages",
+        "https://www.googleapis.com/auth/chat.spaces.readonly",
+        "https://www.googleapis.com/auth/chat.spaces"
+      ],
+      "default_scopes": [
+        "https://www.googleapis.com/auth/chat.messages",
+        "https://www.googleapis.com/auth/chat.spaces.readonly"
+      ],
+      "env_vars": {
+        "client_id": "GOOGLE_CLIENT_ID",
+        "client_secret": "GOOGLE_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "access_type": "offline",
+        "prompt": "consent"
+      }
+    },
+    {
+      "kind": "rest",
       "name": "github",
-      "type": "oauth2",
+      "display_name": "GitHub",
+      "group": "development",
       "authorization_url": "https://github.com/login/oauth/authorize",
       "token_url": "https://github.com/login/oauth/access_token",
       "refresh_url": "https://github.com/login/oauth/access_token",
@@ -75,8 +194,10 @@
       }
     },
     {
+      "kind": "rest",
       "name": "twitter",
-      "type": "oauth2",
+      "display_name": "Twitter / X",
+      "group": "identity",
       "authorization_url": "https://twitter.com/i/oauth2/authorize",
       "token_url": "https://api.twitter.com/2/oauth2/token",
       "refresh_url": "https://api.twitter.com/2/oauth2/token",
@@ -103,11 +224,16 @@
       "env_vars": {
         "client_id": "TWITTER_CLIENT_ID",
         "client_secret": "TWITTER_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "code_challenge_method": "S256"
       }
     },
     {
+      "kind": "rest",
       "name": "microsoft",
-      "type": "oauth2",
+      "display_name": "Microsoft",
+      "group": "identity",
       "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
       "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
       "refresh_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",

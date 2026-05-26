@@ -13,9 +13,6 @@ pub mod workflow {
     pub use distri_workflow::*;
 }
 
-mod workflow_executor;
-pub use workflow_executor::{ChannelEventSink, DistriStepExecutor, WorkflowSession};
-
 use thiserror::Error;
 
 pub use crate::external_tools_runtime::ExternalToolRegistry;
