@@ -145,12 +145,21 @@ pub struct CreateConnectionRequest {
     pub kind: ConnectionKind,
 }
 
-/// PATCH body for updating a connection.
+/// PATCH body for updating a connection. All fields are optional; only
+/// supplied fields are applied. Powers the create-dialog "upsert" flow
+/// where the row is created on first submit and refined (name, auth) on
+/// subsequent resubmits before the OAuth round-trip completes.
+///
+/// `auth_scope` is intentionally **not** patchable — once a row exists,
+/// its scope is frozen because flipping it would re-key per-user vs
+/// workspace token storage and silently strand existing tokens. The UI
+/// locks the scope toggle once the row is created.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UpdateConnectionRequest {
     #[serde(default)]
     pub name: Option<String>,
-    /// Replace the embedded auth shape (e.g. edit Custom fields list).
+    /// Replace the embedded auth shape (e.g. edit Custom fields list,
+    /// rotate OAuth scopes).
     #[serde(default)]
     pub auth: Option<ConnectionAuth>,
 }

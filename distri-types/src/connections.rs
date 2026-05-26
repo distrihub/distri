@@ -113,49 +113,13 @@ fn default_required() -> bool {
     true
 }
 
-/// Category for grouping Directory tiles. Entries that share a group
-/// cluster under one heading (e.g. `Google` covers the vanilla `google`
-/// tile + the four `*_mcp` Workspace tiles). Enumerated so the UI's
-/// grouping logic and section headings stay type-safe — adding a tag
-/// requires editing this enum, not just typing a new string in JSON.
-///
-/// `Other` is the catch-all for entries we haven't categorised
-/// explicitly; the UI renders them in a trailing "Other" section.
-#[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq, Eq, Hash,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderGroup {
-    Google,
-    Slack,
-    Github,
-    Notion,
-    Microsoft,
-    Twitter,
-    Linear,
-    Atlassian,
-    Discord,
-    #[serde(other)]
-    Other,
-}
-
-impl ProviderGroup {
-    /// Heading rendered above the group's tiles in the Directory.
-    pub fn display(&self) -> &'static str {
-        match self {
-            Self::Google => "Google",
-            Self::Slack => "Slack",
-            Self::Github => "GitHub",
-            Self::Notion => "Notion",
-            Self::Microsoft => "Microsoft",
-            Self::Twitter => "Twitter / X",
-            Self::Linear => "Linear",
-            Self::Atlassian => "Atlassian",
-            Self::Discord => "Discord",
-            Self::Other => "Other",
-        }
-    }
-}
+/// Semantic category for grouping Directory tiles, declared inline on
+/// each catalog entry (`"group": "communication"`). Kept as a free-form
+/// snake_case string so new buckets can be added by editing the catalog
+/// JSON alone — no Rust recompile, no enum drift. The UI owns display
+/// labels and ordering for known values and falls back to title-casing
+/// the raw slug for unknowns.
+pub type ProviderGroup = String;
 
 /// Full OAuth provider declaration carried inline on a Connection.
 ///
@@ -257,9 +221,9 @@ impl CatalogProvider {
     }
 
     /// Borrow the group label shared by both variants.
-    pub fn group(&self) -> Option<ProviderGroup> {
+    pub fn group(&self) -> Option<&ProviderGroup> {
         match self {
-            Self::Rest { group, .. } | Self::Mcp { group, .. } => *group,
+            Self::Rest { group, .. } | Self::Mcp { group, .. } => group.as_ref(),
         }
     }
 

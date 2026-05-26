@@ -111,8 +111,8 @@ impl ProviderConfig {
         &self.oauth().name
     }
 
-    pub fn group(&self) -> Option<ProviderGroup> {
-        self.oauth().group
+    pub fn group(&self) -> Option<&ProviderGroup> {
+        self.oauth().group.as_ref()
     }
 }
 
@@ -169,7 +169,7 @@ impl ProviderConfig {
     /// REST vs MCP as a discriminated union.
     pub fn to_catalog_provider(&self) -> CatalogProvider {
         let oauth = self.to_oauth_provider_config();
-        let group = self.group();
+        let group = self.group().cloned();
         match self {
             ProviderConfig::Rest(_) => CatalogProvider::Rest { oauth, group },
             ProviderConfig::Mcp(mcp) => CatalogProvider::Mcp {
