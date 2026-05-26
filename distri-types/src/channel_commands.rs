@@ -14,6 +14,90 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// Built-in slash commands every distri agent supports without declaring them.
+///
+/// `Custom(String)` is the extension point: surfaces that ship their own
+/// commands wrap them as `SystemCommand::Custom("workspace")`, and the
+/// resolver (or downstream router) matches on the string. distri-cloud
+/// uses this to layer its `CloudCommand` set on top — see
+/// `distri-cloud/distri-gateway/src/command_router.rs::CloudCommand`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "name")]
+pub enum SystemCommand {
+    /// `/compact` — runs the manual compactor on the current task.
+    Compact,
+    /// `/usage` — render the current `ContextBudget` breakdown.
+    Usage,
+    /// `/clear` — start a new thread, keep the same agent.
+    Clear,
+    /// `/help` — list every command surfaced by the current agent.
+    Help,
+    /// Extension slot for surface-specific commands. The string is the bare
+    /// command name *without* the leading slash (e.g. `"workspace"`).
+    Custom(String),
+}
+
+impl SystemCommand {
+    /// Match against the bare slash-command name (with leading `/`).
+    /// Returns `None` for names that don't correspond to a built-in.
+    /// Use `from_name_with_custom` if you want unknown names to fall
+    /// through into the `Custom` variant.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "/compact" => Some(Self::Compact),
+            "/usage" => Some(Self::Usage),
+            "/clear" => Some(Self::Clear),
+            "/help" => Some(Self::Help),
+            _ => None,
+        }
+    }
+
+    /// Like `from_name`, but unknown names produce a `Custom(stripped)`
+    /// rather than `None`. Useful for higher-level routers that layer
+    /// surface-specific commands on top of the built-ins.
+    pub fn from_name_with_custom(name: &str) -> Self {
+        Self::from_name(name).unwrap_or_else(|| {
+            let stripped = name.strip_prefix('/').unwrap_or(name).to_string();
+            Self::Custom(stripped)
+        })
+    }
+
+    /// The canonical slash name including the leading `/`.
+    pub fn name(&self) -> String {
+        match self {
+            Self::Compact => "/compact".to_string(),
+            Self::Usage => "/usage".to_string(),
+            Self::Clear => "/clear".to_string(),
+            Self::Help => "/help".to_string(),
+            Self::Custom(n) => {
+                if n.starts_with('/') {
+                    n.clone()
+                } else {
+                    format!("/{n}")
+                }
+            }
+        }
+    }
+
+    /// One-line description used by `/help` and channel menus. `Custom`
+    /// carries no description — surfaces that own a `Custom` should
+    /// provide their own description elsewhere.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Compact => "Summarize prior turns to free context",
+            Self::Usage => "Show current context usage",
+            Self::Clear => "Start a new thread, keep the same agent",
+            Self::Help => "List available commands",
+            Self::Custom(_) => "",
+        }
+    }
+
+    /// Iterate the four built-in (non-Custom) commands.
+    pub fn builtins() -> [SystemCommand; 4] {
+        [Self::Compact, Self::Usage, Self::Clear, Self::Help]
+    }
+}
+
 /// A slash command declared by a `StandardAgent` (`StandardDefinition.commands`).
 ///
 /// This is the standard-agent counterpart of a `WorkflowAgent`'s entry-point
@@ -39,6 +123,21 @@ pub struct SlashCommand {
     pub prompt: String,
 }
 
+/// Convert a `SystemCommand` into the `SlashCommand` shape that channel
+/// menus / help renderers consume. `Custom(_)` produces a placeholder with
+/// an empty description — surfaces that own a Custom command should attach
+/// a real description by passing their own `SlashCommand` to
+/// `resolve_commands_with`.
+pub fn system_command_as_slash(cmd: &SystemCommand) -> SlashCommand {
+    SlashCommand {
+        name: cmd.name(),
+        description: cmd.description().to_string(),
+        aliases: vec![],
+        channels: vec![],
+        prompt: String::new(),
+    }
+}
+
 /// Built-in slash commands every agent gets without having to declare them.
 /// Resolved **client-side** without going through the agent loop:
 ///
@@ -51,43 +150,37 @@ pub struct SlashCommand {
 /// `CommandRouter`, which short-circuits these names before dispatching to
 /// the agent. A per-agent command with the same name shadows the system one.
 pub fn system_commands() -> Vec<SlashCommand> {
-    vec![
-        SlashCommand {
-            name: "/compact".to_string(),
-            description: "Summarize prior turns to free context".to_string(),
-            aliases: vec![],
-            channels: vec![],
-            prompt: String::new(),
-        },
-        SlashCommand {
-            name: "/usage".to_string(),
-            description: "Show current context usage".to_string(),
-            aliases: vec![],
-            channels: vec![],
-            prompt: String::new(),
-        },
-        SlashCommand {
-            name: "/clear".to_string(),
-            description: "Start a new thread, keep the same agent".to_string(),
-            aliases: vec![],
-            channels: vec![],
-            prompt: String::new(),
-        },
-        SlashCommand {
-            name: "/help".to_string(),
-            description: "List available commands".to_string(),
-            aliases: vec![],
-            channels: vec![],
-            prompt: String::new(),
-        },
-    ]
+    SystemCommand::builtins()
+        .iter()
+        .map(system_command_as_slash)
+        .collect()
 }
 
 /// Resolve the full slash-command surface for an agent: system commands
 /// first, then agent-declared ones. A duplicate name (by exact name) drops
 /// the system command — explicit override wins.
 pub fn resolve_commands(agent: &AgentConfig) -> Vec<SlashCommand> {
+    resolve_commands_with(agent, &[])
+}
+
+/// Like `resolve_commands`, but takes an additional set of `extra` commands
+/// that get folded in alongside the built-ins. Surfaces that ship their own
+/// commands (e.g. distri-cloud's `CloudCommand` set) use this to layer
+/// them in once and benefit from the same shadow-by-name rule.
+///
+/// Precedence (highest wins on duplicate `name`): agent-declared >
+/// extras > built-in system commands.
+pub fn resolve_commands_with(agent: &AgentConfig, extra: &[SlashCommand]) -> Vec<SlashCommand> {
     let mut out = system_commands();
+
+    // Layer extras on top of built-ins.
+    if !extra.is_empty() {
+        let extra_names: std::collections::HashSet<String> =
+            extra.iter().map(|c| c.name.clone()).collect();
+        out.retain(|c| !extra_names.contains(&c.name));
+        out.extend(extra.iter().cloned());
+    }
+
     let agent_cmds: Vec<SlashCommand> = match agent {
         AgentConfig::StandardAgent(d) => d.commands.clone(),
         // Workflow agents don't declare `SlashCommand`s — their commands live
@@ -105,10 +198,9 @@ pub fn resolve_commands(agent: &AgentConfig) -> Vec<SlashCommand> {
     out
 }
 
-/// Names of the built-in system commands. Useful for routers that need to
-/// short-circuit these before dispatching to per-agent surfaces.
+/// Whether `name` is one of the four built-in (non-Custom) system commands.
 pub fn is_system_command(name: &str) -> bool {
-    matches!(name, "/compact" | "/usage" | "/clear" | "/help")
+    SystemCommand::from_name(name).is_some()
 }
 
 /// Author-facing button template inside a `StepKind::Reply`. Label/url/
@@ -213,6 +305,71 @@ mod tests {
     fn channel_bindings_defaults_are_none() {
         let b: ChannelBindings = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(b.telegram.is_none());
+    }
+
+    #[test]
+    fn system_command_round_trips_builtins() {
+        for cmd in SystemCommand::builtins() {
+            let resolved = SystemCommand::from_name(&cmd.name()).unwrap();
+            assert_eq!(resolved, cmd);
+            assert!(!cmd.description().is_empty());
+        }
+    }
+
+    #[test]
+    fn system_command_falls_through_to_custom() {
+        let cmd = SystemCommand::from_name_with_custom("/workspace");
+        assert_eq!(cmd, SystemCommand::Custom("workspace".to_string()));
+        // Built-in name still resolves to the built-in variant.
+        assert_eq!(
+            SystemCommand::from_name_with_custom("/compact"),
+            SystemCommand::Compact
+        );
+        // Round-trips the name back with the leading slash.
+        assert_eq!(SystemCommand::Custom("ws".into()).name(), "/ws");
+    }
+
+    #[test]
+    fn resolve_commands_with_layers_extras() {
+        let cfg: AgentConfig = serde_json::from_value(serde_json::json!({
+            "agent_type": "standard_agent",
+            "name": "s",
+            "description": "d",
+        }))
+        .unwrap();
+        let extra = vec![SlashCommand {
+            name: "/workspace".into(),
+            description: "Open workspace switcher".into(),
+            aliases: vec![],
+            channels: vec![],
+            prompt: String::new(),
+        }];
+        let resolved = resolve_commands_with(&cfg, &extra);
+        let names: Vec<&str> = resolved.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"/compact"));
+        assert!(names.contains(&"/workspace"));
+    }
+
+    #[test]
+    fn resolve_commands_with_extras_shadow_builtins() {
+        // An extra `/help` overrides the built-in description.
+        let cfg: AgentConfig = serde_json::from_value(serde_json::json!({
+            "agent_type": "standard_agent",
+            "name": "s",
+            "description": "d",
+        }))
+        .unwrap();
+        let extra = vec![SlashCommand {
+            name: "/help".into(),
+            description: "Cloud help".into(),
+            aliases: vec![],
+            channels: vec![],
+            prompt: String::new(),
+        }];
+        let resolved = resolve_commands_with(&cfg, &extra);
+        let help: Vec<&SlashCommand> = resolved.iter().filter(|c| c.name == "/help").collect();
+        assert_eq!(help.len(), 1);
+        assert_eq!(help[0].description, "Cloud help");
     }
 
     #[test]
