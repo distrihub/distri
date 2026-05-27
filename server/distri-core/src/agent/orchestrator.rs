@@ -2323,11 +2323,23 @@ async fn resolve_declared_connections(
                 .clone()
                 .or_else(|| req.connection_id.map(|id| id.to_string()))
                 .unwrap_or_default();
+            // Lazy validation: missing required connection is no longer
+            // an upfront hard-fail. The workflow runs; if a step
+            // actually needs the connection at runtime, the step's
+            // 401/403 response surfaces as a `/configure` prompt via
+            // the channel reply layer. Pre-flight failure was the
+            // wrong model — most workflow steps don't even touch
+            // third-party connections (reply, callback, builtin
+            // tools), so blanket-failing the run on a declared-but-
+            // missing requirement was overreach.
             if req.required {
-                return Err(AgentError::Validation(format!(
-                    "Agent '{}' requires connection '{}' but none is connected in this workspace",
-                    agent_name, label
-                )));
+                tracing::warn!(
+                    agent = %agent_name,
+                    connection = %label,
+                    "Agent declares required connection that is not configured in the \
+                     workspace — running anyway; step-level 401s will surface as \
+                     /configure prompts"
+                );
             }
             missing_providers.push(format!(
                 "- **{}** — not connected yet in this workspace",

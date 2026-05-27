@@ -114,6 +114,23 @@ pub(crate) async fn execute_step(
                             serde_json::json!({"status": status_code, "body": resp_body}),
                             serde_json::json!({"last_response": resp_body}),
                         ))
+                    } else if status_code == 401 || status_code == 403 {
+                        // Auth-shaped failure — translate to a
+                        // `/configure`-prompt message so the channel
+                        // reply layer can recognise it and surface
+                        // the Mini App "Manage connections" entry
+                        // point. The literal "/configure" + the
+                        // upstream body is the contract the gateway's
+                        // reply renderer matches on (commit 5 of the
+                        // unified-flow rollout).
+                        //
+                        // Until the structured `NeedsConfigure`
+                        // outcome lands, this string is the carrier.
+                        Ok(StepResult::failed(&format!(
+                            "needs_configure: upstream returned HTTP {} — \
+                             run /configure to set up missing connections. Body: {}",
+                            status_code, resp_body
+                        )))
                     } else {
                         Ok(StepResult::failed(&format!(
                             "HTTP {} — {}",
