@@ -115,17 +115,51 @@ pub(crate) async fn execute_step(
                             serde_json::json!({"last_response": resp_body}),
                         ))
                     } else if status_code == 401 || status_code == 403 {
-                        // Auth-shaped failure — translate to a
-                        // `/configure`-prompt message so the channel
-                        // reply layer can recognise it and surface
-                        // the Mini App "Manage connections" entry
-                        // point. The literal "/configure" + the
-                        // upstream body is the contract the gateway's
-                        // reply renderer matches on (commit 5 of the
-                        // unified-flow rollout).
+                        // Auth-shaped failure — emit a `ChannelReply`
+                        // event so the gateway sends an actionable
+                        // "Setup required" prompt to the chat
+                        // immediately, instead of letting the user
+                        // stare at a bare "Step N failed" inline
+                        // marker.
                         //
-                        // Until the structured `NeedsConfigure`
-                        // outcome lands, this string is the carrier.
+                        // The StepResult::failed marker (preserved
+                        // below) is the contract that downstream
+                        // consumers — the workflow summary, future
+                        // gateway interceptors that mint a proper
+                        // per-connection Configure URL via the
+                        // workspace's `bot_connections::issue_manage_url`
+                        // — use to identify this state. The URL
+                        // button here is a generic fallback to the
+                        // workspace Connections settings page; the
+                        // proper Mini App "Manage connections" button
+                        // requires bot/channel context the step
+                        // executor doesn't currently carry.
+                        let web_app_url = std::env::var("WEB_APP_URL")
+                            .ok()
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.trim_end_matches('/').to_string());
+                        let mut buttons: Vec<
+                            Vec<distri_types::channel_commands::ChannelButton>,
+                        > = Vec::new();
+                        if let Some(base) = web_app_url.as_deref() {
+                            buttons.push(vec![
+                                distri_types::channel_commands::ChannelButton::Url {
+                                    label: "Open settings".to_string(),
+                                    url: format!("{base}/settings/connections"),
+                                },
+                            ]);
+                        }
+                        let reply = distri_types::channel_commands::ChannelReply {
+                            text: "🔒 Setup required — a connection used by this command \
+                                   isn't authorized for you yet.\n\n\
+                                   Open Connections settings, find the required provider, \
+                                   and click *Connect*. Then re-run the command."
+                                .to_string(),
+                            buttons,
+                        };
+                        context
+                            .emit(distri_types::AgentEventType::ChannelReply { reply })
+                            .await;
                         Ok(StepResult::failed(&format!(
                             "needs_configure: upstream returned HTTP {} — \
                              run /configure to set up missing connections. Body: {}",
