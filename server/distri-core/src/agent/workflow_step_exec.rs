@@ -115,47 +115,27 @@ pub(crate) async fn execute_step(
                             serde_json::json!({"last_response": resp_body}),
                         ))
                     } else if status_code == 401 || status_code == 403 {
-                        // Auth-shaped failure — emit a `ChannelReply`
-                        // event so the gateway sends an actionable
-                        // "Setup required" prompt to the chat
-                        // immediately, instead of letting the user
-                        // stare at a bare "Step N failed" inline
-                        // marker.
+                        // Auth-shaped failure at the upstream API. The
+                        // primary configure-prompt path runs at
+                        // pre-flight inside
+                        // `resolve_declared_connections` — that's where
+                        // we know the failing `connection_id` and can
+                        // mint a proper `/connections/configure?code=…`
+                        // URL bound to the user's identity.
                         //
-                        // The StepResult::failed marker (preserved
-                        // below) is the contract that downstream
-                        // consumers — the workflow summary, future
-                        // gateway interceptors that mint a proper
-                        // per-connection Configure URL via the
-                        // workspace's `bot_connections::issue_manage_url`
-                        // — use to identify this state. The URL
-                        // button here is a generic fallback to the
-                        // workspace Connections settings page; the
-                        // proper Mini App "Manage connections" button
-                        // requires bot/channel context the step
-                        // executor doesn't currently carry.
-                        let web_app_url = std::env::var("WEB_APP_URL")
-                            .ok()
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.trim_end_matches('/').to_string());
-                        let mut buttons: Vec<
-                            Vec<distri_types::channel_commands::ChannelButton>,
-                        > = Vec::new();
-                        if let Some(base) = web_app_url.as_deref() {
-                            buttons.push(vec![
-                                distri_types::channel_commands::ChannelButton::Url {
-                                    label: "Open settings".to_string(),
-                                    url: format!("{base}/settings/connections"),
-                                },
-                            ]);
-                        }
+                        // This branch is a fallback for the case where
+                        // pre-flight resolution succeeded (env var was
+                        // set with a stale/revoked token) yet the
+                        // upstream still rejects. We don't know which
+                        // connection is the culprit here, so the reply
+                        // is text-only — the user must `/disconnect`
+                        // or revisit the bot to re-trigger pre-flight.
                         let reply = distri_types::channel_commands::ChannelReply {
-                            text: "🔒 Setup required — a connection used by this command \
-                                   isn't authorized for you yet.\n\n\
-                                   Open Connections settings, find the required provider, \
-                                   and click *Connect*. Then re-run the command."
+                            text: "🔒 Setup required — the connection your bot uses \
+                                   rejected the request (token expired or revoked). \
+                                   Run /disconnect and send a message to re-authorize."
                                 .to_string(),
-                            buttons,
+                            buttons: vec![],
                         };
                         context
                             .emit(distri_types::AgentEventType::ChannelReply { reply })

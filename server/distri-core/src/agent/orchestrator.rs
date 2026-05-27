@@ -2406,18 +2406,103 @@ async fn resolve_declared_connections(
                 ));
             }
             Err(e) => {
+                // Lazy validation: the row exists but the resolver
+                // couldn't materialise a token (most common case:
+                // user-scope OAuth with no per-user session for the
+                // calling user yet). Pre-flight failing the whole
+                // run is the wrong model — the workflow may have
+                // steps that don't touch this connection at all,
+                // and the step-level 401 path is also wired below.
                 if req.required {
-                    return Err(AgentError::Validation(format!(
-                        "Failed to resolve connection '{}': {}",
-                        connection.name, e
-                    )));
+                    tracing::warn!(
+                        agent = %agent_name,
+                        connection = %connection.name,
+                        error = %e,
+                        "Resolver failed for required connection — running anyway; \
+                         emitting per-connection configure prompt"
+                    );
+
+                    // Mint a `ConfigureContextStash` directly into
+                    // Redis under the same key prefix the cloud-side
+                    // `connection_configure.rs` GET handler reads.
+                    // The code IS the auth for the unauthenticated
+                    // `/connections/configure?code=…` page — works
+                    // for end users without workspace-admin login.
+                    //
+                    // Identity is bound to the calling distri user
+                    // via (provider="distri", platform_id=user_id)
+                    // so the submit handler can upsert the right
+                    // channel_identity row and persist secrets
+                    // under the same user.
+                    let code: String =
+                        uuid::Uuid::new_v4().simple().to_string();
+                    let stash = serde_json::json!({
+                        "connection_id": connection.id.to_string(),
+                        "workspace_id": workspace_id,
+                        "provider": "distri",
+                        "platform_id": context.user_id.clone(),
+                        "platform_display_name": null,
+                        "platform_username": null,
+                        "channel_id": context.channel_id
+                            .as_deref()
+                            .and_then(|s| uuid::Uuid::parse_str(s).ok()),
+                        "bot_id": null,
+                        "issued_at": chrono::Utc::now(),
+                    });
+                    let stash_key = format!("connection_configure:{}", code);
+                    let store_result = match stores.connection_token_store.as_ref() {
+                        Some(token_store) => {
+                            token_store.store_oauth_state(&stash_key, stash).await
+                        }
+                        None => {
+                            tracing::error!(
+                                "connection_token_store is None — cannot mint configure URL"
+                            );
+                            Ok(())
+                        }
+                    };
+                    match store_result {
+                        Ok(()) => {
+                            let web_app_url = std::env::var("WEB_APP_URL")
+                                .unwrap_or_else(|_| "https://app.distri.dev".to_string());
+                            let url = format!(
+                                "{}/connections/configure?code={}",
+                                web_app_url.trim_end_matches('/'),
+                                code
+                            );
+                            let reply = distri_types::channel_commands::ChannelReply {
+                                text: format!(
+                                    "🔒 *{}* needs to be configured for you. \
+                                     Tap *Configure* below to authorize.",
+                                    connection.name
+                                ),
+                                buttons: vec![vec![
+                                    distri_types::channel_commands::ChannelButton::Url {
+                                        label: "Configure".to_string(),
+                                        url,
+                                    },
+                                ]],
+                            };
+                            context
+                                .emit(AgentEventType::ChannelReply { reply })
+                                .await;
+                        }
+                        Err(stash_err) => {
+                            tracing::error!(
+                                error = %stash_err,
+                                connection = %connection.name,
+                                "failed to mint configure stash for required connection"
+                            );
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        "Agent '{}' declared non-required connection '{}' but resolution failed: {}",
+                        agent_name,
+                        connection.name,
+                        e
+                    );
                 }
-                tracing::warn!(
-                    "Agent '{}' declared non-required connection '{}' but resolution failed: {}",
-                    agent_name,
-                    connection.name,
-                    e
-                );
                 missing_providers.push(format!(
                     "- **{}** — error resolving: {}",
                     connection.name, e
