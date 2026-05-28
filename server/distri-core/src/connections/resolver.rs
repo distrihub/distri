@@ -335,6 +335,16 @@ async fn resolve_custom(
     // for the MCP transport which consumes them as-is).
     let mut http_headers = HashMap::new();
 
+    let user_id_hint = ctx.user_id.unwrap_or("<none>");
+    tracing::info!(
+        target: "distri_core::connections::resolver",
+        connection_id = %connection.id,
+        connection_name = %connection.name,
+        user_id = %user_id_hint,
+        bundle_present = %token_bundle.is_some(),
+        "resolve_custom: starting field resolution"
+    );
+
     for field in fields {
         // Use the field key exactly as declared — no implicit
         // connection-name prefix. Authors control the env var name by
@@ -342,11 +352,13 @@ async fn resolve_custom(
         let env_name = field.key.to_uppercase();
 
         let mut resolved_value: Option<String> = None;
+        let mut source: &'static str = "none";
 
         if let Some(bundle) = token_bundle.as_ref() {
             if let Some(v) = bundle.get(&field.key).and_then(|v| v.as_str()) {
                 if !v.is_empty() {
                     resolved_value = Some(v.to_string());
+                    source = "token_bundle";
                 }
             }
         }
@@ -357,12 +369,24 @@ async fn resolve_custom(
                 match secret_store.get(&key).await {
                     Ok(Some(record)) => {
                         resolved_value = Some(record.value);
+                        source = "secret_store";
                     }
                     Ok(None) => {}
                     Err(e) => return Err(format!("failed to get secret '{}': {e}", key)),
                 }
             }
         }
+
+        tracing::info!(
+            target: "distri_core::connections::resolver",
+            connection_id = %connection.id,
+            field = %field.key,
+            required = %field.required,
+            user_id = %user_id_hint,
+            source = source,
+            found = %resolved_value.is_some(),
+            "resolve_custom: field lookup"
+        );
 
         match resolved_value {
             Some(v) => {
