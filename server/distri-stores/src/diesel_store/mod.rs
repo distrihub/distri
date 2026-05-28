@@ -2673,6 +2673,65 @@ where
         entries.reverse();
         Ok(entries)
     }
+
+    async fn replace_entries(
+        &self,
+        thread_id: &str,
+        task_id: &str,
+        new_entries: Vec<ScratchpadEntry>,
+    ) -> Result<(), AgentError> {
+        use diesel_async::AsyncConnection;
+
+        let mut connection = self
+            .conn()
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))?;
+
+        // Pre-serialize before opening the transaction so a malformed entry
+        // doesn't leave us with an empty scratchpad mid-DELETE.
+        let payloads: Vec<(String, ScratchpadEntry)> = new_entries
+            .into_iter()
+            .map(|entry| {
+                serde_json::to_string(&entry)
+                    .map(|p| (p, entry))
+                    .map_err(|err| AgentError::Execution(err.to_string()))
+            })
+            .collect::<Result<_, _>>()?;
+
+        let thread_id = thread_id.to_string();
+        let task_id = task_id.to_string();
+        connection
+            .transaction::<_, diesel::result::Error, _>(|conn| {
+                Box::pin(async move {
+                    diesel::delete(
+                        scratchpad_entries::table
+                            .filter(scratchpad_entries::thread_id.eq(&thread_id))
+                            .filter(scratchpad_entries::task_id.eq(&task_id)),
+                    )
+                    .execute(conn)
+                    .await?;
+
+                    for (payload, entry) in &payloads {
+                        let row = NewScratchpadEntryModel {
+                            thread_id: &thread_id,
+                            task_id: &entry.task_id,
+                            parent_task_id: entry.parent_task_id.as_deref(),
+                            entry: payload,
+                            entry_type: entry.entry_kind.as_deref(),
+                            timestamp: entry.timestamp,
+                            created_at: now_naive(),
+                        };
+                        diesel::insert_into(scratchpad_entries::table)
+                            .values(&row)
+                            .execute(conn)
+                            .await?;
+                    }
+                    Ok(())
+                })
+            })
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))
+    }
 }
 
 #[derive(Clone)]

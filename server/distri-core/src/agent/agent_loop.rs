@@ -189,10 +189,17 @@ impl AgentLoop {
             tracing::warn!("Failed to calculate context size: {}", e);
         }
 
+        // Stash a Tier 2 summary LLM executor on the context so
+        // `evaluate_compaction` can actually summarize (not just trim)
+        // when the size manager picks Summarize-tier. Strategies that
+        // don't override `build_summary_executor` return None — in that
+        // case Tier 2 falls back to mechanical trim.
+        if let Some(executor) = self.planner.build_summary_executor(context.clone()).await {
+            *context.summary_executor.write().await = Some(executor);
+        }
+
         // Auto-compact before planning if context is getting large.
-        // evaluate_compaction() handles skill re-injection after compaction.
-        // Note: Tier 2 LLM-powered summarization is detected but deferred —
-        // the summarization LLM call requires wiring an LLMExecutor into the loop.
+        // evaluate_compaction() handles persistence + skill re-injection.
         if let Err(e) = context.evaluate_compaction().await {
             tracing::warn!("Failed to evaluate compaction: {}", e);
         }
