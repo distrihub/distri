@@ -2429,24 +2429,29 @@ async fn resolve_declared_connections(
                     // `/connections/configure?code=…` page — works
                     // for end users without workspace-admin login.
                     //
-                    // Identity is bound to the calling distri user
-                    // via (provider="distri", platform_id=user_id)
-                    // so the submit handler can upsert the right
-                    // channel_identity row and persist secrets
-                    // under the same user.
+                    // Direct user binding via the stash's `user_id`
+                    // field — the calling user is already authenticated
+                    // and identified by `users.id`. The submit handler
+                    // persists secrets under this user_id directly and
+                    // skips identity upsert. We do NOT fabricate a
+                    // synthetic `(provider, platform_id)` for the
+                    // workflow-required-connection case — that flow is
+                    // user-bound, not channel-bound.
                     let code: String =
                         uuid::Uuid::new_v4().simple().to_string();
+                    let user_uuid = uuid::Uuid::parse_str(&context.user_id).ok();
                     let stash = serde_json::json!({
                         "connection_id": connection.id.to_string(),
                         "workspace_id": workspace_id,
-                        "provider": "distri",
-                        "platform_id": context.user_id.clone(),
+                        "provider": "",
+                        "platform_id": "",
                         "platform_display_name": null,
                         "platform_username": null,
                         "channel_id": context.channel_id
                             .as_deref()
                             .and_then(|s| uuid::Uuid::parse_str(s).ok()),
                         "bot_id": null,
+                        "user_id": user_uuid,
                         "issued_at": chrono::Utc::now(),
                     });
                     let stash_key = format!("connection_configure:{}", code);
