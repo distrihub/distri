@@ -2323,11 +2323,23 @@ async fn resolve_declared_connections(
                 .clone()
                 .or_else(|| req.connection_id.map(|id| id.to_string()))
                 .unwrap_or_default();
+            // Lazy validation: missing required connection is no longer
+            // an upfront hard-fail. The workflow runs; if a step
+            // actually needs the connection at runtime, the step's
+            // 401/403 response surfaces as a `/configure` prompt via
+            // the channel reply layer. Pre-flight failure was the
+            // wrong model — most workflow steps don't even touch
+            // third-party connections (reply, callback, builtin
+            // tools), so blanket-failing the run on a declared-but-
+            // missing requirement was overreach.
             if req.required {
-                return Err(AgentError::Validation(format!(
-                    "Agent '{}' requires connection '{}' but none is connected in this workspace",
-                    agent_name, label
-                )));
+                tracing::warn!(
+                    agent = %agent_name,
+                    connection = %label,
+                    "Agent declares required connection that is not configured in the \
+                     workspace — running anyway; step-level 401s will surface as \
+                     /configure prompts"
+                );
             }
             missing_providers.push(format!(
                 "- **{}** — not connected yet in this workspace",
@@ -2394,18 +2406,116 @@ async fn resolve_declared_connections(
                 ));
             }
             Err(e) => {
+                // Lazy validation: the row exists but the resolver
+                // couldn't materialise a token (most common case:
+                // user-scope OAuth with no per-user session for the
+                // calling user yet). Pre-flight failing the whole
+                // run is the wrong model — the workflow may have
+                // steps that don't touch this connection at all,
+                // and the step-level 401 path is also wired below.
                 if req.required {
-                    return Err(AgentError::Validation(format!(
-                        "Failed to resolve connection '{}': {}",
-                        connection.name, e
-                    )));
+                    tracing::warn!(
+                        agent = %agent_name,
+                        connection = %connection.name,
+                        error = %e,
+                        "Resolver failed for required connection — running anyway; \
+                         emitting per-connection configure prompt"
+                    );
+
+                    // Mint a `ConfigureContextStash` directly into
+                    // Redis under the same key prefix the cloud-side
+                    // `connection_configure.rs` GET handler reads.
+                    // The code IS the auth for the unauthenticated
+                    // `/connections/configure?code=…` page — works
+                    // for end users without workspace-admin login.
+                    //
+                    // Direct user binding via the stash's `user_id`
+                    // field — the calling user is already authenticated
+                    // and identified by `users.id`. The submit handler
+                    // persists secrets under this user_id directly and
+                    // skips identity upsert. We do NOT fabricate a
+                    // synthetic `(provider, platform_id)` for the
+                    // workflow-required-connection case — that flow is
+                    // user-bound, not channel-bound.
+                    let code: String =
+                        uuid::Uuid::new_v4().simple().to_string();
+                    let Some(user_uuid) = uuid::Uuid::parse_str(&context.user_id).ok() else {
+                        tracing::error!(
+                            user_id = %context.user_id,
+                            "context.user_id is not a valid UUID — cannot mint configure stash"
+                        );
+                        continue;
+                    };
+                    let Some(workspace_uuid) = uuid::Uuid::parse_str(&workspace_id).ok() else {
+                        tracing::error!(
+                            workspace_id = %workspace_id,
+                            "context.workspace_id is not a valid UUID — cannot mint configure stash"
+                        );
+                        continue;
+                    };
+                    let stash = serde_json::json!({
+                        "connection_id": connection.id,
+                        "workspace_id": workspace_uuid,
+                        "user_id": user_uuid,
+                        "channel_id": context.channel_id
+                            .as_deref()
+                            .and_then(|s| uuid::Uuid::parse_str(s).ok()),
+                        "issued_at": chrono::Utc::now(),
+                    });
+                    let stash_key = format!("connection_configure:{}", code);
+                    let store_result = match stores.connection_token_store.as_ref() {
+                        Some(token_store) => {
+                            token_store.store_oauth_state(&stash_key, stash).await
+                        }
+                        None => {
+                            tracing::error!(
+                                "connection_token_store is None — cannot mint configure URL"
+                            );
+                            Ok(())
+                        }
+                    };
+                    match store_result {
+                        Ok(()) => {
+                            let web_app_url = std::env::var("WEB_APP_URL")
+                                .unwrap_or_else(|_| "https://app.distri.dev".to_string());
+                            let url = format!(
+                                "{}/connections/configure?code={}",
+                                web_app_url.trim_end_matches('/'),
+                                code
+                            );
+                            let reply = distri_types::channel_commands::ChannelReply {
+                                text: format!(
+                                    "🔒 *{}* needs to be configured for you. \
+                                     Tap *Configure* below to authorize.",
+                                    connection.name
+                                ),
+                                buttons: vec![vec![
+                                    distri_types::channel_commands::ChannelButton::Url {
+                                        label: "Configure".to_string(),
+                                        url,
+                                    },
+                                ]],
+                            };
+                            context
+                                .emit(AgentEventType::ChannelReply { reply })
+                                .await;
+                        }
+                        Err(stash_err) => {
+                            tracing::error!(
+                                error = %stash_err,
+                                connection = %connection.name,
+                                "failed to mint configure stash for required connection"
+                            );
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        "Agent '{}' declared non-required connection '{}' but resolution failed: {}",
+                        agent_name,
+                        connection.name,
+                        e
+                    );
                 }
-                tracing::warn!(
-                    "Agent '{}' declared non-required connection '{}' but resolution failed: {}",
-                    agent_name,
-                    connection.name,
-                    e
-                );
                 missing_providers.push(format!(
                     "- **{}** — error resolving: {}",
                     connection.name, e

@@ -114,6 +114,37 @@ pub(crate) async fn execute_step(
                             serde_json::json!({"status": status_code, "body": resp_body}),
                             serde_json::json!({"last_response": resp_body}),
                         ))
+                    } else if status_code == 401 || status_code == 403 {
+                        // Auth-shaped failure at the upstream API. The
+                        // primary configure-prompt path runs at
+                        // pre-flight inside
+                        // `resolve_declared_connections` — that's where
+                        // we know the failing `connection_id` and can
+                        // mint a proper `/connections/configure?code=…`
+                        // URL bound to the user's identity.
+                        //
+                        // This branch is a fallback for the case where
+                        // pre-flight resolution succeeded (env var was
+                        // set with a stale/revoked token) yet the
+                        // upstream still rejects. We don't know which
+                        // connection is the culprit here, so the reply
+                        // is text-only — the user must `/disconnect`
+                        // or revisit the bot to re-trigger pre-flight.
+                        let reply = distri_types::channel_commands::ChannelReply {
+                            text: "🔒 Setup required — the connection your bot uses \
+                                   rejected the request (token expired or revoked). \
+                                   Run /disconnect and send a message to re-authorize."
+                                .to_string(),
+                            buttons: vec![],
+                        };
+                        context
+                            .emit(distri_types::AgentEventType::ChannelReply { reply })
+                            .await;
+                        Ok(StepResult::failed(&format!(
+                            "needs_configure: upstream returned HTTP {} — \
+                             run /configure to set up missing connections. Body: {}",
+                            status_code, resp_body
+                        )))
                     } else {
                         Ok(StepResult::failed(&format!(
                             "HTTP {} — {}",
@@ -138,22 +169,21 @@ pub(crate) async fn execute_step(
                         tool_name: tool_name.clone(),
                         input: resolved_input,
                     };
-                    let tool_context = Arc::new(distri_types::ToolContext {
-                        agent_id: context.agent_id.clone(),
-                        session_id: context.session_id.clone(),
-                        task_id: context.task_id.clone(),
-                        run_id: context.run_id.clone(),
-                        thread_id: context.thread_id.clone(),
-                        user_id: context.user_id.clone(),
-                        session_store: context
-                            .orchestrator
-                            .as_ref()
-                            .map(|o| o.stores.session_store.clone())
-                            .expect("orchestrator should have a session store"),
-                        event_tx: None,
-                        metadata: Default::default(),
-                    });
-                    match tool.execute(tool_call, tool_context).await {
+                    // Use the unified executor-context dispatcher so MCP-
+                    // backed tools (which require ExecutorContext, not the
+                    // plain ToolContext) execute correctly. The plain
+                    // `tool.execute(…)` branch on `McpToolAdapter` is a
+                    // sentinel that returns "McpToolAdapter requires
+                    // ExecutorContext for execution"; this path goes
+                    // through `cast_to_executor_context_tool` which
+                    // dispatches to the right impl per tool kind.
+                    match crate::tools::execute_tool_with_executor_context(
+                        tool.as_ref(),
+                        tool_call,
+                        context.clone(),
+                    )
+                    .await
+                    {
                         Ok(parts) => {
                             let result_text = parts
                                 .iter()
