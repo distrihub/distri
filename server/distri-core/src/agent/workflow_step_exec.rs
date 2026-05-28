@@ -169,22 +169,21 @@ pub(crate) async fn execute_step(
                         tool_name: tool_name.clone(),
                         input: resolved_input,
                     };
-                    let tool_context = Arc::new(distri_types::ToolContext {
-                        agent_id: context.agent_id.clone(),
-                        session_id: context.session_id.clone(),
-                        task_id: context.task_id.clone(),
-                        run_id: context.run_id.clone(),
-                        thread_id: context.thread_id.clone(),
-                        user_id: context.user_id.clone(),
-                        session_store: context
-                            .orchestrator
-                            .as_ref()
-                            .map(|o| o.stores.session_store.clone())
-                            .expect("orchestrator should have a session store"),
-                        event_tx: None,
-                        metadata: Default::default(),
-                    });
-                    match tool.execute(tool_call, tool_context).await {
+                    // Use the unified executor-context dispatcher so MCP-
+                    // backed tools (which require ExecutorContext, not the
+                    // plain ToolContext) execute correctly. The plain
+                    // `tool.execute(…)` branch on `McpToolAdapter` is a
+                    // sentinel that returns "McpToolAdapter requires
+                    // ExecutorContext for execution"; this path goes
+                    // through `cast_to_executor_context_tool` which
+                    // dispatches to the right impl per tool kind.
+                    match crate::tools::execute_tool_with_executor_context(
+                        tool.as_ref(),
+                        tool_call,
+                        context.clone(),
+                    )
+                    .await
+                    {
                         Ok(parts) => {
                             let result_text = parts
                                 .iter()
