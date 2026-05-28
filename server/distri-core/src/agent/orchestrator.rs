@@ -2439,19 +2439,27 @@ async fn resolve_declared_connections(
                     // user-bound, not channel-bound.
                     let code: String =
                         uuid::Uuid::new_v4().simple().to_string();
-                    let user_uuid = uuid::Uuid::parse_str(&context.user_id).ok();
+                    let Some(user_uuid) = uuid::Uuid::parse_str(&context.user_id).ok() else {
+                        tracing::error!(
+                            user_id = %context.user_id,
+                            "context.user_id is not a valid UUID — cannot mint configure stash"
+                        );
+                        continue;
+                    };
+                    let Some(workspace_uuid) = uuid::Uuid::parse_str(&workspace_id).ok() else {
+                        tracing::error!(
+                            workspace_id = %workspace_id,
+                            "context.workspace_id is not a valid UUID — cannot mint configure stash"
+                        );
+                        continue;
+                    };
                     let stash = serde_json::json!({
-                        "connection_id": connection.id.to_string(),
-                        "workspace_id": workspace_id,
-                        "provider": "",
-                        "platform_id": "",
-                        "platform_display_name": null,
-                        "platform_username": null,
+                        "connection_id": connection.id,
+                        "workspace_id": workspace_uuid,
+                        "user_id": user_uuid,
                         "channel_id": context.channel_id
                             .as_deref()
                             .and_then(|s| uuid::Uuid::parse_str(s).ok()),
-                        "bot_id": null,
-                        "user_id": user_uuid,
                         "issued_at": chrono::Utc::now(),
                     });
                     let stash_key = format!("connection_configure:{}", code);
