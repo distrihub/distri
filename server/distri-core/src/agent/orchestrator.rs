@@ -1802,12 +1802,29 @@ impl AgentOrchestrator {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Task not found: {task_id}"))?;
 
+        // Relay events emitted by `force_compaction` straight to the
+        // broadcaster so any SSE subscriber on this task sees them in
+        // real time — otherwise the manual `/compact` endpoint would
+        // succeed silently and the chat UI would stay stale until the
+        // next agent turn.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<distri_types::AgentEvent>(64);
+        let broadcaster = self.runtime.broadcaster_arc();
+        let relay_task_id = task.id.clone();
+        let relay = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if let Err(e) = broadcaster.publish(&relay_task_id, event).await {
+                    tracing::warn!("compact_task broadcaster publish failed: {e}");
+                }
+            }
+        });
+
         let ctx = ExecutorContext {
             task_id: task.id.clone(),
             thread_id: task.thread_id.clone(),
             parent_task_id: task.parent_task_id.clone(),
             orchestrator: Some(Arc::new(self.clone())),
             stores: Some(self.stores.clone()),
+            event_tx: Some(Arc::new(tx)),
             ..Default::default()
         };
 
@@ -1815,6 +1832,11 @@ impl AgentOrchestrator {
             .force_compaction()
             .await
             .map_err(|e| anyhow::anyhow!("compaction failed: {e}"))?;
+
+        // Drop the context's sender so the relay loop exits, then wait for it.
+        drop(ctx);
+        let _ = relay.await;
+
         Ok(result)
     }
 

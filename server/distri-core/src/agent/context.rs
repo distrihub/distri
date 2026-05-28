@@ -1549,21 +1549,28 @@ impl ExecutorContext {
         let mut result = manager.evaluate_and_compact(&entries);
 
         // Force path: if no tier was selected, escalate to Trim so something happens.
+        // Skip when trim would be a no-op (no entries to drop) — emitting a
+        // tier:Trim with `entries_affected: 0` would falsely advertise work.
         if force && result.tier.is_none() {
             let trimmed = manager.trim_scratchpad_entries(&entries);
-            let tokens_after = manager.estimate_scratchpad_tokens(&trimmed);
-            let entries_affected = entries.len().saturating_sub(trimmed.len());
-            result = crate::agent::context_size_manager::CompactionResult {
-                tier: Some(distri_types::events::CompactionTier::Trim),
-                tokens_before: result.tokens_before,
-                tokens_after,
-                entries_affected,
-                entries: trimmed,
-                usage_ratio: result.usage_ratio,
-            };
+            if trimmed.len() < entries.len() {
+                let tokens_after = manager.estimate_scratchpad_tokens(&trimmed);
+                let entries_affected = entries.len() - trimmed.len();
+                result = crate::agent::context_size_manager::CompactionResult {
+                    tier: Some(distri_types::events::CompactionTier::Trim),
+                    tokens_before: result.tokens_before,
+                    tokens_after,
+                    entries_affected,
+                    entries: trimmed,
+                    usage_ratio: result.usage_ratio,
+                };
+            }
         }
 
-        if force {
+        // Pre-compaction signal — fire for both auto and manual sources so
+        // observers can render an in-flight 'compacting…' UI consistently.
+        // Skipped when compaction won't actually run (no tier selected).
+        if result.tier.is_some() {
             self.emit(AgentEventType::CompactionRequested {
                 source: source.to_string(),
             })

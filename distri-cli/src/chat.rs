@@ -247,14 +247,11 @@ pub async fn handle_slash_command(
         "/clear" => Ok(SlashCommandResult::ClearContext),
         "/compact" => {
             let client = Distri::from_config(config.clone());
-            // Find the most recent task on this thread to compact.
-            match client.list_tasks(Some(thread_id), None, None).await {
+            // Find the most recent task on this thread to compact. The
+            // server sorts by `updated_at` desc, so limit=1 is enough.
+            match client.list_tasks(Some(thread_id), Some(1), None).await {
                 Ok(tasks) if !tasks.is_empty() => {
-                    let task_id = tasks
-                        .iter()
-                        .max_by_key(|t| t.updated_at)
-                        .map(|t| t.id.clone())
-                        .unwrap_or_else(|| tasks[0].id.clone());
+                    let task_id = tasks[0].id.clone();
                     match client.compact_task(&task_id).await {
                         Ok(body) => {
                             let compacted =
