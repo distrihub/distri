@@ -50,6 +50,14 @@ pub enum ApiError {
     #[error("{0}")]
     ServiceUnavailable(String),
 
+    /// Upstream service (MCP server, OAuth provider, downstream HTTP API)
+    /// returned an error we want to surface to the caller verbatim. Maps
+    /// to HTTP 502. Use this — NOT `Internal` — when the failure is the
+    /// remote system's behaviour, not our bug: the UI needs the original
+    /// message to tell the user what to fix.
+    #[error("{0}")]
+    BadGateway(String),
+
     /// Wraps an unexpected error (DB, IO, serde, anything else). Logged at
     /// the route boundary; surfaced as a generic HTTP 500 to the client so
     /// internal details don't leak.
@@ -68,6 +76,7 @@ impl ApiError {
             Self::Conflict(_) => 409,
             Self::Unprocessable(_) => 422,
             Self::ServiceUnavailable(_) => 503,
+            Self::BadGateway(_) => 502,
             Self::Internal(_) => 500,
         }
     }
@@ -105,6 +114,9 @@ impl ApiError {
     }
     pub fn service_unavailable(msg: impl Into<String>) -> Self {
         Self::ServiceUnavailable(msg.into())
+    }
+    pub fn bad_gateway(msg: impl Into<String>) -> Self {
+        Self::BadGateway(msg.into())
     }
 }
 

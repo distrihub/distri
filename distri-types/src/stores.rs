@@ -1572,16 +1572,29 @@ pub trait ConnectionStore: Send + Sync + 'static {
 }
 
 /// Token storage for OAuth-auth connections (Redis-backed in cloud).
-/// Keyed by `connection_id` — auth lives on the connection.
+///
+/// **Two key shapes coexist** for the two `AuthScope`s:
+///
+/// - **Workspace** scope → tokens stored under `connection_id` alone. One
+///   slot per connection, shared by every workspace member. `store_token`,
+///   `get_token`, `refresh_token` operate on this shape.
+/// - **User** scope → sessions stored per `(connection_id, user_id)`. Each
+///   end-user authorises themselves; their tokens never bleed into the
+///   workspace slot. `get_user_session` / `refresh_user_session` operate
+///   on this shape. The cloud implementation persists these via the
+///   `ToolAuthStore` (Redis `oauth:session:{provider}:{ws}:{conn}:{user}`),
+///   but the API exposes a single `AuthSession` so resolvers don't need
+///   to know which underlying store.
 #[async_trait]
 pub trait ConnectionTokenStore: Send + Sync + 'static {
     async fn store_token(&self, connection_id: &str, token: ConnectionToken) -> anyhow::Result<()>;
     async fn get_token(&self, connection_id: &str) -> anyhow::Result<Option<ConnectionToken>>;
     async fn remove_token(&self, connection_id: &str) -> anyhow::Result<()>;
 
-    /// Attempt to refresh an expired OAuth token using the stored refresh_token.
-    /// Returns the new token if refresh succeeds, or None if refresh is not
-    /// supported or fails. The implementation should store the refreshed token.
+    /// Attempt to refresh an expired **workspace-scope** OAuth token using
+    /// the stored refresh_token. Returns the new token if refresh
+    /// succeeds, or None if refresh is not supported or fails. The
+    /// implementation should store the refreshed token.
     ///
     /// Cloud implementation uses OAuthHandler.refresh_get_session().
     /// Default: no refresh support (returns None).
@@ -1590,6 +1603,31 @@ pub trait ConnectionTokenStore: Send + Sync + 'static {
         _connection_id: &str,
         _connection: &Connection,
     ) -> anyhow::Result<Option<ConnectionToken>> {
+        Ok(None)
+    }
+
+    /// Read the **user-scope** OAuth session for a specific end-user on a
+    /// specific Connection. Returns `None` when the user hasn't completed
+    /// the configure flow yet. Default impl returns None — only the cloud
+    /// `RedisOAuthStore` actually has the underlying `ToolAuthStore` to
+    /// dispatch to.
+    async fn get_user_session(
+        &self,
+        _connection: &Connection,
+        _user_id: &str,
+    ) -> anyhow::Result<Option<crate::auth::AuthSession>> {
+        Ok(None)
+    }
+
+    /// Refresh an expired **user-scope** OAuth session in place. Returns
+    /// the new session on success, `None` if refresh isn't supported / the
+    /// refresh_token is missing / the provider rejected the refresh.
+    /// Default: no refresh support.
+    async fn refresh_user_session(
+        &self,
+        _connection: &Connection,
+        _user_id: &str,
+    ) -> anyhow::Result<Option<crate::auth::AuthSession>> {
         Ok(None)
     }
 

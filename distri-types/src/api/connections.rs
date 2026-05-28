@@ -211,3 +211,23 @@ pub struct AuthorizeConnectionResponse {
     /// messages and survives link previews.
     pub setup_url: String,
 }
+
+/// Per-user OAuth state for a connection, surfaced by
+/// `GET /v1/connections/{id}/my-status` so the UI can render a "Manage
+/// for me" section without leaking the actual token.
+///
+/// `NotApplicable` covers workspace-scope connections (the shared status
+/// lives on the connection row itself) and non-OAuth connections (Custom
+/// fields are keyed by field, not by a session).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum MySessionStatus {
+    Connected {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        #[serde(default)]
+        scopes: Vec<String>,
+    },
+    NotConnected,
+    NotApplicable,
+}
