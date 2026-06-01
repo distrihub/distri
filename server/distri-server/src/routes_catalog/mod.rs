@@ -1,21 +1,23 @@
-//! Route catalog — the auth-agnostic list of routes distri-server serves.
+//! Route catalog — the auth-agnostic list of routes distri-server serves, with
+//! a lightweight per-method [`Access`] weight.
 //!
 //! distri-server has no concept of authorization. Embedders (distri-cloud)
-//! consume [`distri_server_routes`] to assert every route has a matching
-//! authorization rule in their own table, so coverage can't silently drift.
+//! consume [`route_access`] to map each route's [`Access`] onto their own
+//! authorization actions and assert their resolver agrees — so a route added
+//! here (or a namespace the embedder doesn't classify) fails the embedder's
+//! CI instead of silently shipping mis-scoped.
 //!
-//! Route paths + methods are defined once in [`constants`] via the
-//! `define_routes!` macro; `routes::distri` registers handlers using
+//! Route paths, methods, and access weights are defined once in [`constants`]
+//! via the `define_routes!` macro; `routes::distri` registers handlers using
 //! [`Route::path`], never inline strings.
 
 mod constants;
 
-pub use constants::{Route, DISTRI_SERVER_ROUTES};
+pub use constants::{route_access, Access, Route, DISTRI_SERVER_ROUTES};
 
-/// `(path, methods)` for every route distri-server registers. Embedders
-/// prepend their mount scope (e.g. `/v1`) before matching against their
-/// own authorization table.
-pub fn distri_server_routes() -> &'static [(&'static str, &'static [&'static str])] {
+/// `(path, &[(method, access)])` for every route distri-server registers.
+/// Embedders prepend their mount scope (e.g. `/v1`) before matching.
+pub fn distri_server_routes() -> &'static [(&'static str, &'static [(&'static str, Access)])] {
     DISTRI_SERVER_ROUTES
 }
 
@@ -30,7 +32,7 @@ mod tests {
         for (path, methods) in routes {
             assert!(path.starts_with('/'), "path must start with /: {}", path);
             assert!(!methods.is_empty(), "no methods for {}", path);
-            for m in *methods {
+            for (m, _access) in *methods {
                 assert!(
                     matches!(
                         *m,
@@ -62,9 +64,31 @@ mod tests {
     }
 
     #[test]
-    fn a2a_dispatch_path_is_listed() {
+    fn a2a_dispatch_is_execute() {
         assert_eq!(Route::AgentDispatch.path(), "/agents/{id:.*}");
-        assert!(Route::AgentDispatch.methods().contains(&"POST"));
+        let post = Route::AgentDispatch
+            .methods()
+            .iter()
+            .find(|(m, _)| *m == "POST")
+            .expect("POST on a2a dispatch");
+        assert_eq!(post.1, Access::Execute);
+    }
+
+    #[test]
+    fn agent_card_is_public() {
+        let (_m, access) = Route::AgentCard.methods()[0];
+        assert_eq!(access, Access::Public);
+    }
+
+    #[test]
+    fn route_access_flattens_every_pair() {
+        let flat: Vec<_> = route_access().collect();
+        let expected: usize = DISTRI_SERVER_ROUTES.iter().map(|(_, m)| m.len()).sum();
+        assert_eq!(flat.len(), expected);
+        // Spot-check a known triple.
+        assert!(flat
+            .iter()
+            .any(|(p, m, a)| *p == "/llm/execute" && *m == "POST" && *a == Access::Execute));
     }
 
     #[test]
