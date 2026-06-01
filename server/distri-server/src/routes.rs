@@ -29,6 +29,7 @@ use uuid::Uuid;
 use crate::agent_server::VerboseLog;
 use crate::auth_routes;
 use crate::context::UserContext;
+use crate::routes_catalog::Route;
 
 pub mod artifacts;
 pub mod connections;
@@ -52,81 +53,81 @@ pub fn all(cfg: &mut web::ServiceConfig) {
 // https://github.com/google-a2a/A2A/blob/main/specification/json/a2a.json
 pub fn distri(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::resource("/agents/{agent_name}/.well-known/agent.json")
-            .route(web::get().to(get_agent_card)),
+        web::resource(Route::AgentCard.path()).route(web::get().to(get_agent_card)),
     )
     .service(
-        web::resource("/agents")
+        web::resource(Route::Agents.path())
             .route(web::get().to(list_agents))
             .route(web::post().to(create_agent)),
     )
-    .service(web::resource("/agents/{id:.*}/validate").route(web::get().to(validate_agent_handler)))
+    .service(web::resource(Route::AgentValidate.path()).route(web::get().to(validate_agent_handler)))
     .service(
-        web::resource("/agents/{id:.*}/complete-tool").route(web::post().to(complete_tool_handler)),
+        web::resource(Route::AgentCompleteTool.path())
+            .route(web::post().to(complete_tool_handler)),
     )
-    .service(web::resource("/agents/{id:.*}/dag").route(web::get().to(get_agent_dag)))
+    .service(web::resource(Route::AgentDag.path()).route(web::get().to(get_agent_dag)))
     .service(
-        web::resource("/agents/{id:.*}")
+        web::resource(Route::AgentDispatch.path())
             .route(web::get().to(get_agent_definition))
             .route(web::post().to(a2a_handler))
             .route(web::put().to(update_agent))
             .route(web::delete().to(delete_agent)),
     )
-    .service(web::resource("/event/hooks").route(web::post().to(complete_hook_handler)))
-    .service(web::resource("/tasks").route(web::get().to(list_tasks)))
-    .service(web::resource("/tools").route(web::get().to(list_tools)))
+    .service(web::resource(Route::EventHooks.path()).route(web::post().to(complete_hook_handler)))
+    .service(web::resource(Route::Tasks.path()).route(web::get().to(list_tasks)))
+    .service(web::resource(Route::Tools.path()).route(web::get().to(list_tools)))
     // Webhook endpoint for triggering agents
     // Thread endpoints
-    .service(web::resource("/threads").route(web::get().to(list_threads_handler)))
-    .service(web::resource("/threads/agents").route(web::get().to(list_agents_by_usage)))
+    .service(web::resource(Route::Threads.path()).route(web::get().to(list_threads_handler)))
+    .service(web::resource(Route::ThreadsAgents.path()).route(web::get().to(list_agents_by_usage)))
     .service(
-        web::resource("/threads/{thread_id}/messages").route(web::get().to(get_thread_messages)),
+        web::resource(Route::ThreadMessages.path()).route(web::get().to(get_thread_messages)),
     )
     .service(
-        web::resource("/threads/{thread_id}")
+        web::resource(Route::Thread.path())
             .route(web::get().to(get_thread_handler))
             .route(web::put().to(update_thread_handler))
             .route(web::delete().to(delete_thread_handler)),
     )
     // Message read status endpoints
     .service(
-        web::resource("/threads/{thread_id}/messages/{message_id}/read")
+        web::resource(Route::ThreadMessageRead.path())
             .route(web::post().to(mark_message_read_handler))
             .route(web::get().to(get_message_read_status_handler)),
     )
     .service(
-        web::resource("/threads/{thread_id}/read-status")
+        web::resource(Route::ThreadReadStatus.path())
             .route(web::get().to(get_thread_read_status_handler)),
     )
     // Message voting endpoints
     .service(
-        web::resource("/threads/{thread_id}/messages/{message_id}/vote")
+        web::resource(Route::ThreadMessageVote.path())
             .route(web::post().to(vote_message_handler))
             .route(web::delete().to(remove_vote_handler))
             .route(web::get().to(get_message_vote_summary_handler)),
     )
     .service(
-        web::resource("/threads/{thread_id}/messages/{message_id}/votes")
+        web::resource(Route::ThreadMessageVotes.path())
             .route(web::get().to(get_message_votes_handler)),
     )
-    .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema))) // Note: External tools and approvals are now handled via message metadata
+    .service(web::resource(Route::SchemaAgent.path()).route(web::get().to(get_agent_schema))) // Note: External tools and approvals are now handled via message metadata
     // Workspace file endpoints
-    .service(web::scope("/files").configure(files::configure_file_routes))
-    .service(web::scope("/sessions").configure(session::configure_session_routes))
+    .service(web::scope(Route::FilesScope.path()).configure(files::configure_file_routes))
+    .service(web::scope(Route::SessionsScope.path()).configure(session::configure_session_routes))
     // Artifact endpoints (session storage for thread/task artifacts)
-    .service(web::scope("/artifacts").configure(artifacts::configure_artifact_routes))
-    .service(web::resource("/build").route(web::post().to(build_workspace)))
+    .service(web::scope(Route::ArtifactsScope.path()).configure(artifacts::configure_artifact_routes))
+    .service(web::resource(Route::Build.path()).route(web::post().to(build_workspace)))
     .configure(tools::configure)
     // Browser session endpoint
-    .service(web::resource("/browser/session").route(web::post().to(create_browser_session)))
+    .service(web::resource(Route::BrowserSession.path()).route(web::post().to(create_browser_session)))
     // LLM execute
-    .service(web::resource("/llm/execute").route(web::post().to(llm_execute)))
+    .service(web::resource(Route::LlmExecute.path()).route(web::post().to(llm_execute)))
     // Configuration endpoints
-    .service(web::resource("/device").route(web::get().to(get_device_info)))
-    .service(web::resource("/home/stats").route(web::get().to(get_home_stats)))
+    .service(web::resource(Route::Device.path()).route(web::get().to(get_device_info)))
+    .service(web::resource(Route::HomeStats.path()).route(web::get().to(get_home_stats)))
     .configure(prompt_templates::configure_prompt_template_routes)
     // HTTP request proxy — resolves secrets/connections server-side
-    .service(web::resource("/request").route(web::post().to(proxy_request_handler)))
+    .service(web::resource(Route::Request.path()).route(web::post().to(proxy_request_handler)))
     .configure(secrets::configure_secret_routes)
     .configure(providers::configure_provider_routes)
     .configure(skills::configure_skill_routes)

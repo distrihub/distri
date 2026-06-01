@@ -94,6 +94,11 @@ pub struct TokenLimits {
 }
 
 /// Response for issuing access + refresh tokens.
+///
+/// distri-cloud extends this with an opaque `extensions: serde_json::Value`
+/// field via its own response wrapper if it needs to surface authz metadata
+/// (granted permissions, scope, role) to the caller. This base type stays
+/// auth-agnostic so OSS consumers don't pull in cloud's authz model.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct TokenResponse {
     pub access_token: String,
