@@ -1506,22 +1506,18 @@ async fn compact_task_handler(
 ) -> HttpResponse {
     let task_id = path.into_inner();
     match executor.compact_task(&task_id).await {
-        Ok(Some(result)) => HttpResponse::Ok().json(json!({
-            "compacted": true,
-            "tier": result.tier.as_ref().map(|t| match t {
-                distri_types::CompactionTier::Trim => "trim",
-                distri_types::CompactionTier::Summarize => "summarize",
-                distri_types::CompactionTier::Reset => "reset",
-            }),
-            "tokens_before": result.tokens_before,
-            "tokens_after": result.tokens_after,
-            "entries_affected": result.entries_affected,
-            "usage_ratio": result.usage_ratio,
-        })),
-        Ok(None) => HttpResponse::Ok().json(json!({
-            "compacted": false,
-            "reason": "No entries to compact",
-        })),
+        Ok(Some(result)) => HttpResponse::Ok().json(distri_types::CompactTaskResponse {
+            compacted: true,
+            reason: None,
+            tier: result.tier.clone(),
+            tokens_before: Some(result.tokens_before),
+            tokens_after: Some(result.tokens_after),
+            entries_affected: Some(result.entries_affected),
+            usage_ratio: Some(result.usage_ratio),
+        }),
+        Ok(None) => HttpResponse::Ok().json(distri_types::CompactTaskResponse::nothing_to_compact(
+            "No entries to compact",
+        )),
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to compact task: {}", e)
         })),

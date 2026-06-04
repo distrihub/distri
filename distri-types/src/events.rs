@@ -316,7 +316,7 @@ fn default_compaction_source() -> String {
 }
 
 /// Tier of context compaction applied
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CompactionTier {
     /// Mechanical: drop old entries, truncate payloads
@@ -325,6 +325,56 @@ pub enum CompactionTier {
     Summarize,
     /// Emergency: preserve only essentials
     Reset,
+}
+
+/// Wire response body for `POST /v1/tasks/{task_id}/compact`. Returned by
+/// `Distri::compact_task` and `distrijs`'s `DistriClient.compactTask` —
+/// keeping it as a typed struct (instead of `serde_json::Value`) means CLI
+/// and SDK callers never have to spell out `.get("tokens_before").and_then(...)`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, utoipa::ToSchema)]
+pub struct CompactTaskResponse {
+    /// True when entries were modified; false means there was nothing to compact.
+    pub compacted: bool,
+    /// Free-form explanation for `compacted: false`. Empty / omitted on success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Tier applied (only set when `compacted == true`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<CompactionTier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_before: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_after: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entries_affected: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_ratio: Option<f64>,
+}
+
+impl CompactTaskResponse {
+    /// Build a `compacted: false` response with a reason.
+    pub fn nothing_to_compact(reason: impl Into<String>) -> Self {
+        Self {
+            compacted: false,
+            reason: Some(reason.into()),
+            tier: None,
+            tokens_before: None,
+            tokens_after: None,
+            entries_affected: None,
+            usage_ratio: None,
+        }
+    }
+
+    /// Token-count reduction as a percentage (0–100). Returns 0 when
+    /// `tokens_before` is missing or zero — handy for surface rendering.
+    pub fn reduction_percent(&self) -> f64 {
+        match (self.tokens_before, self.tokens_after) {
+            (Some(before), Some(after)) if before > 0 => {
+                (1.0 - after as f64 / before as f64) * 100.0
+            }
+            _ => 0.0,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -317,13 +317,10 @@ impl Distri {
     /// Manually compact the conversation history for a task. Calls the
     /// server's `POST /v1/tasks/{task_id}/compact` endpoint. The server runs
     /// the same compactor as the agent loop's auto-trigger, unconditionally.
-    ///
-    /// Returns the JSON body the server replied with — `compacted: bool`
-    /// plus token-count fields when compaction ran.
     pub async fn compact_task(
         &self,
         task_id: impl AsRef<str>,
-    ) -> Result<serde_json::Value, ClientError> {
+    ) -> Result<distri_types::CompactTaskResponse, ClientError> {
         let url = format!("{}/tasks/{}/compact", self.base_url, task_id.as_ref());
         let resp = self.http.post(&url).send().await?;
         if !resp.status().is_success() {

@@ -253,29 +253,19 @@ pub async fn handle_slash_command(
                 Ok(tasks) if !tasks.is_empty() => {
                     let task_id = tasks[0].id.clone();
                     match client.compact_task(&task_id).await {
-                        Ok(body) => {
-                            let compacted =
-                                body.get("compacted").and_then(|v| v.as_bool()).unwrap_or(false);
-                            if compacted {
-                                let before = body.get("tokens_before").and_then(|v| v.as_u64()).unwrap_or(0);
-                                let after = body.get("tokens_after").and_then(|v| v.as_u64()).unwrap_or(0);
-                                let entries = body.get("entries_affected").and_then(|v| v.as_u64()).unwrap_or(0);
-                                let pct = if before > 0 {
-                                    (1.0 - after as f64 / before as f64) * 100.0
-                                } else {
-                                    0.0
-                                };
-                                println!(
-                                    "{}─── compacted {entries} entries · {before} → {after} tokens ({pct:.0}% reduction) ───{}",
-                                    COLOR_GRAY, COLOR_RESET
-                                );
-                            } else {
-                                let reason = body
-                                    .get("reason")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("Nothing to compact");
-                                println!("{}{}{}", COLOR_GRAY, reason, COLOR_RESET);
-                            }
+                        Ok(resp) if resp.compacted => {
+                            let before = resp.tokens_before.unwrap_or(0);
+                            let after = resp.tokens_after.unwrap_or(0);
+                            let entries = resp.entries_affected.unwrap_or(0);
+                            let pct = resp.reduction_percent();
+                            println!(
+                                "{}─── compacted {entries} entries · {before} → {after} tokens ({pct:.0}% reduction) ───{}",
+                                COLOR_GRAY, COLOR_RESET
+                            );
+                        }
+                        Ok(resp) => {
+                            let reason = resp.reason.as_deref().unwrap_or("Nothing to compact");
+                            println!("{}{}{}", COLOR_GRAY, reason, COLOR_RESET);
                         }
                         Err(err) => eprintln!("Compact failed: {}", err),
                     }
