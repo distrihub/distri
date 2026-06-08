@@ -31,6 +31,7 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
         "gen_ai.request.temperature" = tracing::field::Empty,
         "gen_ai.request.max_tokens" = tracing::field::Empty,
         "gen_ai.request.top_p" = tracing::field::Empty,
+        "distri.request.tools" = tracing::field::Empty,
         "gen_ai.response.model" = tracing::field::Empty,
         "gen_ai.response.id" = tracing::field::Empty,
         "gen_ai.response.finish_reasons" = tracing::field::Empty,

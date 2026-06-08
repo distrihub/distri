@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::ExecutorContext;
 use crate::llm::{LLMExecutorTrait, LLMResponse, StreamResult};
-use crate::types::{Message, ToolCall};
+use crate::types::{Message, Part, ToolCall};
 use crate::AgentError;
 
 // ── Fixture types ────────────────────────────────────────────────────────────
@@ -233,59 +233,34 @@ impl TraceFixtureExtractor {
     }
 
     /// Parse the output value into content, tool calls, and finish reason.
+    ///
+    /// `output.value` is a serialized assistant [`Message`] in Distri wire
+    /// format (`role` + `parts`): text parts become the content, `tool_call`
+    /// parts become the tool calls (carrying their `tool_call_id`).
     fn parse_output(output_raw: &str) -> (String, Vec<RecordedToolCall>, String) {
-        // Try to parse as JSON
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(output_raw) {
-            // Check for structured output with tool_calls
-            if let Some(tool_calls_arr) = val.get("tool_calls").and_then(|v| v.as_array()) {
-                let tool_calls: Vec<RecordedToolCall> = tool_calls_arr
-                    .iter()
-                    .filter_map(|tc| {
-                        Some(RecordedToolCall {
-                            tool_call_id: tc
-                                .get("id")
-                                .or_else(|| tc.get("tool_call_id"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown")
-                                .to_string(),
-                            tool_name: tc
-                                .get("function")
-                                .and_then(|f| f.get("name"))
-                                .or_else(|| tc.get("tool_name"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown")
-                                .to_string(),
-                            input: tc
-                                .get("function")
-                                .and_then(|f| f.get("arguments"))
-                                .or_else(|| tc.get("input"))
-                                .cloned()
-                                .unwrap_or(serde_json::Value::Object(Default::default())),
-                        })
-                    })
-                    .collect();
-
-                let content = val
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                return (content, tool_calls, "tool_calls".to_string());
+        if let Ok(message) = serde_json::from_str::<Message>(output_raw) {
+            let mut content = String::new();
+            let mut tool_calls = Vec::new();
+            for part in &message.parts {
+                match part {
+                    Part::Text(text) => content.push_str(text),
+                    Part::ToolCall(tc) => tool_calls.push(RecordedToolCall {
+                        tool_call_id: tc.tool_call_id.clone(),
+                        tool_name: tc.tool_name.clone(),
+                        input: tc.input.clone(),
+                    }),
+                    _ => {}
+                }
             }
-
-            // Plain text content in JSON
-            if let Some(content) = val.get("content").and_then(|v| v.as_str()) {
-                return (content.to_string(), vec![], "stop".to_string());
-            }
-
-            // Raw string value
-            if let Some(s) = val.as_str() {
-                return (s.to_string(), vec![], "stop".to_string());
-            }
+            let finish_reason = if tool_calls.is_empty() {
+                "stop"
+            } else {
+                "tool_calls"
+            };
+            return (content, tool_calls, finish_reason.to_string());
         }
 
-        // Plain text
+        // Fallback: plain-text output that isn't a serialized Message.
         (output_raw.to_string(), vec![], "stop".to_string())
     }
 }

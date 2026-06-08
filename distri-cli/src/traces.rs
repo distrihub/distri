@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use crossterm::terminal;
 use distri::{Distri, TraceSummary};
+use distri_types::{Message, Part};
 
 use crate::{
     OptimizeCommands, TracesCommands, COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_GRAY,
@@ -1416,52 +1417,32 @@ fn is_llm_span(span: &serde_json::Value) -> bool {
     false
 }
 
+/// Parse an LLM span's `output.value` (a serialized assistant [`Message`] in
+/// Distri wire format) into text content + tool calls (with `tool_call_id`).
 fn parse_llm_output(output_raw: &str) -> (String, Vec<ExportToolCall>, String) {
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(output_raw) {
-        if let Some(tool_calls_arr) = val.get("tool_calls").and_then(|v| v.as_array()) {
-            let tool_calls: Vec<ExportToolCall> = tool_calls_arr
-                .iter()
-                .map(|tc| ExportToolCall {
-                    tool_call_id: tc
-                        .get("id")
-                        .or_else(|| tc.get("tool_call_id"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    tool_name: tc
-                        .get("function")
-                        .and_then(|f| f.get("name"))
-                        .or_else(|| tc.get("tool_name"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    input: tc
-                        .get("function")
-                        .and_then(|f| f.get("arguments"))
-                        .or_else(|| tc.get("input"))
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Object(Default::default())),
-                })
-                .collect();
-
-            let content = val
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            return (content, tool_calls, "tool_calls".to_string());
+    if let Ok(message) = serde_json::from_str::<Message>(output_raw) {
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
+        for part in &message.parts {
+            match part {
+                Part::Text(text) => content.push_str(text),
+                Part::ToolCall(tc) => tool_calls.push(ExportToolCall {
+                    tool_call_id: tc.tool_call_id.clone(),
+                    tool_name: tc.tool_name.clone(),
+                    input: tc.input.clone(),
+                }),
+                _ => {}
+            }
         }
-
-        if let Some(content) = val.get("content").and_then(|v| v.as_str()) {
-            return (content.to_string(), vec![], "stop".to_string());
-        }
-
-        if let Some(s) = val.as_str() {
-            return (s.to_string(), vec![], "stop".to_string());
-        }
+        let finish_reason = if tool_calls.is_empty() {
+            "stop"
+        } else {
+            "tool_calls"
+        };
+        return (content, tool_calls, finish_reason.to_string());
     }
 
+    // Fallback: plain-text output that isn't a serialized Message.
     (output_raw.to_string(), vec![], "stop".to_string())
 }
 

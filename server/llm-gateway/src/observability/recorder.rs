@@ -3,9 +3,12 @@
 //! All public functions accept **typed** Distri/OTel types; serialization is
 //! handled internally so callers never build raw JSON strings.
 
-use distri_types::{Message, ToolCall};
+use distri_types::{Message, MessageRole, Part, ToolCall, ToolDefinition};
 
-const MAX_VALUE_BYTES: usize = 500_000;
+/// Cap on a single recorded span value. Generous so that image/file parts
+/// (which embed base64 bytes inline) survive without truncate-corrupting the
+/// JSON; the viewer renders them inline.
+const MAX_VALUE_BYTES: usize = 4_000_000;
 
 fn truncate(s: &str) -> &str {
     if s.len() > MAX_VALUE_BYTES {
@@ -15,30 +18,14 @@ fn truncate(s: &str) -> &str {
     }
 }
 
-// ─── Typed output envelope ───────────────────────────────────────────────────
-
-/// Serialized representation of a single tool call recorded on an inference span.
-#[derive(serde::Serialize)]
-struct RecordedToolCall<'a> {
-    name: &'a str,
-    arguments: &'a serde_json::Value,
-}
-
-/// Typed envelope written to `output.value` when the LLM response includes tool calls.
-#[derive(serde::Serialize)]
-struct InferenceOutput<'a> {
-    content: &'a str,
-    tool_calls: Vec<RecordedToolCall<'a>>,
-}
-
 // ─── Input / Output ──────────────────────────────────────────────────────────
 
 /// Record Distri `Message` slice as `input.value` on an inference span.
 ///
 /// Serializes using Distri's native wire format (`role` + `parts` with
-/// `part_type`/`data` tags). Binary parts (images, artifacts) are included
-/// as opaque markers so the viewer can see they were present without embedding
-/// raw bytes in the span.
+/// `part_type`/`data` tags). Binary parts (images, files) are recorded inline
+/// with their base64 bytes so the viewer can render them; large values are
+/// capped at `MAX_VALUE_BYTES`.
 pub fn record_inference_input(span: &tracing::Span, messages: &[Message]) {
     match serde_json::to_string(messages) {
         Ok(json) => {
@@ -50,30 +37,54 @@ pub fn record_inference_input(span: &tracing::Span, messages: &[Message]) {
 
 /// Record LLM output on an inference span.
 ///
-/// When `tool_calls` is non-empty the value is serialized as
-/// `{"content": "...", "tool_calls": [{...}]}` so the viewer shows a
-/// structured response. Plain-text responses are stored as-is.
+/// The output is recorded in Distri's native wire format as a single assistant
+/// `Message`: a `Part::Text` for the textual content (when non-empty) followed
+/// by one `Part::ToolCall` per tool call. Each `ToolCall` carries its
+/// `tool_call_id`, so the viewer can correlate calls with their results. When
+/// there is no content and no tool calls, nothing is recorded.
 pub fn record_inference_output(span: &tracing::Span, content: &str, tool_calls: &[ToolCall]) {
-    let output_str: String = if !tool_calls.is_empty() {
-        let calls = tool_calls
-            .iter()
-            .map(|tc| RecordedToolCall {
-                name: &tc.tool_name,
-                arguments: &tc.input,
-            })
-            .collect();
-        let envelope = InferenceOutput {
-            content,
-            tool_calls: calls,
-        };
-        serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| content.to_string())
-    } else {
-        content.to_string()
+    let mut parts: Vec<Part> = Vec::with_capacity(tool_calls.len() + 1);
+    if !content.is_empty() {
+        parts.push(Part::Text(content.to_string()));
+    }
+    parts.extend(tool_calls.iter().cloned().map(Part::ToolCall));
+
+    if parts.is_empty() {
+        return;
+    }
+
+    let message = Message {
+        role: MessageRole::Assistant,
+        parts,
+        ..Default::default()
     };
 
-    let truncated = truncate(&output_str);
-    if !truncated.is_empty() {
-        span.record("output.value", truncated);
+    match serde_json::to_string(&message) {
+        Ok(json) => {
+            span.record("output.value", truncate(&json));
+        }
+        Err(e) => tracing::warn!("Failed to serialize inference output for span: {e}"),
+    }
+}
+
+/// Record the tool definitions available to the LLM on this call as
+/// `distri.request.tools`.
+///
+/// `gen_ai.request.tools` is not a defined attribute in the OpenTelemetry
+/// GenAI semantic conventions, so this uses the `distri.*` custom namespace
+/// (like `distri.context.*` / `distri.estimated_cost_usd`). Serializes the
+/// typed `ToolDefinition` slice (name, description, parameter schema, and any
+/// usage prompt/examples) so the viewer can show which tools — and their
+/// descriptions — were sent in the request. No-op when empty.
+pub fn record_inference_tools(span: &tracing::Span, tools: &[ToolDefinition]) {
+    if tools.is_empty() {
+        return;
+    }
+    match serde_json::to_string(tools) {
+        Ok(json) => {
+            span.record("distri.request.tools", truncate(&json));
+        }
+        Err(e) => tracing::warn!("Failed to serialize inference tools for span: {e}"),
     }
 }
 
@@ -283,31 +294,49 @@ mod tests {
     }
 
     #[test]
-    fn output_with_tool_calls_serializes_envelope() {
+    fn output_with_tool_calls_serializes_as_assistant_message() {
         let tc = tool_call("bash", serde_json::json!({"cmd": "ls -la"}));
         let calls = vec![tc];
 
-        // Verify the serialized envelope format directly
-        let recorded: Vec<RecordedToolCall> = calls
-            .iter()
-            .map(|c| RecordedToolCall {
-                name: &c.tool_name,
-                arguments: &c.input,
-            })
-            .collect();
-        let envelope = InferenceOutput {
-            content: "",
-            tool_calls: recorded,
+        // Verify the wire-format assistant Message: role + parts, with the
+        // tool call carried as a `tool_call` part including its tool_call_id.
+        let message = Message {
+            role: MessageRole::Assistant,
+            parts: vec![Part::ToolCall(calls[0].clone())],
+            ..Default::default()
         };
-        let json = serde_json::to_string_pretty(&envelope).unwrap();
+        let json = serde_json::to_string(&message).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(parsed["content"], "");
-        assert_eq!(parsed["tool_calls"][0]["name"], "bash");
-        assert_eq!(parsed["tool_calls"][0]["arguments"]["cmd"], "ls -la");
+        assert_eq!(parsed["role"], "assistant");
+        assert_eq!(parsed["parts"][0]["part_type"], "tool_call");
+        assert_eq!(parsed["parts"][0]["data"]["tool_call_id"], "tc-1");
+        assert_eq!(parsed["parts"][0]["data"]["tool_name"], "bash");
+        assert_eq!(parsed["parts"][0]["data"]["input"]["cmd"], "ls -la");
 
         let span = make_span();
         record_inference_output(&span, "", &calls);
+    }
+
+    #[test]
+    fn output_with_content_and_tool_calls_includes_text_part() {
+        let calls = vec![tool_call("bash", serde_json::json!({"cmd": "ls"}))];
+        let message = Message {
+            role: MessageRole::Assistant,
+            parts: vec![
+                Part::Text("running it".to_string()),
+                Part::ToolCall(calls[0].clone()),
+            ],
+            ..Default::default()
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&message).unwrap()).unwrap();
+        assert_eq!(parsed["parts"][0]["part_type"], "text");
+        assert_eq!(parsed["parts"][0]["data"], "running it");
+        assert_eq!(parsed["parts"][1]["part_type"], "tool_call");
+
+        let span = make_span();
+        record_inference_output(&span, "running it", &calls);
     }
 
     #[test]

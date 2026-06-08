@@ -265,6 +265,8 @@ impl LLMExecutor {
         let sanitized_messages = self.sanitize_messages(messages);
 
         llm_gateway::observability::recorder::record_inference_input(&span, &sanitized_messages);
+        let tool_defs: Vec<_> = self.tools.iter().map(|t| t.get_tool_definition()).collect();
+        llm_gateway::observability::recorder::record_inference_tools(&span, &tool_defs);
         tracing::info!(
             target: "llm.execute",
             "LLM request (non-stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
@@ -509,6 +511,8 @@ impl LLMExecutor {
         let sanitized_messages = self.sanitize_messages(messages);
 
         llm_gateway::observability::recorder::record_inference_input(&span, &sanitized_messages);
+        let tool_defs: Vec<_> = self.tools.iter().map(|t| t.get_tool_definition()).collect();
+        llm_gateway::observability::recorder::record_inference_tools(&span, &tool_defs);
         tracing::info!(
             target: "llm.execute_stream",
             "LLM request (stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
