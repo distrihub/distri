@@ -2437,8 +2437,7 @@ async fn resolve_declared_connections(
                     // synthetic `(provider, platform_id)` for the
                     // workflow-required-connection case — that flow is
                     // user-bound, not channel-bound.
-                    let code: String =
-                        uuid::Uuid::new_v4().simple().to_string();
+                    let code: String = uuid::Uuid::new_v4().simple().to_string();
                     let Some(user_uuid) = uuid::Uuid::parse_str(&context.user_id).ok() else {
                         tracing::error!(
                             user_id = %context.user_id,
@@ -2464,9 +2463,7 @@ async fn resolve_declared_connections(
                     });
                     let stash_key = format!("connection_configure:{}", code);
                     let store_result = match stores.connection_token_store.as_ref() {
-                        Some(token_store) => {
-                            token_store.store_oauth_state(&stash_key, stash).await
-                        }
+                        Some(token_store) => token_store.store_oauth_state(&stash_key, stash).await,
                         None => {
                             tracing::error!(
                                 "connection_token_store is None — cannot mint configure URL"
@@ -2496,9 +2493,7 @@ async fn resolve_declared_connections(
                                     },
                                 ]],
                             };
-                            context
-                                .emit(AgentEventType::ChannelReply { reply })
-                                .await;
+                            context.emit(AgentEventType::ChannelReply { reply }).await;
                         }
                         Err(stash_err) => {
                             tracing::error!(
