@@ -1,6 +1,6 @@
 [package]
 name = "llm-gateway"
-version = "0.3.9"
+version = "0.4.0"
 edition = "2021"
 description = "LLM gateway — unified provider definitions, TTS synthesis, STT transcription, and LLM client abstractions for OpenAI, Anthropic, Azure, ElevenLabs"
 
@@ -8,7 +8,7 @@ description = "LLM gateway — unified provider definitions, TTS synthesis, STT 
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dependencies]
-distri-types = { path = "../../distri-types", version = "0.3.9" }
+distri-types = { path = "../../distri-types", version = "0.4.0" }
 async-openai = { version = "0.32.2", features = [
   "completion-types",
   "chat-completion",
