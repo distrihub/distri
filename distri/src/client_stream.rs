@@ -1,5 +1,7 @@
 use chrono::Utc;
-use distri_a2a::{JsonRpcRequest, MessageKind, MessageSendParams, TaskIdParams};
+use distri_a2a::{
+    JsonRpcRequest, JsonRpcResponseFor, MessageKind, MessageSendParams, TaskIdParams,
+};
 use distri_types::dynamic_tool::DynamicToolFactory;
 use distri_types::http_request::HttpFactoryConfig;
 use distri_types::{AgentEvent, AgentEventType, Message, ToolCall, ToolResponse};
@@ -317,14 +319,14 @@ impl AgentStreamClient {
             )));
         }
 
-        let rpc_resp: RpcResponse = resp.json().await.map_err(StreamError::Http)?;
+        let rpc_resp: JsonRpcResponseFor<distri_a2a::Task> =
+            resp.json().await.map_err(StreamError::Http)?;
         if let Some(err) = rpc_resp.error {
             return Err(StreamError::Server(err.message));
         }
-        let result = rpc_resp.result.ok_or_else(|| {
-            StreamError::InvalidResponse("cancel_task: missing result".to_string())
-        })?;
-        serde_json::from_value::<distri_a2a::Task>(result).map_err(StreamError::Serialization)
+        rpc_resp
+            .result
+            .ok_or_else(|| StreamError::InvalidResponse("cancel_task: missing result".to_string()))
     }
 
     /// Shared SSE request + parse loop. Used by `stream_agent` (via direct
@@ -542,27 +544,6 @@ struct CompleteToolRequest {
     tool_response: ToolResponse,
 }
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct RpcResponse {
-    pub jsonrpc: String,
-    #[serde(default)]
-    pub result: Option<serde_json::Value>,
-    #[serde(default)]
-    pub error: Option<RpcError>,
-    #[serde(default)]
-    pub id: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct RpcError {
-    pub code: i32,
-    pub message: String,
-    #[serde(default)]
-    pub data: Option<serde_json::Value>,
-}
-
 fn convert_kind(kind: &MessageKind) -> Result<Option<Message>, StreamError> {
     match kind {
         MessageKind::Message(msg) => distri_types::Message::try_from(msg.clone())
@@ -578,15 +559,13 @@ pub fn parse_sse_data(agent_id: &str, data: &str) -> Result<Option<StreamItem>, 
         return Ok(None);
     }
 
-    let rpc: RpcResponse = serde_json::from_str(data)?;
+    let rpc: JsonRpcResponseFor<MessageKind> = serde_json::from_str(data)?;
     if let Some(err) = rpc.error {
         return Err(StreamError::Server(err.message));
     }
-    let Some(result) = rpc.result else {
+    let Some(message_kind) = rpc.result else {
         return Ok(None);
     };
-
-    let message_kind: MessageKind = serde_json::from_value(result)?;
 
     // Extract metadata to build AgentEvent with correct agent_id
     let (metadata, context_id, task_id) = match &message_kind {

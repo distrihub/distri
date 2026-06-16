@@ -244,8 +244,8 @@ async fn agent_handler(body: web::Bytes) -> HttpResponse {
         .and_then(|m| m.as_str())
         .unwrap_or_default();
 
-    // Build a minimal A2A message to return.
-    let mk = MessageKind::Message(A2aMessage {
+    // Build a minimal A2A reply message.
+    let reply = A2aMessage {
         kind: EventKind::Message,
         message_id: "mid".into(),
         role: distri_a2a::Role::Agent,
@@ -255,12 +255,13 @@ async fn agent_handler(body: web::Bytes) -> HttpResponse {
         reference_task_ids: vec![],
         extensions: vec![],
         metadata: None,
-    });
+    };
 
     if method == "message/stream" {
+        // Streaming frames are single `MessageKind` values.
         let rpc = serde_json::json!({
             "jsonrpc": "2.0",
-            "result": mk,
+            "result": MessageKind::Message(reply),
             "id": "1"
         });
         let body = format!("data: {}\n\n", serde_json::to_string(&rpc).unwrap());
@@ -269,9 +270,22 @@ async fn agent_handler(body: web::Bytes) -> HttpResponse {
             .body(body);
     }
 
+    // Blocking `message/send` returns a `Task` envelope; the agent's reply
+    // rides on `status.message` — the exact shape `A2AService` emits.
+    let task = distri_a2a::Task {
+        kind: EventKind::Task,
+        id: "task-1".into(),
+        context_id: "thread-1".into(),
+        status: distri_a2a::TaskStatus {
+            state: distri_a2a::TaskState::Completed,
+            message: Some(reply),
+            timestamp: None,
+        },
+        ..Default::default()
+    };
     let rpc = serde_json::json!({
         "jsonrpc": "2.0",
-        "result": [mk],
+        "result": task,
         "id": "1"
     });
     HttpResponse::Ok().json(rpc)

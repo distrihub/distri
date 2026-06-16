@@ -257,12 +257,27 @@ pub struct JsonRpcResponse {
 }
 
 /// A JSON-RPC error object.
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JsonRpcError {
     pub code: i32,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+}
+
+/// Typed read-side view of a JSON-RPC response, parameterized over the
+/// `result` payload `T` (e.g. [`SendMessageResult`]). [`JsonRpcResponse`] is
+/// write-only — servers build it from a `serde_json::Value` result; this is
+/// its deserialize counterpart so clients decode straight into typed values
+/// instead of hand-poking `serde_json::Value`. Reusable across every A2A
+/// method (`message/send`, `tasks/get`, `tasks/cancel`, …).
+#[derive(Deserialize, Debug)]
+#[serde(bound(deserialize = "T: serde::Deserialize<'de>"))]
+pub struct JsonRpcResponseFor<T> {
+    #[serde(default)]
+    pub result: Option<T>,
+    #[serde(default)]
+    pub error: Option<JsonRpcError>,
 }
 
 impl JsonRpcResponse {
@@ -559,6 +574,21 @@ pub enum TaskState {
     Rejected,
     AuthRequired,
     Unknown,
+}
+
+/// The `result` of a `message/send` JSON-RPC response
+/// (spec `SendMessageSuccessResponse.result`, `anyOf: [Task, Message]`).
+///
+/// Untagged because both variants self-describe via their required fields —
+/// a `Task` carries `id` + `status`, a bare `Message` carries `messageId` +
+/// `parts` + `role` — so the whole payload deserializes in one typed step
+/// instead of hand-poking `serde_json::Value`. The current servers always
+/// return the `Task` arm; `Message` is kept for spec compliance.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum SendMessageResult {
+    Task(Task),
+    Message(Message),
 }
 
 /// An artifact produced by a task.

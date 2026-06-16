@@ -2,8 +2,8 @@ use crate::client_stream::StreamItem;
 use crate::config::{BuildHttpClient, DistriConfig};
 use crate::{AgentStreamClient, ClientError, StreamError};
 use distri_a2a::{
-    EventKind, JsonRpcRequest, Message as A2aMessage, MessageKind, MessageSendConfiguration,
-    MessageSendParams, Role,
+    EventKind, JsonRpcRequest, JsonRpcResponseFor, Message as A2aMessage, MessageKind,
+    MessageSendConfiguration, MessageSendParams, Role, SendMessageResult,
 };
 use distri_types::{
     ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, Model, ModelProviderDefinition,
@@ -747,19 +747,8 @@ impl Distri {
             .await?
             .error_for_status()?;
 
-        let body: serde_json::Value = resp.json().await?;
-        if let Some(err) = body
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-        {
-            return Err(ClientError::InvalidResponse(err.to_string()));
-        }
-        let result = body
-            .get("result")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        parse_invoke_result(result)
+        let response: JsonRpcResponseFor<SendMessageResult> = resp.json().await?;
+        parse_send_message_response(response)
     }
 
     /// Stream an agent, invoking the SSE endpoint with the last message.
@@ -802,19 +791,8 @@ impl Distri {
             .await?
             .error_for_status()?;
 
-        let body: serde_json::Value = resp.json().await?;
-        if let Some(err) = body
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-        {
-            return Err(ClientError::InvalidResponse(err.to_string()));
-        }
-        let result = body
-            .get("result")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        parse_invoke_result(result)
+        let response: JsonRpcResponseFor<SendMessageResult> = resp.json().await?;
+        parse_send_message_response(response)
     }
 
     /// Stream an agent with additional options (dynamic_sections, dynamic_values, etc.).
@@ -1453,64 +1431,41 @@ fn convert_kind(kind: MessageKind) -> Result<Option<Message>, ClientError> {
     }
 }
 
-/// Parse the `result` value of a `message/send` RPC into a list of
-/// Distri `Message`s. Tolerant to four wire shapes:
+/// Parse the typed `result` of a `message/send` RPC into Distri `Message`s.
 ///
-/// - **`MessageKind` enum** (single OSS-server frame: `Message`,
-///   `TaskStatusUpdate`, or `Artifact`)
-/// - **`Vec<MessageKind>`** (OSS server batch reply)
-/// - **`Task` envelope** (`{"kind": "task", "status": {"message": …}}`).
-///   This is what the cloud server returns from blocking `message/send`
-///   — `result.status.message` carries the agent's reply.
-/// - **null** → empty list.
-fn parse_invoke_result(result: serde_json::Value) -> Result<Vec<Message>, ClientError> {
-    if result.is_null() {
-        return Ok(Vec::new());
+/// The A2A spec defines the result as `Task | Message` ([`SendMessageResult`]).
+/// Our servers always return the `Task` arm — the agent's reply rides on
+/// `status.message`, which is `None` when the task finished without a
+/// caller-facing reply (a blocking send that returned while still `working`,
+/// or a workflow agent that answered over a channel rather than the A2A
+/// transcript). No message → empty list.
+/// Turn a typed `message/send` JSON-RPC response into Distri `Message`s.
+/// A JSON-RPC `error` surfaces as [`ClientError::InvalidResponse`]; a missing
+/// `result` (spec violation, never emitted by our servers) yields an empty
+/// list rather than an error.
+fn parse_send_message_response(
+    response: JsonRpcResponseFor<SendMessageResult>,
+) -> Result<Vec<Message>, ClientError> {
+    if let Some(err) = response.error {
+        return Err(ClientError::InvalidResponse(err.message));
     }
-
-    // Cloud returns Task envelope; pull `status.message` out and feed
-    // it through the existing MessageKind path.
-    if result.get("kind").and_then(|v| v.as_str()) == Some("task") {
-        let msg_value = result.get("status").and_then(|s| s.get("message")).cloned();
-        let Some(msg_value) = msg_value else {
-            return Ok(Vec::new());
-        };
-        let kind: MessageKind = serde_json::from_value(serde_json::json!({
-            "kind": "message",
-            "messageId": msg_value.get("messageId").cloned().unwrap_or(serde_json::Value::Null),
-            "role": msg_value.get("role").cloned().unwrap_or(serde_json::Value::Null),
-            "parts": msg_value.get("parts").cloned().unwrap_or(serde_json::Value::Array(Vec::new())),
-            "contextId": msg_value.get("contextId").cloned().unwrap_or(serde_json::Value::Null),
-            "taskId": msg_value.get("taskId").cloned().unwrap_or(serde_json::Value::Null),
-            "metadata": msg_value.get("metadata").cloned().unwrap_or(serde_json::Value::Null),
-        }))
-        .map_err(|e| {
-            ClientError::InvalidResponse(format!(
-                "failed to extract Task.status.message: {e}"
-            ))
-        })?;
-        return Ok(convert_kind(kind)?.into_iter().collect());
+    match response.result {
+        Some(result) => parse_invoke_result(result),
+        None => Ok(Vec::new()),
     }
+}
 
-    let kinds: Vec<MessageKind> =
-        if let Ok(single) = serde_json::from_value::<MessageKind>(result.clone()) {
-            vec![single]
-        } else if let Ok(list) = serde_json::from_value::<Vec<MessageKind>>(result) {
-            list
-        } else {
-            return Err(ClientError::InvalidResponse(
-                "Unexpected response format from message/send".into(),
-            ));
-        };
-
-    kinds
-        .into_iter()
-        .filter_map(|k| match convert_kind(k) {
-            Ok(Some(msg)) => Some(Ok(msg)),
-            Ok(None) => None,
-            Err(e) => Some(Err(e)),
-        })
-        .collect()
+fn parse_invoke_result(result: SendMessageResult) -> Result<Vec<Message>, ClientError> {
+    let a2a_msg = match result {
+        SendMessageResult::Message(msg) => Some(msg),
+        SendMessageResult::Task(task) => task.status.message,
+    };
+    match a2a_msg {
+        Some(msg) => Ok(convert_kind(MessageKind::Message(msg))?
+            .into_iter()
+            .collect()),
+        None => Ok(Vec::new()),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -3124,4 +3079,88 @@ pub struct TtsSpeechResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TtsModelsResponse {
     pub models: Vec<Model>,
+}
+
+#[cfg(test)]
+mod parse_invoke_result_tests {
+    use super::*;
+    use distri_a2a::{EventKind, JsonRpcResponseFor, SendMessageResult, TaskState, TextPart};
+
+    /// Build the exact wire shape the servers emit for `message/send`: a
+    /// JSON-RPC envelope whose `result` is a serialized A2A `Task`.
+    fn task_envelope(message: Option<A2aMessage>) -> serde_json::Value {
+        let task = distri_a2a::Task {
+            kind: EventKind::Task,
+            id: "task-1".to_string(),
+            context_id: "thread-1".to_string(),
+            status: distri_a2a::TaskStatus {
+                state: TaskState::Completed,
+                message,
+                timestamp: None,
+            },
+            ..Default::default()
+        };
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "req-1",
+            "result": serde_json::to_value(task).unwrap(),
+        })
+    }
+
+    fn agent_reply(text: &str) -> A2aMessage {
+        A2aMessage {
+            kind: EventKind::Message,
+            message_id: "msg-1".to_string(),
+            role: Role::Agent,
+            parts: vec![distri_a2a::Part::Text(TextPart {
+                text: text.to_string(),
+            })],
+            context_id: Some("thread-1".to_string()),
+            task_id: Some("task-1".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn task_envelope_with_reply_yields_one_message() {
+        let body = task_envelope(Some(agent_reply("hello from agent")));
+        let response: JsonRpcResponseFor<SendMessageResult> = serde_json::from_value(body).unwrap();
+        let msgs = parse_send_message_response(response).unwrap();
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn task_envelope_without_reply_yields_empty() {
+        // Workflow agent that answered over a channel, or a blocking send that
+        // returned while still working — no `status.message`.
+        let body = task_envelope(None);
+        let response: JsonRpcResponseFor<SendMessageResult> = serde_json::from_value(body).unwrap();
+        let msgs = parse_send_message_response(response).unwrap();
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn bare_message_result_yields_one_message() {
+        // Spec allows `result` to be a bare Message (Task | Message union).
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "req-1",
+            "result": serde_json::to_value(agent_reply("direct reply")).unwrap(),
+        });
+        let response: JsonRpcResponseFor<SendMessageResult> = serde_json::from_value(body).unwrap();
+        let msgs = parse_send_message_response(response).unwrap();
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn jsonrpc_error_surfaces_as_invalid_response() {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "req-1",
+            "error": { "code": -32603, "message": "boom" },
+        });
+        let response: JsonRpcResponseFor<SendMessageResult> = serde_json::from_value(body).unwrap();
+        let err = parse_send_message_response(response).unwrap_err();
+        assert!(matches!(err, ClientError::InvalidResponse(m) if m == "boom"));
+    }
 }
