@@ -5,6 +5,7 @@ use distri_a2a::{
     EventKind, JsonRpcRequest, JsonRpcResponseFor, Message as A2aMessage, MessageKind,
     MessageSendConfiguration, MessageSendParams, Role, SendMessageResult,
 };
+use distri_types::api::notes::{CreateNoteRequest, NoteRecord, UpdateNoteRequest};
 use distri_types::{
     ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, Model, ModelProviderDefinition,
     ProviderType, TokenResponse, ToolCall, a2a_converters::MessageMetadata, prompt::PromptSection,
@@ -2135,27 +2136,10 @@ pub struct NewSecretRequest {
 
 // ========== Traces API ==========
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TraceSummary {
-    pub trace_id: String,
-    pub name: String,
-    pub start_time_ns: i64,
-    pub end_time_ns: i64,
-    pub span_count: i64,
-    #[serde(default)]
-    pub thread_id: Option<String>,
-    #[serde(default)]
-    pub input_tokens: i64,
-    #[serde(default)]
-    pub total_cost: f64,
-    #[serde(default)]
-    pub step_count: i64,
-    #[serde(default)]
-    pub models: Vec<Option<String>>,
-    #[serde(default)]
-    pub input_preview: Option<String>,
-}
+// `TraceSummary` is the shared wire DTO from distri-types — the same type the
+// cloud `GET /traces` handler serializes — so there is no separate client-side
+// shape to drift out of sync. Re-exported under the historical name.
+pub use distri_types::api::spans::{TraceRecord as TraceSummary, TracesResponse};
 
 // ========== Threads API ==========
 
@@ -2614,7 +2598,7 @@ impl Distri {
         &self,
         tag: Option<&str>,
         search: Option<&str>,
-    ) -> Result<Value, ClientError> {
+    ) -> Result<Vec<NoteRecord>, ClientError> {
         let mut url = format!("{}/notes", self.base_url);
         let mut params = vec![];
         if let Some(t) = tag {
@@ -2643,9 +2627,13 @@ impl Distri {
         title: &str,
         content: &str,
         tags: &[String],
-    ) -> Result<Value, ClientError> {
+    ) -> Result<NoteRecord, ClientError> {
         let url = format!("{}/notes", self.base_url);
-        let body = serde_json::json!({ "title": title, "content": content, "tags": tags });
+        let body = CreateNoteRequest {
+            title: title.to_string(),
+            content: content.to_string(),
+            tags: tags.to_vec(),
+        };
         let resp = self.http.post(&url).json(&body).send().await?;
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -2658,7 +2646,7 @@ impl Distri {
         }
     }
 
-    pub async fn get_note(&self, id: &str) -> Result<Option<Value>, ClientError> {
+    pub async fn get_note(&self, id: &str) -> Result<Option<NoteRecord>, ClientError> {
         let url = format!("{}/notes/{}", self.base_url, id);
         let resp = self.http.get(&url).send().await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
@@ -2681,24 +2669,14 @@ impl Distri {
         title: Option<&str>,
         content: Option<&str>,
         tags: Option<&[String]>,
-    ) -> Result<Value, ClientError> {
+    ) -> Result<NoteRecord, ClientError> {
         let url = format!("{}/notes/{}", self.base_url, id);
-        let mut body = serde_json::Map::new();
-        if let Some(t) = title {
-            body.insert("title".to_string(), serde_json::json!(t));
-        }
-        if let Some(c) = content {
-            body.insert("content".to_string(), serde_json::json!(c));
-        }
-        if let Some(tg) = tags {
-            body.insert("tags".to_string(), serde_json::json!(tg));
-        }
-        let resp = self
-            .http
-            .put(&url)
-            .json(&Value::Object(body))
-            .send()
-            .await?;
+        let body = UpdateNoteRequest {
+            title: title.map(|t| t.to_string()),
+            content: content.map(|c| c.to_string()),
+            tags: tags.map(|tg| tg.to_vec()),
+        };
+        let resp = self.http.put(&url).json(&body).send().await?;
         if resp.status().is_success() {
             Ok(resp.json().await?)
         } else {
@@ -2797,14 +2775,8 @@ impl Distri {
                 text
             )));
         }
-        let body: serde_json::Value = resp.json().await?;
-        let arr = if let Some(traces) = body.get("traces") {
-            traces.clone()
-        } else {
-            body
-        };
-        serde_json::from_value(arr)
-            .map_err(|e| ClientError::InvalidResponse(format!("failed to parse traces: {}", e)))
+        let response: TracesResponse = resp.json().await?;
+        Ok(response.traces)
     }
 
     pub async fn get_spans(

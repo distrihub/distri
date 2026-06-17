@@ -567,7 +567,7 @@ fn print_trace_summary(trace: &TraceSummary, _width: usize) {
     } else {
         String::new()
     };
-    let models: Vec<&str> = trace.models.iter().filter_map(|m| m.as_deref()).collect();
+    let models: Vec<&str> = trace.models.iter().map(|m| m.as_str()).collect();
     let model_str = if models.is_empty() {
         String::new()
     } else {
@@ -1505,7 +1505,7 @@ async fn handle_optimize_analyze(
         total_input_tokens += trace.input_tokens;
         total_cost += trace.total_cost;
 
-        for model in trace.models.iter().flatten() {
+        for model in trace.models.iter() {
             *model_freq.entry(model.clone()).or_default() += 1;
         }
     }

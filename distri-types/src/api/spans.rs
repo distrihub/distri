@@ -62,3 +62,93 @@ pub struct SpansResponse {
 pub struct TracesResponse {
     pub traces: Vec<TraceRecord>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_trace() -> TraceRecord {
+        TraceRecord {
+            trace_id: "t1".into(),
+            name: "root".into(),
+            start_time_ns: 1,
+            end_time_ns: 2,
+            span_count: 3,
+            thread_id: Some("th1".into()),
+            input_tokens: 10,
+            total_cost: 1.5,
+            step_count: 4,
+            models: vec!["claude".into()],
+            input_preview: Some("hi".into()),
+        }
+    }
+
+    /// The wire contract is camelCase. If someone drops `rename_all` this fails
+    /// loudly instead of silently breaking the distri client's `list_traces()`.
+    #[test]
+    fn trace_record_serializes_camel_case() {
+        let v = serde_json::to_value(sample_trace()).unwrap();
+        let obj = v.as_object().unwrap();
+        for key in [
+            "traceId",
+            "startTimeNs",
+            "endTimeNs",
+            "spanCount",
+            "threadId",
+            "inputTokens",
+            "totalCost",
+            "stepCount",
+            "inputPreview",
+        ] {
+            assert!(obj.contains_key(key), "missing camelCase key `{key}`");
+        }
+        // snake_case must NOT leak onto the wire.
+        assert!(!obj.contains_key("trace_id"));
+        assert!(!obj.contains_key("start_time_ns"));
+    }
+
+    #[test]
+    fn span_record_serializes_camel_case() {
+        let span = SpanRecord {
+            trace_id: "t1".into(),
+            span_id: "s1".into(),
+            parent_span_id: None,
+            name: "op".into(),
+            kind: 1,
+            start_time_ns: 1,
+            end_time_ns: 2,
+            attributes: serde_json::json!({}),
+            events: serde_json::json!([]),
+            status_code: 0,
+            status_message: None,
+            resource: serde_json::json!({}),
+            scope_name: None,
+        };
+        let v = serde_json::to_value(span).unwrap();
+        let obj = v.as_object().unwrap();
+        for key in [
+            "traceId",
+            "spanId",
+            "startTimeNs",
+            "statusCode",
+            "scopeName",
+        ] {
+            assert!(obj.contains_key(key), "missing camelCase key `{key}`");
+        }
+    }
+
+    /// `GET /traces` is wrapped under the `traces` key, and the body must
+    /// round-trip through the same type the client deserializes.
+    #[test]
+    fn traces_response_round_trips_under_wrapper_key() {
+        let resp = TracesResponse {
+            traces: vec![sample_trace()],
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert!(v.get("traces").and_then(|t| t.as_array()).is_some());
+        let back: TracesResponse = serde_json::from_value(v).unwrap();
+        assert_eq!(back.traces.len(), 1);
+        assert_eq!(back.traces[0].trace_id, "t1");
+        assert_eq!(back.traces[0].models, vec!["claude".to_string()]);
+    }
+}

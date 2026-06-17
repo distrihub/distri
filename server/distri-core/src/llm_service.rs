@@ -99,6 +99,31 @@ impl LlmExecuteService {
             context.save_message(msg).await;
         }
 
+        // Set up an OTel parent span for this run by invoking the system hooks'
+        // before_execute (OtelHooks creates + stashes the agent span). The agent
+        // execution path does this in StandardAgent::invoke_stream; the direct
+        // llm_execute path skipped it, so these runs produced NO traces at all.
+        // Gated on !is_sub_task to stay symmetric with the RunFinished emission
+        // below (which removes + exports the span) — otherwise spans would leak.
+        let agent_span = if !is_sub_task {
+            let mut hook_message = Message {
+                role: distri_types::MessageRole::User,
+                parts: messages.iter().flat_map(|m| m.parts.clone()).collect(),
+                ..Default::default()
+            };
+            for hook in &self.orchestrator.system_hooks {
+                if let Err(e) = hook
+                    .before_execute(&mut hook_message, context.clone())
+                    .await
+                {
+                    tracing::warn!("system hook before_execute failed in llm_execute: {}", e);
+                }
+            }
+            context.take_otel_agent_span()
+        } else {
+            None
+        };
+
         // Step 5: Create LLM executor
         let model_label = model_settings
             .as_ref()
@@ -119,8 +144,15 @@ impl LlmExecuteService {
             Some("llm_execute".to_string()),
         )?;
 
-        // Step 6: Execute LLM (messages are already saved, assistant response will be saved by executor)
-        let resp = llm.execute(&messages).await?;
+        // Step 6: Execute LLM (messages are already saved, assistant response will be saved by executor).
+        // Instrument under the agent span so the inference (and any tool) child spans nest correctly.
+        let resp = match agent_span {
+            Some(span) => {
+                use tracing::Instrument as _;
+                llm.execute(&messages).instrument(span).await?
+            }
+            None => llm.execute(&messages).await?,
+        };
 
         // Step 7: Emit RunFinished event for usage tracking (non-sub-tasks only)
         if !is_sub_task {
