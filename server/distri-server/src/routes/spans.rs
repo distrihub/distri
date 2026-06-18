@@ -32,6 +32,19 @@ pub struct SpansQuery {
 #[derive(Debug, Deserialize)]
 pub struct TracesQuery {
     pub limit: Option<i64>,
+    /// Filter by agent id/name.
+    pub agent_id: Option<String>,
+    /// Filter by tags, compact form `key:value,key2:value2` (ANY match key, exact value).
+    pub tags: Option<String>,
+}
+
+/// Parse the compact `k:v,k2:v2` tag filter into pairs.
+fn parse_tag_filter(raw: &str) -> Vec<(String, String)> {
+    raw.split(',')
+        .filter_map(|pair| pair.split_once(':'))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .filter(|(k, _)| !k.is_empty())
+        .collect()
 }
 
 // ── Route registration ────────────────────────────────────────────────────────
@@ -116,8 +129,38 @@ pub async fn list_traces(
     let limit = query.limit.unwrap_or(50).min(200);
     let workspace_id = uuid::Uuid::nil().to_string();
 
-    match store.list_traces(&workspace_id, limit).await {
-        Ok(traces) => HttpResponse::Ok().json(TracesResponse { traces }),
+    let agent_filter = query.agent_id.as_deref().filter(|a| !a.is_empty());
+    let tag_filters = query
+        .tags
+        .as_deref()
+        .map(parse_tag_filter)
+        .unwrap_or_default();
+
+    // When filtering, fetch the full set then narrow in-process (the in-memory
+    // store is local/small), so `limit` applies to the filtered result.
+    let fetch_limit = if agent_filter.is_some() || !tag_filters.is_empty() {
+        200
+    } else {
+        limit
+    };
+
+    match store.list_traces(&workspace_id, fetch_limit).await {
+        Ok(mut traces) => {
+            if let Some(agent) = agent_filter {
+                traces.retain(|t| {
+                    t.agent_id.as_deref() == Some(agent) || t.agent_name.as_deref() == Some(agent)
+                });
+            }
+            if !tag_filters.is_empty() {
+                traces.retain(|t| {
+                    tag_filters
+                        .iter()
+                        .all(|(k, v)| t.tags.get(k).map(|val| val == v).unwrap_or(false))
+                });
+            }
+            traces.truncate(limit as usize);
+            HttpResponse::Ok().json(TracesResponse { traces })
+        }
         Err(e) => {
             tracing::error!(error = ?e, "Failed to query traces");
             HttpResponse::InternalServerError().json(json!({"error": "Failed to query traces"}))
