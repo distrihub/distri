@@ -95,6 +95,14 @@ enum Commands {
         /// W3C traceparent header for distributed tracing (passed by SandboxLauncher).
         #[clap(long)]
         traceparent: Option<String>,
+        /// Search tag to attach to this run's traces and thread, as key=value.
+        /// Repeatable: --tag team=growth --tag env=prod
+        #[clap(long = "tag", value_name = "KEY=VALUE")]
+        tags: Vec<String>,
+        /// Extra HTTP header to send with the request, as key=value.
+        /// Repeatable: --header x-trace-source=cli
+        #[clap(long = "header", value_name = "KEY=VALUE")]
+        headers: Vec<String>,
     },
 
     /// Agent-related commands (defaults to list)
@@ -507,6 +515,12 @@ pub(crate) enum TracesCommands {
     List {
         #[clap(long, default_value = "20")]
         limit: i64,
+        /// Filter by agent id/name.
+        #[clap(long)]
+        agent: Option<String>,
+        /// Filter by tag (key=value). Repeatable: --tag team=growth --tag env=prod
+        #[clap(long = "tag", value_name = "KEY=VALUE")]
+        tags: Vec<String>,
     },
     /// Show trace detail with Gantt chart
     Show {
@@ -677,8 +691,12 @@ async fn main() -> Result<()> {
             thread_id,
             remote,
             traceparent,
+            tags,
+            headers,
         } => {
             let extra_tools = parse_cli_overrides(overrides.as_deref());
+            let tag_map = parse_key_value_pairs(&tags);
+            let header_map = parse_key_value_pairs(&headers);
             // Pre-resolve thread_id: explicit --thread-id > DISTRI_THREAD_ID env
             // > --resume. RunOptions only has a single thread_id field and its
             // own env fallback (DISTRI_THREAD_ID), so we resolve --resume here
@@ -714,9 +732,18 @@ async fn main() -> Result<()> {
                 model: None,
                 env_vars,
                 skip_connections_context: false,
-                tags: None,
+                tags: if tag_map.is_empty() {
+                    None
+                } else {
+                    Some(tag_map)
+                },
                 trace_context: None,
             };
+            // Attach any --header values to the client config so every request
+            // (build_run_params + the streaming call) carries them.
+            if !header_map.is_empty() {
+                config.headers = Some(header_map);
+            }
             let agent_name = resolve_agent_name(&run_opts);
 
             // Verify the agent exists before registering anything.
@@ -935,7 +962,11 @@ async fn main() -> Result<()> {
             threads::handle_threads_command(&client, command).await?;
         }
         Commands::Traces { command } => {
-            let command = command.unwrap_or(TracesCommands::List { limit: 20 });
+            let command = command.unwrap_or(TracesCommands::List {
+                limit: 20,
+                agent: None,
+                tags: vec![],
+            });
             traces::handle_traces_command(&client, command).await?;
         }
         Commands::Optimize { command } => {
@@ -1047,6 +1078,22 @@ async fn run_distri_server(
 
 /// Parse `--overrides` JSON into dynamic tool factories.
 /// Expected format: `{"dynamic_tools": [{"name": "...", "factory_type": "http", "config": {...}}]}`
+/// Parse repeated `key=value` CLI args into a map. Accepts `key=value`
+/// (value may contain `=`). Pairs without `=` or with an empty key are skipped
+/// with a warning.
+fn parse_key_value_pairs(pairs: &[String]) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    for raw in pairs {
+        match raw.split_once('=') {
+            Some((k, v)) if !k.trim().is_empty() => {
+                map.insert(k.trim().to_string(), v.to_string());
+            }
+            _ => eprintln!("Warning: ignoring malformed key=value pair: '{raw}'"),
+        }
+    }
+    map
+}
+
 fn parse_cli_overrides(json: Option<&str>) -> Vec<distri_types::dynamic_tool::DynamicToolFactory> {
     let Some(json) = json else {
         return Vec::new();

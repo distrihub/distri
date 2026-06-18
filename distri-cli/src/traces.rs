@@ -521,8 +521,13 @@ fn separator(width: usize) -> String {
 // Trace list display
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub async fn print_trace_list(client: &Distri, limit: i64) {
-    match client.list_traces(Some(limit)).await {
+pub async fn print_trace_list(
+    client: &Distri,
+    limit: i64,
+    agent: Option<&str>,
+    tags: Option<&str>,
+) {
+    match client.list_traces_filtered(Some(limit), agent, tags).await {
         Ok(mut traces) => {
             if traces.is_empty() {
                 println!("No traces found.");
@@ -616,6 +621,29 @@ fn print_trace_summary(trace: &TraceSummary, _width: usize) {
         model_str,
         COLOR_RESET,
     );
+
+    // Line 2b: agent provenance + tags
+    let mut prov_parts: Vec<String> = Vec::new();
+    if let Some(ref agent_name) = trace.agent_name {
+        let ver = trace
+            .agent_version
+            .as_deref()
+            .map(|v| format!(" v{}", v))
+            .unwrap_or_default();
+        prov_parts.push(format!("agent: {}{}", agent_name, ver));
+    }
+    if !trace.tags.is_empty() {
+        let mut kvs: Vec<String> = trace
+            .tags
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
+        kvs.sort();
+        prov_parts.push(format!("[{}]", kvs.join(" ")));
+    }
+    if !prov_parts.is_empty() {
+        println!("  {}{}{}", COLOR_DIM, prov_parts.join("  "), COLOR_RESET);
+    }
 
     // Line 3: input preview (if any)
     if let Some(ref preview) = trace.input_preview {
@@ -1103,8 +1131,19 @@ fn format_value_pretty(text: &str) -> String {
 
 pub async fn handle_traces_command(client: &Distri, command: TracesCommands) -> Result<()> {
     match command {
-        TracesCommands::List { limit } => {
-            print_trace_list(client, limit).await;
+        TracesCommands::List { limit, agent, tags } => {
+            // Convert repeated key=value tag args into the compact wire form.
+            let tags_filter: Option<String> = if tags.is_empty() {
+                None
+            } else {
+                Some(
+                    tags.iter()
+                        .filter_map(|raw| raw.split_once('=').map(|(k, v)| format!("{}:{}", k.trim(), v)))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+            };
+            print_trace_list(client, limit, agent.as_deref(), tags_filter.as_deref()).await;
         }
         TracesCommands::Show {
             id,

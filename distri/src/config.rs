@@ -57,6 +57,19 @@ impl BuildHttpClient for DistriConfig {
             headers.insert("traceparent", val);
         }
 
+        // Arbitrary user-supplied headers (e.g. `distri run --header k=v`).
+        // Applied last so callers can override the defaults above if needed.
+        if let Some(ref extra) = self.headers {
+            for (k, v) in extra {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(name, val);
+                }
+            }
+        }
+
         if !headers.is_empty() {
             builder = builder.default_headers(headers);
         }

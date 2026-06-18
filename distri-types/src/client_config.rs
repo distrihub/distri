@@ -45,6 +45,12 @@ pub struct DistriConfig {
     #[serde(skip)]
     #[schemars(skip)]
     pub traceparent: Option<String>,
+
+    /// Extra HTTP headers to attach to every request (e.g. set via the
+    /// `--header k=v` CLI flag). Not serialized — runtime only.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub headers: Option<std::collections::HashMap<String, String>>,
 }
 
 fn default_timeout() -> u64 {
@@ -94,6 +100,7 @@ impl Default for DistriConfig {
             timeout_secs: default_timeout(),
             retry_attempts: default_retries(),
             traceparent: None,
+            headers: None,
         }
     }
 }
@@ -190,6 +197,14 @@ impl DistriConfig {
     /// Set the number of retry attempts.
     pub fn with_retries(mut self, retry_attempts: u32) -> Self {
         self.retry_attempts = retry_attempts;
+        self
+    }
+
+    /// Attach extra HTTP headers sent on every request.
+    pub fn with_headers(mut self, headers: std::collections::HashMap<String, String>) -> Self {
+        if !headers.is_empty() {
+            self.headers = Some(headers);
+        }
         self
     }
 

@@ -2763,10 +2763,33 @@ impl Distri {
     // ========== Traces API ==========
 
     pub async fn list_traces(&self, limit: Option<i64>) -> Result<Vec<TraceSummary>, ClientError> {
-        let mut url = format!("{}/traces", self.base_url);
+        self.list_traces_filtered(limit, None, None).await
+    }
+
+    /// List recent traces, optionally filtered by agent id and/or tags.
+    ///
+    /// `tags` uses the compact wire form `key:value,key2:value2`.
+    pub async fn list_traces_filtered(
+        &self,
+        limit: Option<i64>,
+        agent_id: Option<&str>,
+        tags: Option<&str>,
+    ) -> Result<Vec<TraceSummary>, ClientError> {
+        let mut params: Vec<String> = vec![];
         if let Some(limit) = limit {
-            url = format!("{}?limit={}", url, limit);
+            params.push(format!("limit={}", limit));
         }
+        if let Some(agent) = agent_id.filter(|a| !a.is_empty()) {
+            params.push(format!("agent_id={}", urlencoding::encode(agent)));
+        }
+        if let Some(tags) = tags.filter(|t| !t.is_empty()) {
+            params.push(format!("tags={}", urlencoding::encode(tags)));
+        }
+        let url = if params.is_empty() {
+            format!("{}/traces", self.base_url)
+        } else {
+            format!("{}/traces?{}", self.base_url, params.join("&"))
+        };
         let resp = self.http.get(&url).send().await?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
