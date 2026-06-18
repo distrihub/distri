@@ -32,6 +32,67 @@ use llm_gateway::observability::{
     GenAiToolSpan,
 };
 
+/// Build an `opentelemetry::Context` carrying a REMOTE `SpanContext` that the
+/// agent's root span should nest under, so the whole tree inherits one trace_id.
+///
+/// Two sources, in priority order:
+/// 1. An inbound `trace_context` (parse W3C hex trace-id + parent span-id).
+/// 2. A deterministic context derived from the distri `thread_id` (sha2 hash),
+///    so every execution on the same thread shares one trace_id.
+///
+/// Returns `None` only when the inbound trace_context is present but malformed.
+fn remote_parent_context(context: &ExecutorContext) -> Option<opentelemetry::Context> {
+    use opentelemetry::trace::{
+        SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState,
+    };
+
+    let (trace_id, span_id) = if let Some(tc) = &context.trace_context {
+        let trace_id = TraceId::from_hex(&tc.trace_id).ok()?;
+        let span_id = SpanId::from_hex(&tc.parent_span_id).ok()?;
+        (trace_id, span_id)
+    } else {
+        derive_trace_ids_from_thread(&context.thread_id)
+    };
+
+    let span_ctx = SpanContext::new(
+        trace_id,
+        span_id,
+        TraceFlags::SAMPLED,
+        true, // remote
+        TraceState::default(),
+    );
+    Some(opentelemetry::Context::new().with_remote_span_context(span_ctx))
+}
+
+/// Deterministically derive a (TraceId, SpanId) pair from the thread_id via
+/// SHA-256: first 16 bytes → trace-id, next 8 bytes → span-id. Both are forced
+/// non-zero (OTel treats all-zero ids as invalid).
+fn derive_trace_ids_from_thread(
+    thread_id: &str,
+) -> (opentelemetry::trace::TraceId, opentelemetry::trace::SpanId) {
+    use opentelemetry::trace::{SpanId, TraceId};
+    use sha2::{Digest, Sha256};
+
+    let digest = Sha256::digest(thread_id.as_bytes());
+
+    let mut trace_bytes = [0u8; 16];
+    trace_bytes.copy_from_slice(&digest[0..16]);
+    if trace_bytes.iter().all(|&b| b == 0) {
+        trace_bytes[15] = 1;
+    }
+
+    let mut span_bytes = [0u8; 8];
+    span_bytes.copy_from_slice(&digest[16..24]);
+    if span_bytes.iter().all(|&b| b == 0) {
+        span_bytes[7] = 1;
+    }
+
+    (
+        TraceId::from_bytes(trace_bytes),
+        SpanId::from_bytes(span_bytes),
+    )
+}
+
 /// Hook that creates OTel GenAI spans for every agent run.
 #[derive(Debug, Default)]
 pub struct OtelHooks {
@@ -108,6 +169,19 @@ impl AgentHooks for OtelHooks {
 
         let mut attrs = GenAiAgentSpan::from_context_fields(&context.agent_id, &ctx_fields, None);
         attrs.input_value = input_value;
+        // Provenance: agent version.
+        attrs.agent_version = context.agent_version.clone();
+        // Tags: serialize the map to a JSON object string (only when non-empty).
+        if !context.tags.is_empty() {
+            if let Ok(s) = serde_json::to_string(&context.tags) {
+                attrs.tags_json = Some(s);
+            }
+        }
+        // Record the inbound remote trace context (when given) for debuggability.
+        if let Some(tc) = &context.trace_context {
+            attrs.parent_trace_id = Some(tc.trace_id.clone());
+            attrs.parent_span_id = Some(tc.parent_span_id.clone());
+        }
 
         let span = if let Some(ref parent_run_id) = context.parent_run_id {
             if let Some(outer_span) = self.agent_spans.get(parent_run_id.as_str()) {
@@ -118,6 +192,20 @@ impl AgentHooks for OtelHooks {
         } else {
             builder::agent_span(&attrs)
         };
+
+        // Remote-parent trace propagation for TOP-LEVEL runs only. Sub-agent
+        // runs (parent_run_id is Some) already nest via in_scope() above, so
+        // they inherit the parent's trace_id naturally — leave them alone.
+        //
+        // For a top-level run we attach a REMOTE OpenTelemetry parent so the
+        // whole span tree inherits a single trace_id: either the inbound
+        // trace_context, or a deterministic one derived from the thread_id.
+        if context.parent_run_id.is_none() {
+            if let Some(cx) = remote_parent_context(&context) {
+                use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+                span.set_parent(cx);
+            }
+        }
 
         // Give StandardAgent a clone for .instrument() wrapping
         context.set_otel_agent_span(span.clone());
@@ -426,6 +514,57 @@ mod tests {
     use std::sync::Arc;
 
     use crate::agent::context::ExecutorContext;
+
+    #[test]
+    fn derive_trace_ids_is_deterministic_and_nonzero() {
+        let (t1, s1) = derive_trace_ids_from_thread("thread-abc");
+        let (t2, s2) = derive_trace_ids_from_thread("thread-abc");
+        assert_eq!(t1, t2, "same thread_id → same trace_id");
+        assert_eq!(s1, s2, "same thread_id → same span_id");
+        assert_ne!(t1, opentelemetry::trace::TraceId::INVALID);
+        assert_ne!(s1, opentelemetry::trace::SpanId::INVALID);
+
+        let (t3, _) = derive_trace_ids_from_thread("thread-xyz");
+        assert_ne!(t1, t3, "different thread_id → different trace_id");
+    }
+
+    #[test]
+    fn remote_parent_context_uses_inbound_trace_context() {
+        let ctx = ExecutorContext {
+            thread_id: "t1".to_string(),
+            trace_context: Some(distri_types::TraceContext {
+                trace_id: "0123456789abcdef0123456789abcdef".to_string(),
+                parent_span_id: "0123456789abcdef".to_string(),
+            }),
+            ..Default::default()
+        };
+        // Inbound context parses; helper returns Some.
+        assert!(remote_parent_context(&ctx).is_some());
+    }
+
+    #[test]
+    fn remote_parent_context_rejects_malformed_trace_context() {
+        let ctx = ExecutorContext {
+            thread_id: "t1".to_string(),
+            trace_context: Some(distri_types::TraceContext {
+                trace_id: "not-hex".to_string(),
+                parent_span_id: "nope".to_string(),
+            }),
+            ..Default::default()
+        };
+        assert!(remote_parent_context(&ctx).is_none());
+    }
+
+    #[test]
+    fn remote_parent_context_defaults_to_thread_derived() {
+        let ctx = ExecutorContext {
+            thread_id: "t-default".to_string(),
+            trace_context: None,
+            ..Default::default()
+        };
+        // No inbound context → deterministic thread-derived parent.
+        assert!(remote_parent_context(&ctx).is_some());
+    }
 
     fn make_event(
         base: &distri_types::AgentEvent,

@@ -49,6 +49,14 @@ pub struct TraceRecord {
     pub step_count: i64,
     pub models: Vec<String>,
     pub input_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_version: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub tags: std::collections::HashMap<String, String>,
 }
 
 /// Response body for `GET /spans`.
@@ -80,6 +88,10 @@ mod tests {
             step_count: 4,
             models: vec!["claude".into()],
             input_preview: Some("hi".into()),
+            agent_id: Some("agent-1".into()),
+            agent_name: Some("coder".into()),
+            agent_version: Some("0.1.0".into()),
+            tags: std::collections::HashMap::new(),
         }
     }
 

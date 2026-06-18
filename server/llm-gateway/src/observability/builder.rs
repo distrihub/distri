@@ -130,11 +130,29 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
         "error.code" = tracing::field::Empty,
         "otel.status_code" = tracing::field::Empty,
         "otel.status_description" = tracing::field::Empty,
+        // Declared empty so OtelHooks::before_execute can record them later
+        // (provenance + tags + remote-parent propagation debug attrs).
+        "distri.agent.version" = tracing::field::Empty,
+        "distri.tags" = tracing::field::Empty,
+        "distri.parent_trace_id" = tracing::field::Empty,
+        "distri.parent_span_id" = tracing::field::Empty,
     );
 
     // Record known-at-creation-time optional fields
     if let Some(v) = &attrs.agent_id {
         span.record("gen_ai.agent.id", v.as_str());
+    }
+    if let Some(v) = &attrs.agent_version {
+        span.record("distri.agent.version", v.as_str());
+    }
+    if let Some(v) = &attrs.tags_json {
+        span.record("distri.tags", v.as_str());
+    }
+    if let Some(v) = &attrs.parent_trace_id {
+        span.record("distri.parent_trace_id", v.as_str());
+    }
+    if let Some(v) = &attrs.parent_span_id {
+        span.record("distri.parent_span_id", v.as_str());
     }
     if let Some(v) = &attrs.conversation_id {
         span.record("gen_ai.conversation.id", v.as_str());

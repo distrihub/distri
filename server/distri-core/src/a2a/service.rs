@@ -718,6 +718,20 @@ impl A2AService {
         // This ensures threads, events, and tool lookups all use the agent name.
         let agent_id = self.orchestrator.resolve_agent_name(&agent_id).await;
 
+        // Provenance: resolve the agent version from the agent config (falls
+        // back to default_agent_version()). Recorded on the agent span.
+        let agent_version = self
+            .orchestrator
+            .stores
+            .agent_store
+            .get(&agent_id)
+            .await
+            .and_then(|cfg| cfg.version())
+            .or_else(distri_types::default_agent_version);
+
+        let tags = metadata.tags.clone().unwrap_or_default();
+        let trace_context = metadata.trace_context.clone();
+
         let context = ExecutorContext {
             thread_id,
             task_id: params
@@ -739,6 +753,9 @@ impl A2AService {
             dry_run,
             runtime_mode: metadata.runtime_mode,
             is_sandbox: metadata.is_sandbox,
+            tags,
+            agent_version,
+            trace_context,
             ..Default::default()
         };
 

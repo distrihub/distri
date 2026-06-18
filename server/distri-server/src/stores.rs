@@ -278,17 +278,53 @@ impl SpanStore for InMemorySpanStore {
         let mut records: Vec<TraceRecord> = trace_map
             .into_iter()
             .filter_map(|(trace_id, spans)| {
-                // Root span = no parent_span_id or empty parent_span_id
-                let root = spans.iter().find(|s| {
-                    s.parent_span_id
-                        .as_deref()
-                        .map(|p| p.is_empty())
-                        .unwrap_or(true)
-                })?;
+                // Set of span_ids present in this trace, used to detect dangling
+                // parents (a top-level execute span may now carry a non-null
+                // parent_span_id pointing at a synthetic remote parent that is
+                // not present in the store).
+                let span_ids: std::collections::HashSet<&str> =
+                    spans.iter().map(|s| s.span_id.as_str()).collect();
+
+                // Root candidates = no/empty parent_span_id OR a parent that is
+                // not present among this trace's spans (dangling/remote parent).
+                let is_root = |s: &SpanRecord| -> bool {
+                    match s.parent_span_id.as_deref() {
+                        None => true,
+                        Some(p) if p.is_empty() => true,
+                        Some(p) => !span_ids.contains(p),
+                    }
+                };
+
+                // Pick the earliest execute root for name/preview/agent fields.
+                // Prefer execute spans; fall back to any root span.
+                let mut roots: Vec<&SpanRecord> =
+                    spans.iter().copied().filter(|s| is_root(s)).collect();
+                roots.sort_by_key(|s| s.start_time_ns);
+                let root: &SpanRecord = roots
+                    .iter()
+                    .find(|s| s.name.starts_with("execute"))
+                    .copied()
+                    .or_else(|| roots.first().copied())?;
 
                 let span_count = spans.len() as i64;
                 let start_time_ns = spans.iter().map(|s| s.start_time_ns).min()?;
                 let end_time_ns = spans.iter().map(|s| s.end_time_ns).max()?;
+
+                // Extract agent + tag provenance from the root span's attributes.
+                let attrs = &root.attributes;
+                let str_attr = |key: &str| -> Option<String> {
+                    attrs.get(key).and_then(|v| v.as_str()).map(String::from)
+                };
+                let agent_id = str_attr("gen_ai.agent.id");
+                let agent_name = str_attr("gen_ai.agent.name");
+                let agent_version = str_attr("distri.agent.version");
+                let tags = attrs
+                    .get("distri.tags")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| {
+                        serde_json::from_str::<std::collections::HashMap<String, String>>(s).ok()
+                    })
+                    .unwrap_or_default();
 
                 Some(TraceRecord {
                     trace_id,
@@ -302,6 +338,10 @@ impl SpanStore for InMemorySpanStore {
                     step_count: 0,
                     models: vec![],
                     input_preview: None,
+                    agent_id,
+                    agent_name,
+                    agent_version,
+                    tags,
                 })
             })
             .collect();

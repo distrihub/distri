@@ -149,6 +149,8 @@ impl RemoteTaskRunner for LocalProcessRemoteRunner {
                     // Server-side already has connection info; no need to
                     // ship it back up the wire.
                     skip_connections_context: true,
+                    tags: None,
+                    trace_context: None,
                 };
                 if let Err(e) = run_agent(&platform, &stream, opts, |_item| async {}).await {
                     tracing::error!(

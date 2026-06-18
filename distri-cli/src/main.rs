@@ -714,6 +714,8 @@ async fn main() -> Result<()> {
                 model: None,
                 env_vars,
                 skip_connections_context: false,
+                tags: None,
+                trace_context: None,
             };
             let agent_name = resolve_agent_name(&run_opts);
 

@@ -177,6 +177,14 @@ pub struct ExecutorContext {
     /// proxy). The orchestrator uses this post-run to warn when an agent
     /// declared `connections: [...]` but never used them.
     pub connections_used: Arc<RwLock<HashSet<String>>>,
+    /// Arbitrary caller-supplied tags. Recorded on the agent span and merged
+    /// into the thread's attributes. Empty by default.
+    pub tags: HashMap<String, String>,
+    /// Resolved agent version (provenance). Recorded on the agent span.
+    pub agent_version: Option<String>,
+    /// Inbound distributed-trace context. When present (top-level runs only),
+    /// the agent's root span and all descendants inherit this trace_id.
+    pub trace_context: Option<distri_types::TraceContext>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -249,6 +257,9 @@ impl Default for ExecutorContext {
             mailbox: None,
             is_sandbox: false,
             connections_used: Arc::new(RwLock::new(HashSet::new())),
+            tags: HashMap::new(),
+            agent_version: None,
+            trace_context: None,
         }
     }
 }
@@ -1297,6 +1308,9 @@ impl ExecutorContext {
             mailbox: self.mailbox.clone(),
             is_sandbox: self.is_sandbox,
             connections_used: self.connections_used.clone(),
+            tags: self.tags.clone(),
+            agent_version: self.agent_version.clone(),
+            trace_context: self.trace_context.clone(),
         };
 
         (inner_context, inner_rx)
