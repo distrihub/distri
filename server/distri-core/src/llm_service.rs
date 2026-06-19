@@ -52,6 +52,8 @@ impl LlmExecuteService {
         context.thread_id = thread_id.clone();
         context.task_id = task_id.clone();
         context.tenant_context = tenant_context.clone();
+        // Use the thread title (when provided) as the agent span's display name.
+        context.span_name = title.clone();
 
         if let Some(run_id) = run_id {
             context.run_id = run_id;

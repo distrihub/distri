@@ -111,11 +111,16 @@ pub struct GenAiAgentSpan {
     /// Inbound remote parent span-id (W3C hex) — recorded as
     /// `distri.parent_span_id`.
     pub parent_span_id: Option<String>,
+    /// Explicit span display name; when None, falls back to `execute {agent}`.
+    pub span_name_override: Option<String>,
 }
 
 impl GenAiAgentSpan {
     pub fn span_name(&self) -> String {
-        format!("execute {}", self.agent_name)
+        self.span_name_override
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("execute {}", self.agent_name))
     }
 }
 

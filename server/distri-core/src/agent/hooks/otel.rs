@@ -93,6 +93,16 @@ fn derive_trace_ids_from_thread(
     )
 }
 
+/// Truncate `s` to at most `max` chars, appending `…` when truncated.
+fn truncate_span_name(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max).collect();
+        format!("{}…", truncated)
+    }
+}
+
 /// Hook that creates OTel GenAI spans for every agent run.
 #[derive(Debug, Default)]
 pub struct OtelHooks {
@@ -169,6 +179,17 @@ impl AgentHooks for OtelHooks {
 
         let mut attrs = GenAiAgentSpan::from_context_fields(&context.agent_id, &ctx_fields, None);
         attrs.input_value = input_value;
+        // Span display name: explicit context.span_name wins; else derive a
+        // snippet from the first non-empty line of the message text (≤80 chars).
+        attrs.span_name_override = context
+            .span_name
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                let text = message.as_text().unwrap_or_default();
+                let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
+                Some(truncate_span_name(line, 80))
+            });
         // Provenance: agent version.
         attrs.agent_version = context.agent_version.clone();
         // Tags: serialize the map to a JSON object string (only when non-empty).

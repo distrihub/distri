@@ -185,6 +185,10 @@ pub struct ExecutorContext {
     /// Inbound distributed-trace context. When present (top-level runs only),
     /// the agent's root span and all descendants inherit this trace_id.
     pub trace_context: Option<distri_types::TraceContext>,
+    /// Explicit display name for the agent (root) span. When Some and non-empty,
+    /// it overrides the default `execute {agent}` span name. Child contexts may
+    /// inherit the parent's value or default to None.
+    pub span_name: Option<String>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -260,6 +264,7 @@ impl Default for ExecutorContext {
             tags: HashMap::new(),
             agent_version: None,
             trace_context: None,
+            span_name: None,
         }
     }
 }
@@ -1311,6 +1316,7 @@ impl ExecutorContext {
             tags: self.tags.clone(),
             agent_version: self.agent_version.clone(),
             trace_context: self.trace_context.clone(),
+            span_name: self.span_name.clone(),
         };
 
         (inner_context, inner_rx)

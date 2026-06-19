@@ -853,6 +853,7 @@ impl Distri {
         options: LlmExecuteOptions,
     ) -> Result<LlmExecuteResponse, ClientError> {
         let payload = LlmExecuteRequest {
+            title: options.context.label,
             messages: options.context.messages,
             tools: options.tools,
             thread_id: options.context.thread_id,
@@ -1533,6 +1534,8 @@ impl LlmExecuteOptions {
 
 #[derive(Debug, Serialize)]
 struct LlmExecuteRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
     messages: Vec<Message>,
     #[serde(default)]
     tools: Vec<ExternalTool>,

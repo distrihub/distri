@@ -297,6 +297,45 @@ distri profile list / use / config  # Multi-profile management
 
 ---
 
+## Invocation & Traces
+
+Distri has two invocation APIs, both fully traced (agent → steps → LLM → tools,
+with tokens/cost/latency and provenance) in the **Traces** view / `distri traces list`:
+
+| API | Endpoint | What it does |
+| --- | --- | --- |
+| **`execute`** | `POST /v1/agents/{id}` (A2A `message/send` \| `message/stream`) | Run a full agent |
+| **`llm_execute`** | `POST /v1/llm/execute` | A single LLM call (great for high-volume grading/extraction) |
+
+```ts
+// JS (@distri/core)
+const agent = await Agent.create('scoring_agent', client)
+await agent.invoke({ /* messages */, contextId, tags: { team: 'growth' } })   // execute
+await client.llm(messages, tools, { agent_id: 'scoring_agent', thread_id, title })  // llm_execute
+```
+
+```rust
+// Rust (distri client)
+run_agent(&client, RunOptions { agent: Some("scoring_agent".into()), task, thread_id,
+                                tags: Some(tags), trace_context: None, ..Default::default() }, cb).await?;   // execute
+client.llm_execute(LlmExecuteOptions::new(LLmContext { thread_id, label, messages, ..Default::default() })
+                       .with_agent_id("scoring_agent".into())).await?;          // llm_execute
+```
+
+```bash
+distri run --agent scoring_agent --task "grade: 2+2=4" --tag team=growth   # CLI
+```
+
+**Grouping calls into one trace:** give related calls the **same thread / context id**
+(`contextId` on `execute`, `thread_id` on `llm_execute`) — Distri derives the trace id
+from it, so they collapse into a single trace (e.g. all grading calls of one eval run).
+For cross-process propagation, pass an explicit `trace_context { trace_id, parent_span_id }`
+on `execute` to nest the agent's spans under a caller's existing trace.
+
+See the full guide: **[Traces & Tracing Context](https://distri.dev/docs/traces)**.
+
+---
+
 ## Architecture
 
 ```
