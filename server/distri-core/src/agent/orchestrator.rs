@@ -1367,10 +1367,7 @@ impl AgentOrchestrator {
         // the run's tags under a "tags" key (object {k:v}) without clobbering
         // any existing attributes.
         let thread_attributes = {
-            let base = context
-                .additional_attributes
-                .clone()
-                .and_then(|a| a.thread);
+            let base = context.additional_attributes.clone().and_then(|a| a.thread);
             if context.tags.is_empty() {
                 base
             } else {
@@ -1378,10 +1375,7 @@ impl AgentOrchestrator {
                     Some(serde_json::Value::Object(m)) => m,
                     _ => serde_json::Map::new(),
                 };
-                obj.insert(
-                    "tags".to_string(),
-                    serde_json::json!(context.tags.clone()),
-                );
+                obj.insert("tags".to_string(), serde_json::json!(context.tags.clone()));
                 Some(serde_json::Value::Object(obj))
             }
         };

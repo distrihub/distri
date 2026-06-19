@@ -1138,7 +1138,10 @@ pub async fn handle_traces_command(client: &Distri, command: TracesCommands) -> 
             } else {
                 Some(
                     tags.iter()
-                        .filter_map(|raw| raw.split_once('=').map(|(k, v)| format!("{}:{}", k.trim(), v)))
+                        .filter_map(|raw| {
+                            raw.split_once('=')
+                                .map(|(k, v)| format!("{}:{}", k.trim(), v))
+                        })
                         .collect::<Vec<_>>()
                         .join(","),
                 )

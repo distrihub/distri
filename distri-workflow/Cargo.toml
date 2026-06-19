@@ -1,6 +1,6 @@
 [package]
 name = "distri-workflow"
-version = "0.4.0"
+version = "0.4.2"
 edition = "2021"
 description = "Workflow engine for Distri — define, execute, and track multi-step workflows"
 license = "MIT"
@@ -15,7 +15,7 @@ uuid = { version = "1", features = ["v4"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
 tracing = { workspace = true }
 jsonschema = "0.28"
-distri-types = { path = "../distri-types", version = "0.4.0" }
+distri-types = { path = "../distri-types", version = "0.4.2" }
 anyhow = { workspace = true }
 
 [dev-dependencies]

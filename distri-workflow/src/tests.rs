@@ -76,9 +76,8 @@ mod tests {
 
     #[test]
     fn step_requirement_connection_builder() {
-        let req = StepRequirement::connection("google", "drive").with_permissions(vec![
-            "drive.readonly",
-        ]);
+        let req =
+            StepRequirement::connection("google", "drive").with_permissions(vec!["drive.readonly"]);
         assert_eq!(req.skill, "google:drive");
         assert_eq!(req.permissions, vec!["drive.readonly"]);
     }
