@@ -853,6 +853,8 @@ impl Distri {
         options: LlmExecuteOptions,
     ) -> Result<LlmExecuteResponse, ClientError> {
         let payload = LlmExecuteRequest {
+            title: options.context.label,
+            tags: options.tags,
             messages: options.context.messages,
             tools: options.tools,
             thread_id: options.context.thread_id,
@@ -1489,6 +1491,7 @@ pub struct LlmExecuteOptions {
     pub is_sub_task: bool,
     pub agent_id: Option<String>,
     pub load_history: bool,
+    pub tags: Option<HashMap<String, String>>,
 }
 
 impl LlmExecuteOptions {
@@ -1515,6 +1518,11 @@ impl LlmExecuteOptions {
         self
     }
 
+    pub fn with_tags(mut self, tags: HashMap<String, String>) -> Self {
+        self.tags = Some(tags);
+        self
+    }
+
     pub fn with_agent_id(mut self, agent_id: String) -> Self {
         self.agent_id = Some(agent_id);
         self
@@ -1533,6 +1541,10 @@ impl LlmExecuteOptions {
 
 #[derive(Debug, Serialize)]
 struct LlmExecuteRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tags: Option<HashMap<String, String>>,
     messages: Vec<Message>,
     #[serde(default)]
     tools: Vec<ExternalTool>,
@@ -2763,10 +2775,33 @@ impl Distri {
     // ========== Traces API ==========
 
     pub async fn list_traces(&self, limit: Option<i64>) -> Result<Vec<TraceSummary>, ClientError> {
-        let mut url = format!("{}/traces", self.base_url);
+        self.list_traces_filtered(limit, None, None).await
+    }
+
+    /// List recent traces, optionally filtered by agent id and/or tags.
+    ///
+    /// `tags` uses the compact wire form `key:value,key2:value2`.
+    pub async fn list_traces_filtered(
+        &self,
+        limit: Option<i64>,
+        agent_id: Option<&str>,
+        tags: Option<&str>,
+    ) -> Result<Vec<TraceSummary>, ClientError> {
+        let mut params: Vec<String> = vec![];
         if let Some(limit) = limit {
-            url = format!("{}?limit={}", url, limit);
+            params.push(format!("limit={}", limit));
         }
+        if let Some(agent) = agent_id.filter(|a| !a.is_empty()) {
+            params.push(format!("agent_id={}", urlencoding::encode(agent)));
+        }
+        if let Some(tags) = tags.filter(|t| !t.is_empty()) {
+            params.push(format!("tags={}", urlencoding::encode(tags)));
+        }
+        let url = if params.is_empty() {
+            format!("{}/traces", self.base_url)
+        } else {
+            format!("{}/traces?{}", self.base_url, params.join("&"))
+        };
         let resp = self.http.get(&url).send().await?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();

@@ -107,7 +107,10 @@ impl WorkflowTriggerRegistry for InMemoryWorkflowTriggerRegistry {
         workspace_id: Option<&str>,
         def: &WorkflowDefinition,
     ) -> anyhow::Result<()> {
-        let mut guard = self.bindings.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut guard = self
+            .bindings
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         guard.insert(
             agent_id.to_string(),
             Self::collect_bindings(agent_id, workspace_id, def),
@@ -116,13 +119,19 @@ impl WorkflowTriggerRegistry for InMemoryWorkflowTriggerRegistry {
     }
 
     async fn unregister(&self, agent_id: &str) -> anyhow::Result<()> {
-        let mut guard = self.bindings.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut guard = self
+            .bindings
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         guard.remove(agent_id);
         Ok(())
     }
 
     async fn find_webhook(&self, path: &str) -> anyhow::Result<Option<TriggerBinding>> {
-        let guard = self.bindings.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let guard = self
+            .bindings
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         for entries in guard.values() {
             for binding in entries {
                 if let WorkflowTrigger::Webhook { path: p, .. } = &binding.trigger {
@@ -136,7 +145,10 @@ impl WorkflowTriggerRegistry for InMemoryWorkflowTriggerRegistry {
     }
 
     async fn find_tool(&self, tool_name: &str) -> anyhow::Result<Option<TriggerBinding>> {
-        let guard = self.bindings.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let guard = self
+            .bindings
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         for entries in guard.values() {
             for binding in entries {
                 if let WorkflowTrigger::Tool { name, .. } = &binding.trigger {
@@ -150,7 +162,10 @@ impl WorkflowTriggerRegistry for InMemoryWorkflowTriggerRegistry {
     }
 
     async fn find_event(&self, topic: &str) -> anyhow::Result<Vec<TriggerBinding>> {
-        let guard = self.bindings.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let guard = self
+            .bindings
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let mut out = Vec::new();
         for entries in guard.values() {
             for binding in entries {
@@ -165,7 +180,10 @@ impl WorkflowTriggerRegistry for InMemoryWorkflowTriggerRegistry {
     }
 
     async fn list_schedules(&self) -> anyhow::Result<Vec<TriggerBinding>> {
-        let guard = self.bindings.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let guard = self
+            .bindings
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let mut out = Vec::new();
         for entries in guard.values() {
             for binding in entries {
@@ -185,8 +203,8 @@ mod tests {
     use distri_types::workflow_triggers::WebhookAuth;
 
     fn def_with(triggers: Vec<WorkflowTrigger>) -> WorkflowDefinition {
-        WorkflowDefinition::new(vec![WorkflowStep::checkpoint("s", "S", "ok")])
-            .with_entry_points(vec![EntryPoint {
+        WorkflowDefinition::new(vec![WorkflowStep::checkpoint("s", "S", "ok")]).with_entry_points(
+            vec![EntryPoint {
                 id: "main".into(),
                 label: "Main".into(),
                 description: None,
@@ -194,7 +212,8 @@ mod tests {
                 preset_results: Default::default(),
                 required_inputs: vec![],
                 triggers,
-            }])
+            }],
+        )
     }
 
     #[tokio::test]

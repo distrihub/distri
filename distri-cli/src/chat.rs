@@ -404,7 +404,7 @@ pub async fn handle_slash_command(
             if let Some(trace_id) = arg {
                 crate::traces::print_trace_detail(&client, trace_id, None, false).await;
             } else {
-                crate::traces::print_trace_list(&client, 20).await;
+                crate::traces::print_trace_list(&client, 20, None, None).await;
             }
             Ok(SlashCommandResult::Continue)
         }

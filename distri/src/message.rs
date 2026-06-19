@@ -57,6 +57,8 @@ pub fn build_message_params(
         false,
         connections_context,
         None,
+        None,
+        None,
     )
 }
 
@@ -68,6 +70,8 @@ pub fn build_message_params_full(
     remote: bool,
     connections_context: Option<String>,
     env_vars: Option<HashMap<String, String>>,
+    tags: Option<HashMap<String, String>>,
+    trace_context: Option<distri_types::TraceContext>,
 ) -> MessageSendParams {
     let has_overrides = model.is_some() || remote;
     // With --remote, the agent will execute on the server (forked into a
@@ -108,6 +112,8 @@ pub fn build_message_params_full(
             None
         },
         env_vars,
+        tags,
+        trace_context,
         ..Default::default()
     };
 
@@ -171,6 +177,8 @@ mod tests {
             true, // remote
             None,
             None,
+            None,
+            None,
         );
         let metadata = parse_metadata(&params);
         assert_eq!(
@@ -198,6 +206,8 @@ mod tests {
             None,
             None,
             false, // local
+            None,
+            None,
             None,
             None,
         );

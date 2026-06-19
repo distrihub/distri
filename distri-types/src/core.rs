@@ -854,6 +854,20 @@ impl FileType {
     }
 }
 
+/// Inbound distributed-trace context, propagated by callers so an agent run
+/// (and all of its descendant spans) nests under a remote parent trace.
+///
+/// Both fields are W3C trace-context hex strings:
+/// - `trace_id`: 32 lowercase hex chars
+/// - `parent_span_id`: 16 lowercase hex chars
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TraceContext {
+    /// W3C trace-id: 32 lowercase hex chars.
+    pub trace_id: String,
+    /// W3C span-id of the remote parent: 16 lowercase hex chars.
+    pub parent_span_id: String,
+}
+
 /// Additional attributes for thread/task metadata.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AdditionalAttributes {
@@ -914,4 +928,14 @@ pub struct ExecutorContextMetadata {
     /// prompts can detect sandbox-context execution.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_sandbox: bool,
+
+    /// Arbitrary caller-supplied tags. Recorded on the agent span (as a JSON
+    /// object under `distri.tags`) and merged into the thread's attributes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<std::collections::HashMap<String, String>>,
+
+    /// Inbound distributed-trace context. When present, the agent's root span
+    /// and all descendants inherit this trace_id / parent_span_id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_context: Option<TraceContext>,
 }

@@ -132,8 +132,7 @@ impl WorkflowDefinition {
         use distri_types::WorkflowTrigger;
         use std::collections::HashSet;
 
-        let step_ids: HashSet<&str> =
-            self.steps.iter().map(|s| s.id.as_str()).collect();
+        let step_ids: HashSet<&str> = self.steps.iter().map(|s| s.id.as_str()).collect();
         let mut slash_names: HashSet<String> = HashSet::new();
         let mut callback_ids: HashSet<String> = HashSet::new();
         let mut message_count = 0usize;
@@ -280,7 +279,6 @@ impl WorkflowDefinition {
         Ok(())
     }
 }
-
 
 // ============================================================================
 // Workflow Run (execution state)
@@ -990,8 +988,7 @@ pub enum StepKind {
         buttons_from: Option<String>,
         /// Template applied per `buttons_from` element.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        button_template:
-            Option<distri_types::channel_commands::ReplyButtonSpec>,
+        button_template: Option<distri_types::channel_commands::ReplyButtonSpec>,
     },
 }
 

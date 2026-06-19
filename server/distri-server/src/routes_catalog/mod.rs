@@ -28,7 +28,11 @@ mod tests {
     #[test]
     fn catalog_is_non_empty_and_well_formed() {
         let routes = distri_server_routes();
-        assert!(routes.len() > 20, "expected >20 routes, got {}", routes.len());
+        assert!(
+            routes.len() > 20,
+            "expected >20 routes, got {}",
+            routes.len()
+        );
         for (path, methods) in routes {
             assert!(path.starts_with('/'), "path must start with /: {}", path);
             assert!(!methods.is_empty(), "no methods for {}", path);

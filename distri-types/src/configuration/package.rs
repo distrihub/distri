@@ -114,6 +114,18 @@ impl AgentConfig {
         }
     }
 
+    /// Resolved agent version. Standard agents fall back to
+    /// `default_agent_version()`; workflow agents carry a required version.
+    pub fn version(&self) -> Option<String> {
+        match self {
+            AgentConfig::StandardAgent(def) => def
+                .version
+                .clone()
+                .or_else(crate::agent::default_agent_version),
+            AgentConfig::WorkflowAgent(def) => Some(def.version.clone()),
+        }
+    }
+
     /// Get the description of the agent
     pub fn get_description(&self) -> &str {
         match self {

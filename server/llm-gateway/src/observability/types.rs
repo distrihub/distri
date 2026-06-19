@@ -101,11 +101,26 @@ pub struct GenAiAgentSpan {
     pub distri_channel_id: Option<String>,
     /// Optional input message text — recorded as input.value on the span.
     pub input_value: Option<String>,
+    /// Resolved agent version (provenance) — recorded as `distri.agent.version`.
+    pub agent_version: Option<String>,
+    /// Caller-supplied tags serialized to a JSON object string — recorded as
+    /// `distri.tags`.
+    pub tags_json: Option<String>,
+    /// Inbound remote trace-id (W3C hex) — recorded as `distri.parent_trace_id`.
+    pub parent_trace_id: Option<String>,
+    /// Inbound remote parent span-id (W3C hex) — recorded as
+    /// `distri.parent_span_id`.
+    pub parent_span_id: Option<String>,
+    /// Explicit span display name; when None, falls back to `execute {agent}`.
+    pub span_name_override: Option<String>,
 }
 
 impl GenAiAgentSpan {
     pub fn span_name(&self) -> String {
-        format!("execute {}", self.agent_name)
+        self.span_name_override
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("execute {}", self.agent_name))
     }
 }
 

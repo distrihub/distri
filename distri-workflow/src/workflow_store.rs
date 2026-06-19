@@ -162,11 +162,7 @@ pub trait WorkflowStore: Send + Sync {
     // ── step-level ─────────────────────────────────────────────────
 
     /// Insert or update one step's state under a run.
-    async fn upsert_step(
-        &self,
-        run_task_id: &str,
-        step: WorkflowStepState,
-    ) -> anyhow::Result<()>;
+    async fn upsert_step(&self, run_task_id: &str, step: WorkflowStepState) -> anyhow::Result<()>;
 
     /// Load one step's state.
     async fn get_step(
@@ -199,13 +195,19 @@ impl InMemoryWorkflowStore {
 #[async_trait::async_trait]
 impl WorkflowStore for InMemoryWorkflowStore {
     async fn create_run(&self, state: WorkflowExecutionState) -> anyhow::Result<()> {
-        let mut runs = self.runs.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut runs = self
+            .runs
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         runs.insert(state.run_task_id.clone(), state);
         Ok(())
     }
 
     async fn get_run(&self, run_task_id: &str) -> anyhow::Result<Option<WorkflowExecutionState>> {
-        let runs = self.runs.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let runs = self
+            .runs
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(runs.get(run_task_id).cloned())
     }
 
@@ -214,7 +216,10 @@ impl WorkflowStore for InMemoryWorkflowStore {
         run_task_id: &str,
         context: serde_json::Value,
     ) -> anyhow::Result<()> {
-        let mut runs = self.runs.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut runs = self
+            .runs
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let row = runs
             .get_mut(run_task_id)
             .ok_or_else(|| anyhow::anyhow!("workflow run not found: {run_task_id}"))?;
@@ -224,19 +229,24 @@ impl WorkflowStore for InMemoryWorkflowStore {
     }
 
     async fn delete_run(&self, run_task_id: &str) -> anyhow::Result<()> {
-        let mut runs = self.runs.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let mut steps = self.steps.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut runs = self
+            .runs
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut steps = self
+            .steps
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         runs.remove(run_task_id);
         steps.remove(run_task_id);
         Ok(())
     }
 
-    async fn upsert_step(
-        &self,
-        run_task_id: &str,
-        step: WorkflowStepState,
-    ) -> anyhow::Result<()> {
-        let mut steps = self.steps.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    async fn upsert_step(&self, run_task_id: &str, step: WorkflowStepState) -> anyhow::Result<()> {
+        let mut steps = self
+            .steps
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let bucket = steps.entry(run_task_id.to_string()).or_default();
         if let Some(existing) = bucket.iter_mut().find(|s| s.step_id == step.step_id) {
             *existing = step;
@@ -251,14 +261,20 @@ impl WorkflowStore for InMemoryWorkflowStore {
         run_task_id: &str,
         step_id: &str,
     ) -> anyhow::Result<Option<WorkflowStepState>> {
-        let steps = self.steps.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let steps = self
+            .steps
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(steps
             .get(run_task_id)
             .and_then(|bucket| bucket.iter().find(|s| s.step_id == step_id).cloned()))
     }
 
     async fn list_steps(&self, run_task_id: &str) -> anyhow::Result<Vec<WorkflowStepState>> {
-        let steps = self.steps.lock().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let steps = self
+            .steps
+            .lock()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(steps.get(run_task_id).cloned().unwrap_or_default())
     }
 }
@@ -275,9 +291,15 @@ mod tests {
     #[tokio::test]
     async fn create_get_roundtrip() {
         let store = InMemoryWorkflowStore::new();
-        let state = WorkflowExecutionState::new("run-1", "agent-1", "thread-test", "user-test", sample_def())
-            .with_entry_point(Some("main".into()))
-            .with_input(serde_json::json!({"x": 1}));
+        let state = WorkflowExecutionState::new(
+            "run-1",
+            "agent-1",
+            "thread-test",
+            "user-test",
+            sample_def(),
+        )
+        .with_entry_point(Some("main".into()))
+        .with_input(serde_json::json!({"x": 1}));
         store.create_run(state).await.unwrap();
         let got = store.get_run("run-1").await.unwrap().unwrap();
         assert_eq!(got.agent_id, "agent-1");
@@ -290,8 +312,14 @@ mod tests {
         let store = InMemoryWorkflowStore::new();
         store
             .create_run(
-                WorkflowExecutionState::new("run-1", "agent-1", "thread-test", "user-test", sample_def())
-                    .with_input(serde_json::json!({"x": 1})),
+                WorkflowExecutionState::new(
+                    "run-1",
+                    "agent-1",
+                    "thread-test",
+                    "user-test",
+                    sample_def(),
+                )
+                .with_input(serde_json::json!({"x": 1})),
             )
             .await
             .unwrap();
@@ -358,7 +386,10 @@ mod tests {
             .unwrap();
         let r1 = store.list_steps("run-1").await.unwrap();
         let r2 = store.list_steps("run-2").await.unwrap();
-        assert_eq!(r1.iter().map(|s| s.step_id.as_str()).collect::<Vec<_>>(), vec!["a", "b", "c"]);
+        assert_eq!(
+            r1.iter().map(|s| s.step_id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b", "c"]
+        );
         assert_eq!(r2.len(), 1);
     }
 
@@ -366,7 +397,13 @@ mod tests {
     async fn delete_run_cascades_to_steps() {
         let store = InMemoryWorkflowStore::new();
         store
-            .create_run(WorkflowExecutionState::new("run-1", "agent-1", "thread-test", "user-test", sample_def()))
+            .create_run(WorkflowExecutionState::new(
+                "run-1",
+                "agent-1",
+                "thread-test",
+                "user-test",
+                sample_def(),
+            ))
             .await
             .unwrap();
         store

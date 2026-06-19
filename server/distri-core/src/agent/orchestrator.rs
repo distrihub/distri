@@ -1363,15 +1363,28 @@ impl AgentOrchestrator {
         // Use context stores if provided, otherwise use orchestrator stores
         let stores = context.stores.as_ref().unwrap_or(&self.stores);
 
+        // Base thread attributes from additional_attributes, then merge in
+        // the run's tags under a "tags" key (object {k:v}) without clobbering
+        // any existing attributes.
+        let thread_attributes = {
+            let base = context.additional_attributes.clone().and_then(|a| a.thread);
+            if context.tags.is_empty() {
+                base
+            } else {
+                let mut obj = match base {
+                    Some(serde_json::Value::Object(m)) => m,
+                    _ => serde_json::Map::new(),
+                };
+                obj.insert("tags".to_string(), serde_json::json!(context.tags.clone()));
+                Some(serde_json::Value::Object(obj))
+            }
+        };
+
         self.ensure_thread_exists_with_store(
             &agent_name,
             Some(context.thread_id.clone()),
             message.as_text().as_deref(),
-            context
-                .additional_attributes
-                .clone()
-                .map(|a| a.thread)
-                .flatten(),
+            thread_attributes,
             context.channel_id.clone(),
             &stores.thread_store,
         )

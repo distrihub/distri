@@ -61,6 +61,12 @@ pub struct RunOptions {
     /// about workspace connections — shipping them back up the wire is
     /// pointless.
     pub skip_connections_context: bool,
+    /// Arbitrary tags forwarded to the server in `ExecutorContextMetadata.tags`.
+    /// Recorded on the agent span and merged into the thread's attributes.
+    pub tags: Option<HashMap<String, String>>,
+    /// Inbound distributed-trace context forwarded in
+    /// `ExecutorContextMetadata.trace_context` for remote-parent propagation.
+    pub trace_context: Option<distri_types::TraceContext>,
 }
 
 /// Resolve the agent name for a run, defaulting to [`DEFAULT_RUN_AGENT`].
@@ -102,6 +108,8 @@ pub async fn build_run_params(platform_client: &Distri, opts: &RunOptions) -> Me
         opts.remote,
         connections_context,
         opts.env_vars.clone(),
+        opts.tags.clone(),
+        opts.trace_context.clone(),
     )
 }
 

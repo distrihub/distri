@@ -1,6 +1,6 @@
 [package]
 name = "distri-core"
-version = "0.4.0"
+version = "0.4.2"
 edition = "2021"
 
 [features]
@@ -18,18 +18,18 @@ otel = [
 ] # kept for backward compatibility; OTEL is now initialized in binary crates
 
 [dependencies]
-distri-a2a = { path = "../../distri-a2a", version = "0.4.0" }
-distri-parsers = { path = "../distri-parsers", version = "0.4.0" }
-distri = { path = "../../distri", version = "0.4.0" }
+distri-a2a = { path = "../../distri-a2a", version = "0.4.2" }
+distri-parsers = { path = "../distri-parsers", version = "0.4.2" }
+distri = { path = "../../distri", version = "0.4.2" }
 browsr-client = { workspace = true }
 browsr-types = { workspace = true }
-distri-types = { path = "../../distri-types", version = "0.4.0" }
-distri-stores = { path = "../distri-stores", version = "0.4.0", default-features = false }
-distri-filesystem = { path = "../distri-filesystem", version = "0.4.0" }
-distri-auth = { path = "../distri-auth", version = "0.4.0" }
-distri-workflow = { path = "../../distri-workflow", version = "0.4.0" }
-distri-formatter = { path = "../../distri-formatter", version = "0.4.0" }
-llm-gateway = { path = "../llm-gateway", version = "0.4.0" }
+distri-types = { path = "../../distri-types", version = "0.4.2" }
+distri-stores = { path = "../distri-stores", version = "0.4.2", default-features = false }
+distri-filesystem = { path = "../distri-filesystem", version = "0.4.2" }
+distri-auth = { path = "../distri-auth", version = "0.4.2" }
+distri-workflow = { path = "../../distri-workflow", version = "0.4.2" }
+distri-formatter = { path = "../../distri-formatter", version = "0.4.2" }
+llm-gateway = { path = "../llm-gateway", version = "0.4.2" }
 
 async-trait = { workspace = true }
 serde = { workspace = true }
@@ -70,7 +70,13 @@ futures-channel = "0.3"
 bytes = "1.0"
 
 
-opentelemetry = { version = "0.28.0", optional = true }
+# opentelemetry is non-optional: remote-parent trace propagation in
+# agent/hooks/otel.rs needs SpanContext/TraceId/SpanId unconditionally.
+opentelemetry = { version = "0.28.0" }
+# tracing-opentelemetry 0.29 pairs with opentelemetry 0.28. Provides
+# OpenTelemetrySpanExt::set_parent (no-op when no otel layer is installed).
+tracing-opentelemetry = { version = "0.29" }
+sha2 = "0.10"
 opentelemetry_sdk = { version = "0.28.0", optional = true }
 opentelemetry-otlp = { version = "0.28.0", features = [
   "grpc-tonic",
