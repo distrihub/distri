@@ -801,6 +801,9 @@ struct LLmRequest {
     /// Optional title for the thread (auto-generated if not provided)
     #[serde(default)]
     title: Option<String>,
+    /// Optional searchable tags recorded on the agent span as `distri.tags`
+    #[serde(default)]
+    tags: Option<HashMap<String, String>>,
 }
 
 fn default_load_history() -> bool {
@@ -1033,6 +1036,7 @@ async fn llm_execute(
             title,
             payload.external_id.clone(),
             payload.is_sub_task,
+            payload.tags.clone(),
         )
         .await;
 

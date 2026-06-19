@@ -854,6 +854,7 @@ impl Distri {
     ) -> Result<LlmExecuteResponse, ClientError> {
         let payload = LlmExecuteRequest {
             title: options.context.label,
+            tags: options.tags,
             messages: options.context.messages,
             tools: options.tools,
             thread_id: options.context.thread_id,
@@ -1490,6 +1491,7 @@ pub struct LlmExecuteOptions {
     pub is_sub_task: bool,
     pub agent_id: Option<String>,
     pub load_history: bool,
+    pub tags: Option<HashMap<String, String>>,
 }
 
 impl LlmExecuteOptions {
@@ -1516,6 +1518,11 @@ impl LlmExecuteOptions {
         self
     }
 
+    pub fn with_tags(mut self, tags: HashMap<String, String>) -> Self {
+        self.tags = Some(tags);
+        self
+    }
+
     pub fn with_agent_id(mut self, agent_id: String) -> Self {
         self.agent_id = Some(agent_id);
         self
@@ -1536,6 +1543,8 @@ impl LlmExecuteOptions {
 struct LlmExecuteRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tags: Option<HashMap<String, String>>,
     messages: Vec<Message>,
     #[serde(default)]
     tools: Vec<ExternalTool>,

@@ -35,6 +35,7 @@ impl LlmExecuteService {
         title: Option<String>,
         external_id: Option<String>,
         is_sub_task: bool,
+        tags: Option<HashMap<String, String>>,
     ) -> Result<LLMExecuteResult, AgentError> {
         // Generate or use provided thread_id
         let thread_id = thread_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -54,6 +55,8 @@ impl LlmExecuteService {
         context.tenant_context = tenant_context.clone();
         // Use the thread title (when provided) as the agent span's display name.
         context.span_name = title.clone();
+        // Searchable tags recorded on the agent span as `distri.tags` by OtelHooks.
+        context.tags = tags.unwrap_or_default();
 
         if let Some(run_id) = run_id {
             context.run_id = run_id;
