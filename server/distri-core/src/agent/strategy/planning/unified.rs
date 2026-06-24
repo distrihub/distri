@@ -115,6 +115,26 @@ const MAX_RETRIES: usize = 2;
 
 #[async_trait::async_trait]
 impl PlanningStrategy for UnifiedPlanner {
+    async fn build_summary_executor(
+        &self,
+        context: Arc<ExecutorContext>,
+    ) -> Option<std::sync::Arc<dyn crate::llm::LLMExecutorTrait>> {
+        // Reuse the agent's planning model for summarization but ship no
+        // tools — the summarizer never calls them, and dragging the full
+        // tool catalog into the summary prompt would defeat the purpose.
+        let model_settings = self.agent_def.model_settings().cloned()?;
+        let mut plan_config = crate::types::PlanConfig::default();
+        plan_config.model_settings = Some(model_settings);
+        let llm_def = crate::agent::strategy::planning::get_planning_definition(
+            context.agent_id.clone(),
+            plan_config.model_settings.clone(),
+            crate::types::ToolCallFormat::default(),
+        );
+        crate::llm::create_llm_executor(llm_def, Vec::new(), context, None, None)
+            .ok()
+            .map(std::sync::Arc::from)
+    }
+
     async fn plan(
         &self,
         message: &crate::types::Message,

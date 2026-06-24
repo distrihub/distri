@@ -679,6 +679,17 @@ pub trait ScratchpadStore: Send + Sync + std::fmt::Debug {
         thread_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<ScratchpadEntry>, crate::AgentError>;
+
+    /// Replace every entry for `(thread_id, task_id)` with `new_entries`.
+    /// Used by compaction to atomically commit a trimmed scratchpad — adding
+    /// + clearing in two steps risks readers seeing an empty list between
+    /// calls. Implementations should treat this as one transaction.
+    async fn replace_entries(
+        &self,
+        thread_id: &str,
+        task_id: &str,
+        new_entries: Vec<ScratchpadEntry>,
+    ) -> Result<(), crate::AgentError>;
 }
 
 /// Web crawl result data

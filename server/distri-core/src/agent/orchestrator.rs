@@ -1784,6 +1784,62 @@ impl AgentOrchestrator {
         task_store.update_task_status(task_id, status).await
     }
 
+    /// Run compaction unconditionally for a given task. Used by the manual
+    /// `/compact` endpoint and CLI slash command.
+    ///
+    /// Builds a minimal `ExecutorContext` (no event sink, no LLM executor)
+    /// pointing at the task + thread, then calls `force_compaction`. The
+    /// mechanical (Tier 1/Tier 3) compaction path runs entirely on stores —
+    /// no LLM is needed. Tier 2 (semantic) summarization is deferred to a
+    /// future patch that wires an `LLMExecutor` into this path.
+    pub async fn compact_task(
+        &self,
+        task_id: &str,
+    ) -> anyhow::Result<Option<crate::agent::context_size_manager::CompactionResult>> {
+        let task_store = self.stores.task_store.clone();
+        let task = task_store
+            .get_task(task_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Task not found: {task_id}"))?;
+
+        // Relay events emitted by `force_compaction` straight to the
+        // broadcaster so any SSE subscriber on this task sees them in
+        // real time — otherwise the manual `/compact` endpoint would
+        // succeed silently and the chat UI would stay stale until the
+        // next agent turn.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<distri_types::AgentEvent>(64);
+        let broadcaster = self.runtime.broadcaster_arc();
+        let relay_task_id = task.id.clone();
+        let relay = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if let Err(e) = broadcaster.publish(&relay_task_id, event).await {
+                    tracing::warn!("compact_task broadcaster publish failed: {e}");
+                }
+            }
+        });
+
+        let ctx = ExecutorContext {
+            task_id: task.id.clone(),
+            thread_id: task.thread_id.clone(),
+            parent_task_id: task.parent_task_id.clone(),
+            orchestrator: Some(Arc::new(self.clone())),
+            stores: Some(self.stores.clone()),
+            event_tx: Some(Arc::new(tx)),
+            ..Default::default()
+        };
+
+        let result = ctx
+            .force_compaction()
+            .await
+            .map_err(|e| anyhow::anyhow!("compaction failed: {e}"))?;
+
+        // Drop the context's sender so the relay loop exits, then wait for it.
+        drop(ctx);
+        let _ = relay.await;
+
+        Ok(result)
+    }
+
     /// Get all available tools (MCP tools + plugin tools) - standardized method for tool discovery
     /// Uses the existing resolve_tools_config with a "get all tools" configuration
     /// Returns tools with both simple names and package.tool_name format for namespace support

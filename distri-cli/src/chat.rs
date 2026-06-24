@@ -227,6 +227,7 @@ pub async fn handle_slash_command(
     current_agent: &mut String,
     current_model: &mut Option<String>,
     shared_health: &Arc<RwLock<distri::ContextHealth>>,
+    thread_id: &str,
 ) -> Result<SlashCommandResult> {
     let mut parts = input.splitn(2, ' ');
     let command = parts.next().unwrap_or("");
@@ -244,6 +245,41 @@ pub async fn handle_slash_command(
         }
         "/exit" | "/quit" => Ok(SlashCommandResult::Exit),
         "/clear" => Ok(SlashCommandResult::ClearContext),
+        "/compact" => {
+            let client = Distri::from_config(config.clone());
+            // Find the most recent task on this thread to compact. The
+            // server sorts by `updated_at` desc, so limit=1 is enough.
+            match client.list_tasks(Some(thread_id), Some(1), None).await {
+                Ok(tasks) if !tasks.is_empty() => {
+                    let task_id = tasks[0].id.clone();
+                    match client.compact_task(&task_id).await {
+                        Ok(resp) if resp.compacted => {
+                            let before = resp.tokens_before.unwrap_or(0);
+                            let after = resp.tokens_after.unwrap_or(0);
+                            let entries = resp.entries_affected.unwrap_or(0);
+                            let pct = resp.reduction_percent();
+                            println!(
+                                "{}─── compacted {entries} entries · {before} → {after} tokens ({pct:.0}% reduction) ───{}",
+                                COLOR_GRAY, COLOR_RESET
+                            );
+                        }
+                        Ok(resp) => {
+                            let reason = resp.reason.as_deref().unwrap_or("Nothing to compact");
+                            println!("{}{}{}", COLOR_GRAY, reason, COLOR_RESET);
+                        }
+                        Err(err) => eprintln!("Compact failed: {}", err),
+                    }
+                }
+                Ok(_) => println!("{}No task on this thread yet — send a message first.{}", COLOR_GRAY, COLOR_RESET),
+                Err(err) => eprintln!("Failed to list tasks: {}", err),
+            }
+            Ok(SlashCommandResult::Continue)
+        }
+        "/usage" => {
+            let health = shared_health.read().await;
+            health.print_context_breakdown();
+            Ok(SlashCommandResult::Continue)
+        }
         "/agent" | "/agents" => {
             if let Some(agent_name) = arg {
                 if app.fetch_agent(agent_name).await?.is_some() {
@@ -557,6 +593,7 @@ pub async fn run_interactive_chat(
                 &mut current_agent,
                 &mut current_model,
                 &shared_health,
+                &thread_id,
             )
             .await?
             {
