@@ -370,11 +370,32 @@ impl ExecutionStrategy for AgentExecutor {
         _current_index: usize,
         context: Arc<ExecutorContext>,
     ) -> bool {
-        context.get_final_result().await.is_none()
-            && matches!(
-                context.get_status().await,
-                Some(crate::types::TaskStatus::Running)
-            )
+        if context.get_final_result().await.is_some() {
+            return false;
+        }
+        if !matches!(
+            context.get_status().await,
+            Some(crate::types::TaskStatus::Running)
+        ) {
+            return false;
+        }
+        // A tool can declaratively END the agent's turn by returning
+        // `should_continue: false` in a `data` part of its result. This is how an
+        // interactive / human-in-the-loop "checkpoint" tool (e.g. a UI tool that
+        // asks the user a question and waits) stops the agent from chaining into
+        // the next tool: after the user's answer comes back, the turn ends here and
+        // the human's next message (or a "continue" action) starts a fresh turn.
+        let history = context.get_execution_history().await;
+        if let Some(last) = history.last() {
+            for part in &last.parts {
+                if let Part::Data(v) = part {
+                    if v.get("should_continue").and_then(|b| b.as_bool()) == Some(false) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 }
 
