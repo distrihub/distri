@@ -436,6 +436,23 @@ impl RuntimeMode {
     }
 }
 
+/// Per-agent auto-compaction configuration. Wired into the agent loop's
+/// pre-plan compaction trigger (see `context.evaluate_compaction()`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct CompactionConfig {
+    /// Fraction of context window at which auto-compact fires. 0.0–1.0.
+    /// None = use built-in `ContextSizeManager` thresholds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_threshold: Option<f32>,
+    /// Floor on entries kept untouched at the tail of the conversation
+    /// (so the model still sees the most recent turn verbatim). None = 4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_recent_entries: Option<usize>,
+    /// Compactor prompt variant id (for eval). None = default prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_version: Option<String>,
+}
+
 /// Agent definition - complete configuration for an agent
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct StandardDefinition {
@@ -563,6 +580,11 @@ pub struct StandardDefinition {
         skip_serializing_if = "is_true"
     )]
     pub compaction_enabled: bool,
+
+    /// Auto-compaction settings. None = use defaults (auto_threshold=0.75,
+    /// keep_recent_entries=4). See `CompactionConfig` for details.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<CompactionConfig>,
 
     /// Runtime constraint for this agent. Like Docker's `platforms` field:
     ///

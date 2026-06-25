@@ -71,6 +71,8 @@ fn compaction_event_carries_budget() {
             context_window_size: 200_000,
             ..Default::default()
         }),
+        source: "auto".to_string(),
+        duration_ms: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let decoded: AgentEventType = serde_json::from_str(&json).unwrap();
@@ -122,6 +124,11 @@ fn event_types_exhaustive_match() {
             summary: None,
             reinjected_skills: vec![],
             context_budget: None,
+            source: "auto".to_string(),
+            duration_ms: None,
+        },
+        AgentEventType::CompactionRequested {
+            source: "manual".to_string(),
         },
     ];
     assert!(events.len() >= 8);

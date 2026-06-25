@@ -60,6 +60,22 @@ pub trait PlanningStrategy: Send + Sync + std::fmt::Debug {
         false
     }
 
+    /// Build the LLM executor used by Tier 2 (semantic) compaction. Unlike
+    /// `build_planning_executor`, the summarizer doesn't need the
+    /// agent's tool set — just the agent's model. Returns `None` if the
+    /// strategy can't synthesize a plan config from its own state (e.g.
+    /// the default trait impl with no overrides).
+    ///
+    /// Strategies that already build a `PlanConfig` for planning override
+    /// this to call `create_llm_executor` with the same model settings
+    /// and an empty tool list.
+    async fn build_summary_executor(
+        &self,
+        _context: Arc<ExecutorContext>,
+    ) -> Option<Arc<dyn crate::llm::LLMExecutorTrait>> {
+        None
+    }
+
     async fn get_tool_descriptions(&self, context: &Arc<ExecutorContext>) -> String {
         use distri_parsers::get_tool_descriptions;
         get_tool_descriptions(

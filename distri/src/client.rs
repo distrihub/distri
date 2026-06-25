@@ -314,6 +314,57 @@ impl Distri {
     }
 
     /// Complete a tool for a specific agent via /agents/{agent}/complete-tool (A2A flow).
+    /// Manually compact the conversation history for a task. Calls the
+    /// server's `POST /v1/tasks/{task_id}/compact` endpoint. The server runs
+    /// the same compactor as the agent loop's auto-trigger, unconditionally.
+    pub async fn compact_task(
+        &self,
+        task_id: impl AsRef<str>,
+    ) -> Result<distri_types::CompactTaskResponse, ClientError> {
+        let url = format!("{}/tasks/{}/compact", self.base_url, task_id.as_ref());
+        let resp = self.http.post(&url).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "compact-task failed (status {status}): {body}"
+            )));
+        }
+        Ok(resp.json().await?)
+    }
+
+    /// List tasks, optionally filtered by `thread_id` and paginated.
+    /// Hits `GET /v1/tasks?thread_id=…&limit=…&offset=…`.
+    pub async fn list_tasks(
+        &self,
+        thread_id: Option<&str>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<distri_types::Task>, ClientError> {
+        let mut url = reqwest::Url::parse(&format!("{}/tasks", self.base_url))
+            .map_err(|e| ClientError::InvalidResponse(e.to_string()))?;
+        {
+            let mut q = url.query_pairs_mut();
+            if let Some(t) = thread_id {
+                q.append_pair("thread_id", t);
+            }
+            if let Some(l) = limit {
+                q.append_pair("limit", &l.to_string());
+            }
+            if let Some(o) = offset {
+                q.append_pair("offset", &o.to_string());
+            }
+        }
+        let resp = self.http.get(url).send().await?;
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "failed to list tasks: {text}"
+            )));
+        }
+        Ok(resp.json().await?)
+    }
+
     pub async fn complete_tool(
         &self,
         agent: impl AsRef<str>,

@@ -97,6 +97,7 @@ define_routes! {
     // ── Hooks / tasks / tools (run surface) ─────────────────────────────────
     EventHooks        => "/event/hooks" { POST: Execute },
     Tasks             => "/tasks" { GET: Execute },
+    TaskCompact       => "/tasks/{task_id}/compact" { POST: Execute },
     Tools             => "/tools" { GET: Execute },
 
     // ── Threads + messages (run surface) ────────────────────────────────────

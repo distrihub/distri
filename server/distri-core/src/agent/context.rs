@@ -189,6 +189,13 @@ pub struct ExecutorContext {
     /// it overrides the default `execute {agent}` span name. Child contexts may
     /// inherit the parent's value or default to None.
     pub span_name: Option<String>,
+
+    /// Lightweight LLM executor used by Tier 2 (semantic) compaction.
+    /// Populated by the agent loop before the first planning call; left
+    /// `None` on contexts built outside the loop (e.g. the manual
+    /// `compact_task` HTTP endpoint), in which case `run_compaction` falls
+    /// back to mechanical trim for Summarize-tier hits.
+    pub summary_executor: Arc<RwLock<Option<Arc<dyn crate::llm::LLMExecutorTrait>>>>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -265,6 +272,7 @@ impl Default for ExecutorContext {
             agent_version: None,
             trace_context: None,
             span_name: None,
+            summary_executor: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -1317,6 +1325,7 @@ impl ExecutorContext {
             agent_version: self.agent_version.clone(),
             trace_context: self.trace_context.clone(),
             span_name: self.span_name.clone(),
+            summary_executor: self.summary_executor.clone(),
         };
 
         (inner_context, inner_rx)
@@ -1511,6 +1520,24 @@ impl ExecutorContext {
     pub async fn evaluate_compaction(
         &self,
     ) -> Result<Option<crate::agent::context_size_manager::CompactionResult>, AgentError> {
+        self.run_compaction("auto", false).await
+    }
+
+    /// Run compaction unconditionally — used by the manual `/compact` endpoint.
+    /// Skips threshold checks and always runs at the highest tier appropriate
+    /// for the current scratchpad size (falling back to Tier 1 Trim when usage
+    /// is below the configured `summarize_threshold`).
+    pub async fn force_compaction(
+        &self,
+    ) -> Result<Option<crate::agent::context_size_manager::CompactionResult>, AgentError> {
+        self.run_compaction("manual", true).await
+    }
+
+    async fn run_compaction(
+        &self,
+        source: &str,
+        force: bool,
+    ) -> Result<Option<crate::agent::context_size_manager::CompactionResult>, AgentError> {
         let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
             "Orchestrator not initialized".to_string(),
         ))?;
@@ -1528,10 +1555,123 @@ impl ExecutorContext {
         let max_tokens = self.get_scratchpad_token_limit();
         let manager =
             crate::agent::context_size_manager::ContextSizeManager::with_max_tokens(max_tokens);
-        let result = manager.evaluate_and_compact(&entries);
+        let mut result = manager.evaluate_and_compact(&entries);
+
+        // Force path: if no tier was selected, escalate to Trim so something happens.
+        // Skip when trim would be a no-op (no entries to drop) — emitting a
+        // tier:Trim with `entries_affected: 0` would falsely advertise work.
+        if force && result.tier.is_none() {
+            let trimmed = manager.trim_scratchpad_entries(&entries);
+            if trimmed.len() < entries.len() {
+                let tokens_after = manager.estimate_scratchpad_tokens(&trimmed);
+                let entries_affected = entries.len() - trimmed.len();
+                result = crate::agent::context_size_manager::CompactionResult {
+                    tier: Some(distri_types::events::CompactionTier::Trim),
+                    tokens_before: result.tokens_before,
+                    tokens_after,
+                    entries_affected,
+                    entries: trimmed,
+                    usage_ratio: result.usage_ratio,
+                };
+            }
+        }
+
+        // Pre-compaction signal — fire for both auto and manual sources so
+        // observers can render an in-flight 'compacting…' UI consistently.
+        // Skipped when compaction won't actually run (no tier selected).
+        if result.tier.is_some() {
+            self.emit(AgentEventType::CompactionRequested {
+                source: source.to_string(),
+            })
+            .await;
+        }
 
         // If compaction was applied, re-inject skills and emit the event
         if let Some(ref tier) = result.tier {
+            let start = std::time::Instant::now();
+
+            // Tier 2 (Summarize): run the LLM summarizer when an executor is
+            // available, replacing dropped entries with a `Summary`
+            // scratchpad entry. Falls back to mechanical trim when no
+            // executor is wired (e.g. the manual `/compact` HTTP path).
+            let mut summary_text: Option<String> = None;
+            let mut final_entries = result.entries.clone();
+            if matches!(tier, distri_types::events::CompactionTier::Summarize) {
+                let executor_guard = self.summary_executor.read().await;
+                if let Some(executor) = executor_guard.clone() {
+                    drop(executor_guard);
+                    // The dropped entries are everything in `entries` not
+                    // carried over to `result.entries`. We summarize those
+                    // and re-prepend a `Summary` scratchpad entry to the
+                    // trimmed tail.
+                    let kept_ids: std::collections::HashSet<i64> =
+                        result.entries.iter().map(|e| e.timestamp).collect();
+                    let dropped: Vec<distri_types::ScratchpadEntry> = entries
+                        .iter()
+                        .filter(|e| !kept_ids.contains(&e.timestamp))
+                        .cloned()
+                        .collect();
+
+                    let cfg = crate::agent::context_size_manager::ContextSizeConfig::default();
+                    match crate::agent::compaction::perform_tier2_summarization(
+                        &dropped,
+                        executor.as_ref(),
+                        &cfg,
+                    )
+                    .await
+                    {
+                        Ok(summary) if !summary.summary_text.is_empty() => {
+                            // Prepend the summary as a Summary scratchpad entry
+                            // so build_native_history_messages renders the
+                            // `[Context summary — N earlier entries compacted]` line.
+                            let summary_entry = distri_types::ScratchpadEntry {
+                                timestamp: dropped
+                                    .first()
+                                    .map(|e| e.timestamp)
+                                    .unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+                                entry_type: distri_types::ScratchpadEntryType::Summary(
+                                    summary.clone(),
+                                ),
+                                task_id: self.task_id.clone(),
+                                parent_task_id: self.parent_task_id.clone(),
+                                entry_kind: Some("summary".to_string()),
+                            };
+                            summary_text = Some(summary.summary_text);
+                            final_entries.insert(0, summary_entry);
+                        }
+                        Ok(_) => {
+                            tracing::info!(
+                                "Tier 2 summarizer returned empty summary; using trimmed entries"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Tier 2 summarization failed ({}); falling back to mechanical trim",
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    tracing::debug!(
+                        "Tier 2 compaction triggered but no summary_executor wired; trimming only"
+                    );
+                }
+            }
+
+            // Persist the trimmed (and optionally summary-prepended) entries
+            // before re-injecting skills, so the next read sees the post-
+            // compact scratchpad rather than the original. Skill re-injection
+            // (which appends entries) happens on top of the trimmed list.
+            if let Err(e) = scratchpad_store
+                .replace_entries(&self.thread_id, &self.task_id, final_entries)
+                .await
+            {
+                tracing::warn!("Failed to persist compacted scratchpad: {e}");
+                // Bail out before emitting ContextCompaction — the event
+                // would falsely advertise a trim that didn't land.
+                return Err(e);
+            }
+
             // Re-inject tracked skill content after compaction
             let reinjected_skills = match self.reinject_skills().await {
                 Ok(ids) => {
@@ -1551,6 +1691,8 @@ impl ExecutorContext {
                 }
             };
 
+            let duration_ms = start.elapsed().as_millis() as u64;
+
             self.emit(AgentEventType::ContextCompaction {
                 tier: tier.clone(),
                 tokens_before: result.tokens_before,
@@ -1558,15 +1700,18 @@ impl ExecutorContext {
                 entries_affected: result.entries_affected,
                 context_limit: max_tokens,
                 usage_ratio: result.usage_ratio,
-                summary: None,
+                summary: summary_text,
                 reinjected_skills,
                 context_budget: Some(self.get_usage().await.context_budget.clone()),
+                source: source.to_string(),
+                duration_ms: Some(duration_ms),
             })
             .await;
 
             tracing::info!(
-                "Context compaction ({:?}): {} → {} tokens, {} entries affected, {:.0}% usage",
+                "Context compaction ({:?}, {}): {} → {} tokens, {} entries affected, {:.0}% usage",
                 tier,
+                source,
                 result.tokens_before,
                 result.tokens_after,
                 result.entries_affected,
