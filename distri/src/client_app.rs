@@ -216,6 +216,26 @@ impl DistriClientApp {
             .collect())
     }
 
+    /// List agents as lightweight A2A cards (the client/external surface).
+    ///
+    /// Hits `GET /agents/cards`, returning only discovery metadata (name,
+    /// description, version, icon, skills) for each agent — never the system
+    /// prompt, tools, or model config. Use [`list_agents`](Self::list_agents)
+    /// only when the full definitions are genuinely needed (e.g. an admin /
+    /// console view, or computing client-side tool availability).
+    pub async fn list_agent_cards(&self) -> Result<Vec<AgentCard>, ClientError> {
+        let url = format!("{}/agents/cards", self.base());
+        let resp = self.http.get(url).send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(ClientError::InvalidResponse(format!(
+                "list agent cards failed: {}",
+                status
+            )));
+        }
+        Ok(resp.json::<Vec<AgentCard>>().await?)
+    }
+
     pub async fn list_tools(&self) -> Result<Vec<ToolListItem>, ClientError> {
         let mut items = self.fetch_remote_tools().await?;
 
