@@ -164,6 +164,55 @@ impl AgentConfig {
             AgentConfig::WorkflowAgent(_def) => Ok(()), // Workflow validation happens at execution
         }
     }
+
+    /// Build the public A2A [`AgentCard`] for this agent.
+    ///
+    /// This is the **cheap, card-only** projection of an agent: it pulls just the
+    /// discovery metadata (name, description, version, icon, skills) and combines
+    /// it with the server's static A2A settings. It deliberately does **not**
+    /// touch the system prompt / instructions, tools, model settings, or any
+    /// other execution config — callers that only need the card (the public
+    /// `.well-known/agent.json` endpoint, agent listings, CLI agent pickers)
+    /// should go through here instead of loading + matching the full definition.
+    pub fn to_card(&self, server_config: &crate::configuration::ServerConfig) -> distri_a2a::AgentCard {
+        let (name, description, version, icon_url, skills) = match self {
+            AgentConfig::StandardAgent(def) => (
+                def.name.clone(),
+                def.description.clone(),
+                def.version.clone(),
+                def.icon_url.clone(),
+                def.skills_description.clone(),
+            ),
+            AgentConfig::WorkflowAgent(def) => (
+                def.name.clone(),
+                def.description.clone(),
+                Some(def.version.clone()),
+                None,
+                Vec::new(),
+            ),
+        };
+
+        let version = version
+            .or_else(crate::agent::default_agent_version)
+            .unwrap_or_else(|| distri_a2a::A2A_VERSION.to_string());
+
+        distri_a2a::AgentCard {
+            version,
+            url: format!("{}/agents/{}", server_config.base_url, name),
+            name,
+            description,
+            icon_url,
+            documentation_url: server_config.documentation_url.clone(),
+            provider: Some(server_config.agent_provider.clone()),
+            preferred_transport: server_config.preferred_transport.clone(),
+            capabilities: server_config.capabilities.clone(),
+            default_input_modes: server_config.default_input_modes.clone(),
+            default_output_modes: server_config.default_output_modes.clone(),
+            skills,
+            security_schemes: server_config.security_schemes.clone(),
+            security: server_config.security.clone(),
+        }
+    }
 }
 
 #[cfg(test)]

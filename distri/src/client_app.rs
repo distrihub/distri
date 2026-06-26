@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::future::Future;
 
 use anyhow::Result;
-use distri_a2a::MessageSendParams;
+use distri_a2a::{AgentCard, MessageSendParams};
 use distri_types::configuration::AgentConfigWithTools;
 use distri_types::{
     AgentEvent, ToolCall, ToolDefinition, ToolResponse, configuration::AgentConfig,
@@ -251,6 +251,33 @@ impl DistriClientApp {
             )));
         }
         Ok(Some(resp.json::<AgentConfigWithTools>().await?))
+    }
+
+    /// Fetch just the public A2A [`AgentCard`] for an agent.
+    ///
+    /// This is the cheap counterpart to [`fetch_agent`](Self::fetch_agent): it
+    /// hits the agent's `.well-known/agent.json` discovery document and returns
+    /// only the card metadata (name, description, version, skills, capabilities)
+    /// — no system prompt, tools, or model settings. Use this whenever you only
+    /// need to verify an agent exists or resolve its canonical name, rather than
+    /// loading the entire definition.
+    pub async fn fetch_agent_card(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<AgentCard>, ClientError> {
+        let url = format!("{}/agents/{}/.well-known/agent.json", self.base(), agent_id);
+        let resp = self.http.get(url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(ClientError::InvalidResponse(format!(
+                "failed to fetch agent card {}: {}",
+                agent_id,
+                resp.status()
+            )));
+        }
+        Ok(Some(resp.json::<AgentCard>().await?))
     }
 
     pub async fn stream_agent(

@@ -74,7 +74,7 @@ pub fn required_external_tools(agent: &AgentConfig) -> Vec<String> {
 }
 
 pub async fn print_available_tools(app: &mut DistriClientApp, agent: &str) -> Result<()> {
-    app.fetch_agent(agent).await?;
+    app.fetch_agent_card(agent).await?;
 
     let tools = app.list_tools().await?;
     if tools.is_empty() {
@@ -282,7 +282,7 @@ pub async fn handle_slash_command(
         }
         "/agent" | "/agents" => {
             if let Some(agent_name) = arg {
-                if app.fetch_agent(agent_name).await?.is_some() {
+                if app.fetch_agent_card(agent_name).await?.is_some() {
                     *current_agent = agent_name.to_string();
                     println!(
                         "{}Switched to agent:{} {}",
@@ -620,11 +620,12 @@ pub async fn run_interactive_chat(
             }
         }
 
-        // Resolve agent config (just to get the canonical name and verify it exists).
+        // Resolve the canonical name and verify the agent exists. Only the card
+        // is needed here — not the full definition — so use the cheap card fetch.
         // The registry is the single source of truth for which tools are
         // client-handled — no per-agent tool name set to maintain.
-        let stream_agent_id = match app.fetch_agent(&current_agent).await? {
-            Some(agent_cfg) => agent_cfg.agent.get_name().to_string(),
+        let stream_agent_id = match app.fetch_agent_card(&current_agent).await? {
+            Some(card) => card.name,
             None => {
                 eprintln!("Agent '{}' not found on {}", current_agent, base_url);
                 continue;

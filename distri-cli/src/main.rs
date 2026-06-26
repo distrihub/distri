@@ -746,8 +746,9 @@ async fn main() -> Result<()> {
             }
             let agent_name = resolve_agent_name(&run_opts);
 
-            // Verify the agent exists before registering anything.
-            if app.fetch_agent(&agent_name).await?.is_none() {
+            // Verify the agent exists before registering anything. Only existence
+            // matters here, so the cheap card fetch is enough.
+            if app.fetch_agent_card(&agent_name).await?.is_none() {
                 return Err(anyhow::anyhow!(
                     "Agent '{}' not found on {}",
                     agent_name,
@@ -879,7 +880,7 @@ async fn main() -> Result<()> {
         }) {
             ToolsCommands::List { filter, agent } => {
                 if let Some(agent_id) = agent {
-                    app.fetch_agent(&agent_id).await?;
+                    app.fetch_agent_card(&agent_id).await?;
                 }
                 let mut tools = app.list_tools().await?;
                 if let Some(term) = filter {
