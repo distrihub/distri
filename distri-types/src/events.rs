@@ -316,7 +316,9 @@ fn default_compaction_source() -> String {
 }
 
 /// Tier of context compaction applied
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, utoipa::ToSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, utoipa::ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CompactionTier {
     /// Mechanical: drop old entries, truncate payloads

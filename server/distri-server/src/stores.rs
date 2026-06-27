@@ -331,6 +331,8 @@ impl SpanStore for InMemorySpanStore {
                     name: root.name.clone(),
                     start_time_ns,
                     end_time_ns,
+                    // end_time_ns here is already MAX over the trace's spans.
+                    last_activity_ns: end_time_ns,
                     span_count,
                     thread_id: None,
                     input_tokens: 0,
@@ -346,8 +348,8 @@ impl SpanStore for InMemorySpanStore {
             })
             .collect();
 
-        // Sort by start_time_ns descending (most recent first)
-        records.sort_by(|a, b| b.start_time_ns.cmp(&a.start_time_ns));
+        // Sort by last activity descending (most recently active first)
+        records.sort_by(|a, b| b.last_activity_ns.cmp(&a.last_activity_ns));
         records.truncate(limit as usize);
 
         Ok(records)

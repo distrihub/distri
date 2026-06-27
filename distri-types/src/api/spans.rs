@@ -42,6 +42,9 @@ pub struct TraceRecord {
     pub name: String,
     pub start_time_ns: i64,
     pub end_time_ns: i64,
+    /// Latest span end across the whole trace (last activity). Used to order
+    /// the trace list by most-recently-active rather than thread start.
+    pub last_activity_ns: i64,
     pub span_count: i64,
     pub thread_id: Option<String>,
     pub input_tokens: i64,
@@ -81,6 +84,7 @@ mod tests {
             name: "root".into(),
             start_time_ns: 1,
             end_time_ns: 2,
+            last_activity_ns: 2,
             span_count: 3,
             thread_id: Some("th1".into()),
             input_tokens: 10,
