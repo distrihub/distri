@@ -25,6 +25,33 @@ impl UnifiedPlanner {
         }
     }
 
+    /// Group all tool calls from a single LLM response into ONE plan step.
+    ///
+    /// Previously each tool call became its own step, forcing one tool per
+    /// agent-loop iteration with an LLM round-trip between every call — the
+    /// model could request three things at once yet they ran strictly
+    /// one-by-one. Returning a single step containing the whole batch lets the
+    /// executor run them together (in parallel for concurrency-safe tools,
+    /// serialized when any tool mutates shared state). An empty batch yields no
+    /// steps.
+    fn group_tool_calls_into_steps(
+        tool_calls: Vec<crate::types::ToolCall>,
+        thought: String,
+    ) -> Vec<crate::types::PlanStep> {
+        if tool_calls.is_empty() {
+            return vec![];
+        }
+        vec![crate::types::PlanStep {
+            id: uuid::Uuid::new_v4().to_string(),
+            action: crate::types::Action::ToolCalls { tool_calls },
+            thought: if thought.is_empty() {
+                None
+            } else {
+                Some(thought)
+            },
+        }]
+    }
+
     /// Strip XML content between ``` markers from the given content
     fn strip_xml_from_content(content: &str) -> String {
         use regex::Regex;
@@ -268,22 +295,9 @@ impl PlanningStrategy for UnifiedPlanner {
                 let tool_calls = response.tool_calls;
 
                 let thought = Self::strip_xml_from_content(&response.content);
-                Ok(AgentPlan::new(
-                    tool_calls
-                        .into_iter()
-                        .map(|tool_call| crate::types::PlanStep {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            action: crate::types::Action::ToolCalls {
-                                tool_calls: vec![tool_call],
-                            },
-                            thought: if thought.is_empty() {
-                                None
-                            } else {
-                                Some(thought.clone())
-                            },
-                        })
-                        .collect(),
-                ))
+                Ok(AgentPlan::new(Self::group_tool_calls_into_steps(
+                    tool_calls, thought,
+                )))
             }
         }
     }
@@ -349,5 +363,59 @@ impl UnifiedPlanner {
         formatter
             .build_messages(message, context, template, user_template, todos)
             .await
+    }
+}
+
+#[cfg(test)]
+mod grouping_tests {
+    use super::*;
+    use crate::types::{Action, ToolCall};
+    use serde_json::json;
+
+    fn tc(id: &str, name: &str) -> ToolCall {
+        ToolCall {
+            tool_call_id: id.to_string(),
+            tool_name: name.to_string(),
+            input: json!({}),
+        }
+    }
+
+    #[test]
+    fn multiple_tool_calls_collapse_into_one_step() {
+        let calls = vec![tc("a", "search"), tc("b", "browsr_scrape"), tc("c", "search")];
+        let steps = UnifiedPlanner::group_tool_calls_into_steps(calls, "thinking".to_string());
+
+        // The whole batch must land in a SINGLE step — this is the fix for
+        // one-tool-per-iteration sequential execution.
+        assert_eq!(steps.len(), 1, "expected one grouped step, got {}", steps.len());
+        match &steps[0].action {
+            Action::ToolCalls { tool_calls } => {
+                assert_eq!(tool_calls.len(), 3, "all three calls must be grouped");
+                assert_eq!(tool_calls[0].tool_call_id, "a");
+                assert_eq!(tool_calls[1].tool_call_id, "b");
+                assert_eq!(tool_calls[2].tool_call_id, "c");
+            }
+            other => panic!("expected Action::ToolCalls, got {other:?}"),
+        }
+        assert_eq!(steps[0].thought.as_deref(), Some("thinking"));
+    }
+
+    #[test]
+    fn single_tool_call_is_one_step() {
+        let steps =
+            UnifiedPlanner::group_tool_calls_into_steps(vec![tc("only", "final")], String::new());
+        assert_eq!(steps.len(), 1);
+        match &steps[0].action {
+            Action::ToolCalls { tool_calls } => assert_eq!(tool_calls.len(), 1),
+            other => panic!("expected Action::ToolCalls, got {other:?}"),
+        }
+        // Empty thought must not produce a Some("").
+        assert_eq!(steps[0].thought, None);
+    }
+
+    #[test]
+    fn no_tool_calls_yields_no_steps() {
+        let steps = UnifiedPlanner::group_tool_calls_into_steps(vec![], "x".to_string());
+        assert!(steps.is_empty());
     }
 }

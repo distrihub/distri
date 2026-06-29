@@ -511,12 +511,31 @@ pub async fn execute_tool_calls_with_timeout(
     // Wrap in Arc<Mutex> so each spawned future can steal its own receiver.
     let pending_receivers = Arc::new(tokio::sync::Mutex::new(pending_receivers));
 
+    // Concurrency policy for this batch: if every tool is concurrency-safe we
+    // run them all in parallel; if any tool mutates shared state we serialize
+    // the whole batch (permits = 1) so writes can't race. Result mapping is by
+    // `tool_call_id`, so execution order never affects correctness — only
+    // safety. The semaphore keeps a single `join_all` code path either way.
+    let any_unsafe = tool_tuples.iter().any(|(tool, _)| !tool.concurrency_safe());
+    let max_parallel = if any_unsafe {
+        1
+    } else {
+        tool_tuples.len().max(1)
+    };
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(max_parallel));
+
     let results = futures::future::join_all(tool_tuples.iter().map(|tuple| {
         let context = context.clone();
         let step_id = step_id.clone();
         let external_tool_calls_store = external_tool_calls_store.clone();
         let pending_receivers = pending_receivers.clone();
+        let semaphore = semaphore.clone();
         async move {
+            // Hold a permit for the duration of this tool's execution. With
+            // `max_parallel == 1` (a batch containing a mutating tool) this
+            // serializes the batch; otherwise all permits are available and
+            // the batch runs fully in parallel.
+            let _permit = semaphore.acquire().await.ok();
             let (tool, tool_call) = tuple;
 
             // Dry-run mode: simulate external and unsafe tools via LLM
