@@ -18,7 +18,6 @@ use crate::a2a::stream::{
 use crate::a2a::{agent_error_to_jsonrpc, single_error_frame_stream, A2AError, SseMessage};
 use crate::agent::types::ExecutorContextMetadata;
 use crate::agent::{AgentEvent, AgentEventType, AgentOrchestrator, ExecutorContext};
-use crate::types::default_agent_version;
 use crate::AgentError;
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MessageSendParams, Task, TaskIdParams,
@@ -312,42 +311,11 @@ impl A2AService {
                 agent_id
             )))?;
 
-        // Extract agent info for A2A (support all agent types)
-        let (name, description, version, icon_url, skills) = match &agent_config {
-            distri_types::configuration::AgentConfig::StandardAgent(def) => (
-                def.name.clone(),
-                def.description.clone(),
-                def.version.clone(),
-                def.icon_url.clone(),
-                def.skills_description.clone(),
-            ),
-            distri_types::configuration::AgentConfig::WorkflowAgent(def) => (
-                def.name.clone(),
-                def.description.clone(),
-                Some(def.version.clone()),
-                None,
-                Vec::new(),
-            ),
-        };
-
+        // Card-only projection — see `AgentConfig::to_card`. The full definition
+        // is loaded here only because the store has no card-only read; the card
+        // itself never exposes the prompt or execution config.
         let server_config = server_config.unwrap_or_default();
-        let base_url = server_config.base_url.clone();
-        Ok(AgentCard {
-            version: version.unwrap_or_else(|| default_agent_version().unwrap()),
-            name: name.clone(),
-            description: description.clone(),
-            url: format!("{}/agents/{}", base_url, name),
-            icon_url,
-            documentation_url: server_config.documentation_url.clone(),
-            provider: Some(server_config.agent_provider.clone()),
-            preferred_transport: server_config.preferred_transport.clone(),
-            capabilities: server_config.capabilities.clone(),
-            default_input_modes: server_config.default_input_modes.clone(),
-            default_output_modes: server_config.default_output_modes.clone(),
-            skills,
-            security_schemes: server_config.security_schemes.clone(),
-            security: server_config.security.clone(),
-        })
+        Ok(agent_config.to_card(&server_config))
     }
 
     // ── prepare/run split ──────────────────────────────────────────────

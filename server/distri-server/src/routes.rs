@@ -3,6 +3,7 @@ use actix_web::{web, HttpMessage, HttpRequest, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
 use chrono::{DateTime, Utc};
 use dirs::home_dir;
+use distri_a2a::AgentCard;
 use distri_a2a::JsonRpcRequest;
 use distri_core::a2a::messages::get_a2a_messages;
 use distri_core::a2a::A2AHandler;
@@ -53,6 +54,7 @@ pub fn all(cfg: &mut web::ServiceConfig) {
 // https://github.com/google-a2a/A2A/blob/main/specification/json/a2a.json
 pub fn distri(cfg: &mut web::ServiceConfig) {
     cfg.service(web::resource(Route::AgentCard.path()).route(web::get().to(get_agent_card)))
+        .service(web::resource(Route::AgentCards.path()).route(web::get().to(list_agent_cards)))
         .service(
             web::resource(Route::Agents.path())
                 .route(web::get().to(list_agents))
@@ -242,6 +244,29 @@ async fn list_agents(
         .collect();
 
     HttpResponse::Ok().json(agents_with_stats)
+}
+
+/// Client/external agent list. Returns only the lightweight A2A [`AgentCard`]
+/// for each agent (name, description, version, icon, skills) — never the system
+/// prompt, tools, or model settings. The full-definition list (`GET /agents`)
+/// is the admin/console surface.
+async fn list_agent_cards(
+    executor: web::Data<Arc<AgentOrchestrator>>,
+    server_config: web::Data<ServerConfig>,
+) -> HttpResponse {
+    let (agents_with_metadata, _) = executor
+        .stores
+        .agent_store
+        .list_with_cloud_metadata(None, None)
+        .await;
+
+    let server_config = server_config.get_ref();
+    let cards: Vec<AgentCard> = agents_with_metadata
+        .into_iter()
+        .map(|(config, _cloud)| config.to_card(server_config))
+        .collect();
+
+    HttpResponse::Ok().json(cards)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema, JsonSchema)]

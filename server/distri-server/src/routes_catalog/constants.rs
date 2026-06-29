@@ -87,6 +87,10 @@ define_routes! {
     // ── Agents (the embed-critical surface: a2a dispatch + CRUD) ────────────
     /// Agent card — a2a discovery doc; intentionally public.
     AgentCard         => "/agents/{agent_name}/.well-known/agent.json" { GET: Public },
+    /// Lightweight agent-card list — the client/external surface. Returns only
+    /// discovery metadata (name, description, version, icon, skills), never the
+    /// system prompt / tools / model config that the full `/agents` list exposes.
+    AgentCards        => "/agents/cards" { GET: Read },
     Agents            => "/agents" { GET: Read, POST: Write },
     AgentValidate     => "/agents/{id:.*}/validate" { GET: Execute },
     AgentCompleteTool => "/agents/{id:.*}/complete-tool" { POST: Execute },
