@@ -88,20 +88,28 @@ the unsafe ones), and propagate `concurrency_safe` for **external** tools via
 `ExternalToolDefinition` so the frontend can flag mutating tools (e.g.
 `save_content`).
 
-### Phase 2 — Fork-as-subtask + metadata-driven skill auto-load
+### Phase 2 — Fork-as-subtask + metadata-driven skill auto-load (DONE)
 
-**Status: skill auto-load shipped end-to-end; fork dispatch remaining.**
-- DONE: `ExecutorContextMetadata.load_skills` (distri-types) →
-  `ExecutorContext::preload_skills` renders + injects inline skill bodies at
-  task start (3 integration tests) → distrijs `load_skills`/`fork` metadata +
-  `SendMessageOptions.metadata` per-send channel (vitest) → zippy activity
-  editor preloads `zippy_lesson` via metadata.
-- REMAINING: wire the orchestrator to build an `Invocation` from
-  `metadata.fork` and dispatch via `invoke.rs` (Detached/Single). The wire
-  contract (`fork` field) and the dispatch primitives already exist; this needs
-  cloud-server integration testing. Note: a skill whose `context = Fork`
-  already spawns an isolated child when loaded, so metadata-`load_skills` of a
-  fork-type skill is the lighter-weight route to the same outcome.
+**Status: shipped end-to-end.**
+- `ExecutorContextMetadata.load_skills` (distri-types) →
+  `ExecutorContext::preload_skills` at task start. Inline skills render + inject
+  their body up-front (no `load_skill` round-trip). **Fork-type skills now
+  dispatch as an isolated child task** via the shared `ExecutorContext::fork_skill`
+  — the exact dispatch proven by `LoadSkillTool` (same thread, fresh
+  task_id/run_id, `parent_task_id` = current, skill body as the child's
+  instructions) — and the child's *gist* is folded into the parent context. This
+  is the metadata-driven fork-as-subtask: the frontend dictates a fork by naming
+  a fork-type skill in `metadata.load_skills`, with no LLM round-trip. `Box::pin`
+  breaks the preload→fork→execute_stream→preload async-recursion cycle.
+- distrijs: `load_skills`/`fork` metadata + `SendMessageOptions.metadata`
+  per-send channel (vitest). zippy activity editor preloads `zippy_lesson` via
+  metadata.
+- Tests: `preload_skills` (3) — inline injection, **fork spawns a child task
+  under the parent**, unknown/empty no-op.
+- Follow-up (richer path): an explicit `metadata.fork` `Invocation` directive
+  routed through `invoke.rs` (Detached/Single) for forks that target a different
+  agent / carry their own tool set. The wire field + dispatch primitives exist;
+  the fork-type-skill route above already covers the editor use case.
 
 Backend (`distri-core`):
 - Read a `fork` directive from message metadata (`ExecutorContextMetadata`):
@@ -128,22 +136,36 @@ zippy:
   first-class `fork` payload from the entity manifests (e.g. the activity editor
   forks a subtask with `skills: ['zippy_lesson']`).
 
-### Phase 3 — Early-stop on tool call
+### Phase 3 — Early-stop on tool call (DONE)
 
-- Add an explicit stop signal: a tool can mark its response terminal-for-turn
-  (extend `is_final`/a `stop_after_response` flag, or a metadata
-  `stop_after: [tool_names]`). `should_continue()` already supports the
-  `should_continue:false` data-part convention — route the new signal through
-  it so the loop returns control immediately after the result is emitted.
-- distrijs: surface the stop so the UI shows the result instantly and re-prompts
-  on the next user action.
+Uses the **existing** `should_continue:false` data-part mechanism — no new
+signal. A tool ends the agent's turn the moment its result is back by including
+a `Part::Data` with `{should_continue:false}`; `ExecutionStrategy::should_continue`
+(execution/default.rs) already scans the last result's parts for it and returns
+control immediately ("feels fast"). Distinct from `is_final` (the LLM-side
+terminal-tool flag like `final`/`reflect`).
 
-### Phase 4 — Child-task UI polish
+- distri: `early_stop.rs` (3 tests) locks in the stop path, the ordinary-continue
+  path, and that `should_continue:true` does not stop.
+- distrijs: a `stopAfterTurn` flag on the tool definition →
+  `createSuccessfulToolResult` appends the control part; wired through both
+  auto-complete paths (chatStateStore fn-tool + DefaultToolActions confirm).
+  Vitest `stop-after-turn.test.ts`.
+- zippy: `publish_content` (the terminal write) appends the control part **on
+  success only**, so the inline editor returns control the instant a lesson is
+  published; a failed publish keeps the turn open for a retry. Tested in
+  `content-tools-unified`.
 
-- Verify `SubTaskTree` renders in zippy's chat surface (it's wired in
-  `Chat.tsx`). Add status badge + descendant count + gist-on-collapse per the
-  framework norms. Vitest the store reducer (parent↔child linkage idempotency)
-  and the collapse/auto-expand behavior.
+### Phase 4 — Child-task UI polish (DONE)
+
+`SubTaskTree`/`SubTaskCard` render in `Chat.tsx`. Polished per framework norms:
+- **descendant count** ("N subtasks") in the collapsed header,
+- **gist-on-collapse** — the child's final assistant text previewed inline (the
+  "one gist out" contract), and
+- **auto-expand on failure** (not only while running) so errors surface.
+- Vitest: `SubTaskCard-helpers.test.ts` (descendant counting incl. cycles, gist
+  extraction) plus the existing `chatStateStore-task-tree.test.ts` (parent↔child
+  linkage idempotency, tree walk).
 
 ---
 
