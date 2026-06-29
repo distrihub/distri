@@ -90,6 +90,19 @@ the unsafe ones), and propagate `concurrency_safe` for **external** tools via
 
 ### Phase 2 — Fork-as-subtask + metadata-driven skill auto-load
 
+**Status: skill auto-load shipped end-to-end; fork dispatch remaining.**
+- DONE: `ExecutorContextMetadata.load_skills` (distri-types) →
+  `ExecutorContext::preload_skills` renders + injects inline skill bodies at
+  task start (3 integration tests) → distrijs `load_skills`/`fork` metadata +
+  `SendMessageOptions.metadata` per-send channel (vitest) → zippy activity
+  editor preloads `zippy_lesson` via metadata.
+- REMAINING: wire the orchestrator to build an `Invocation` from
+  `metadata.fork` and dispatch via `invoke.rs` (Detached/Single). The wire
+  contract (`fork` field) and the dispatch primitives already exist; this needs
+  cloud-server integration testing. Note: a skill whose `context = Fork`
+  already spawns an isolated child when loaded, so metadata-`load_skills` of a
+  fork-type skill is the lighter-weight route to the same outcome.
+
 Backend (`distri-core`):
 - Read a `fork` directive from message metadata (`ExecutorContextMetadata`):
   `{ fork: { join: 'detached'|'single', context: 'independent', skills: [...],
