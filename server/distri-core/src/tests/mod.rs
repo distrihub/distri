@@ -17,6 +17,7 @@ pub mod mock_llm;
 mod mock_tool;
 mod orchestrator;
 pub mod otel_hooks_test;
+mod preload_skills;
 mod remote_agent;
 mod request_tool;
 mod supervisor_tools;
