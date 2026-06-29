@@ -760,6 +760,18 @@ impl AgentOrchestrator {
                     }
                 }
 
+                // Eagerly load any skills the client requested via
+                // `metadata.load_skills`. Inline skills get injected up-front so
+                // the run skips the `load_skill` round-trip; fork-type skills are
+                // deferred to explicit dispatch. Best-effort: individual
+                // failures are logged inside `preload_skills`, not fatal.
+                if !context.load_skills.is_empty() {
+                    let to_load = context.load_skills.clone();
+                    if let Err(e) = context.preload_skills(&to_load).await {
+                        tracing::warn!("metadata.load_skills preload failed: {e}");
+                    }
+                }
+
                 // Resolve declared connections. Agents must declare connections
                 // in `definition.connections` to get any injection — we do NOT
                 // auto-discover or auto-inject based on skills or workspace
