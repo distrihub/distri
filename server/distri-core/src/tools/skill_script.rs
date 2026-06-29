@@ -1,14 +1,10 @@
 use std::sync::Arc;
 
-use distri_types::{
-    configuration::DefinitionOverrides, stores::ContextExecutionType, tool::ToolContext,
-    MessageRole, Part, ToolCall,
-};
+use distri_types::{stores::ContextExecutionType, tool::ToolContext, Part, ToolCall};
 use serde_json::json;
 
 use crate::agent::ExecutorContext;
 use crate::tools::ExecutorContextTool;
-use crate::types::Message;
 use crate::AgentError;
 
 /// Tool that loads a skill's content on demand.
@@ -150,83 +146,19 @@ impl ExecutorContextTool for LoadSkillTool {
             }
 
             ContextExecutionType::Fork => {
-                tracing::info!(
-                    skill_id = skill_id,
-                    model = skill.model.as_deref().unwrap_or("(agent default)"),
-                    "Forking skill — spawning isolated child agent"
-                );
-
-                // Fork the execution context. This:
-                //   - Keeps the same thread_id (child is part of same conversation)
-                //   - Generates a new task_id + run_id (isolated work unit)
-                //   - Sets parent_task_id = current task_id (hierarchy in task store)
-                //   - Gives the child a fresh ContextUsage counter (isolated budget)
-                //
-                // orchestrator.execute() will then persist via:
-                //   task_store.get_or_create_task(thread_id, task_id)
-                //   task_store.update_parent_task(task_id, parent_task_id)
-                let child_context = context.new_task(&context.agent_id).await;
-
-                // Build definition overrides: inject skill content as instructions,
-                // optionally override the model if the skill specifies one.
-                let overrides = {
-                    let base =
-                        DefinitionOverrides::default().with_instructions(skill.content.clone());
-                    if let Some(model) = skill.model.clone() {
-                        base.with_model(model)
-                    } else {
-                        base
-                    }
-                };
-
-                let message = Message {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    name: None,
-                    parts: vec![Part::Text(format!(
-                        "Execute the skill '{}' according to your instructions.",
-                        skill_id
-                    ))],
-                    role: MessageRole::User,
-                    created_at: chrono::Utc::now().timestamp_millis(),
-                    agent_id: None,
-                    parts_metadata: None,
-                };
-
-                let child_context_arc = Arc::new(child_context);
-                let child_context_for_result = child_context_arc.clone();
-
-                let invoke_result = orchestrator
-                    .execute_stream(
-                        &context.agent_id,
-                        message,
-                        child_context_arc,
-                        Some(overrides),
-                    )
-                    .await;
-
-                let summary = match invoke_result {
-                    Ok(result) => {
-                        let final_result = child_context_for_result.get_final_result().await;
-                        final_result
-                            .and_then(|v| match v {
-                                serde_json::Value::String(s) => Some(s),
-                                other => Some(other.to_string()),
-                            })
-                            .or(result.content)
-                            .unwrap_or_else(|| {
-                                format!("Skill '{}' completed without output.", skill_id)
-                            })
-                    }
-                    Err(e) => {
+                // Single source of truth for fork semantics (also used by the
+                // metadata-driven `preload_skills` path): same thread, fresh
+                // task_id/run_id, parent_task_id = current task, skill body as
+                // the child's instructions; only the gist returns to the parent.
+                let summary = context
+                    .fork_skill(skill_id, &skill.content, skill.model.clone())
+                    .await
+                    .unwrap_or_else(|e| {
                         tracing::error!(skill_id = skill_id, error = %e, "Forked skill execution failed");
-                        format!("Skill '{}' failed: {}", skill_id, e)
-                    }
-                };
+                        format!("[Skill '{skill_id}' result]\nSkill '{skill_id}' failed: {e}")
+                    });
 
-                Ok(vec![Part::Text(format!(
-                    "[Skill '{}' result]\n{}",
-                    skill_id, summary
-                ))])
+                Ok(vec![Part::Text(summary)])
             }
         }
     }

@@ -60,10 +60,14 @@ async fn preload_injects_inline_skill_at_startup() {
     );
 }
 
-/// A fork-type skill is NOT eagerly injected (forking at startup is handled
-/// separately); preload returns it as not-injected and writes no entry.
+/// A fork-type skill named in `load_skills` spawns an isolated child task at
+/// startup (same thread, parent_task_id = current) — the metadata-driven
+/// fork-as-subtask. The child body is NOT injected inline into the parent
+/// (only the child's gist would be, on a successful run). In this no-LLM test
+/// harness the child run can't reach an LLM, so we assert the dispatch side
+/// effect that *is* deterministic: a child task row created under the parent.
 #[tokio::test]
-async fn preload_defers_fork_skill() {
+async fn preload_forks_fork_skill_as_child_task() {
     let ctx = make_test_context().await;
     let orchestrator = ctx.orchestrator.clone().expect("orchestrator");
     let skill_store = orchestrator
@@ -71,6 +75,28 @@ async fn preload_defers_fork_skill() {
         .skill_store
         .clone()
         .expect("skill store");
+
+    // The parent thread + task must exist for the child's parent linkage.
+    orchestrator
+        .stores
+        .thread_store
+        .create_thread(distri_types::CreateThreadRequest {
+            agent_id: "default".to_string(),
+            title: Some("preload-fork".to_string()),
+            thread_id: Some(ctx.thread_id.clone()),
+            attributes: None,
+            user_id: None,
+            external_id: None,
+            channel_id: None,
+        })
+        .await
+        .expect("create thread");
+    orchestrator
+        .stores
+        .task_store
+        .get_or_create_task(&ctx.thread_id, &ctx.task_id)
+        .await
+        .expect("create parent task");
 
     let created = skill_store
         .create(NewSkill {
@@ -84,13 +110,35 @@ async fn preload_defers_fork_skill() {
         .await
         .expect("create fork skill");
 
+    // Best-effort: with no LLM configured the child run errors out, which
+    // preload swallows (logged, not fatal) and returns no injected ids.
     let injected = ctx
         .preload_skills(&[created.id.clone()])
         .await
         .expect("preload_skills");
+    assert!(
+        injected.is_empty(),
+        "fork skill body is never injected inline into the parent"
+    );
 
-    assert!(injected.is_empty(), "fork skills are not injected inline");
+    // The fork DID dispatch: a child task exists in the same thread with
+    // parent_task_id == the parent task (persisted before the LLM is called).
+    let tasks = orchestrator
+        .stores
+        .task_store
+        .list_tasks(Some(&ctx.thread_id))
+        .await
+        .expect("list_tasks");
+    let child = tasks
+        .iter()
+        .find(|t| t.id != ctx.task_id && t.parent_task_id.as_deref() == Some(ctx.task_id.as_str()));
+    assert!(
+        child.is_some(),
+        "fork-type skill should have spawned a child task under the parent; tasks: {:?}",
+        tasks.iter().map(|t| (&t.id, &t.parent_task_id)).collect::<Vec<_>>()
+    );
 
+    // And no inline skill body leaked into the parent's scratchpad.
     let entries = orchestrator
         .stores
         .scratchpad_store
@@ -98,10 +146,11 @@ async fn preload_defers_fork_skill() {
         .await
         .expect("get_entries");
     assert!(
-        !entries
-            .iter()
-            .any(|e| matches!(&e.entry_type, distri_types::ScratchpadEntryType::SkillContext(_))),
-        "fork skill must not inject a SkillContext entry"
+        !entries.iter().any(|e| matches!(
+            &e.entry_type,
+            distri_types::ScratchpadEntryType::SkillContext(s) if s.content.contains("fork body")
+        )),
+        "fork skill body must not be injected inline into the parent"
     );
 }
 

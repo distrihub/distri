@@ -8,6 +8,7 @@ mod compaction_integration;
 mod coordinator_integration;
 mod deferred_tools_integration;
 mod definition;
+mod early_stop;
 mod fixture_scenarios;
 pub mod helpers;
 mod invoke_agent_tool;

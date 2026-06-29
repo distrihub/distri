@@ -1934,15 +1934,126 @@ impl ExecutorContext {
                     injected.push(skill_id.clone());
                 }
                 distri_types::stores::ContextExecutionType::Fork => {
-                    tracing::info!(
-                        skill_id = %skill_id,
-                        "preload_skills: fork-type skill deferred to explicit dispatch"
-                    );
+                    // Metadata-driven fork-as-subtask: a fork-type skill named in
+                    // `load_skills` spawns an isolated child task up-front (no
+                    // `load_skill` round-trip), runs it, and folds the child's
+                    // *gist* back into the parent context. This reuses the exact
+                    // dispatch proven by `LoadSkillTool` (skill_script.rs): same
+                    // thread, fresh task_id/run_id, parent_task_id = this task,
+                    // skill body injected as the child's instructions. The child
+                    // surfaces in chat as a sub-task; the parent only learns the
+                    // gist. Best-effort — a child failure is logged, not fatal.
+                    // `Box::pin` breaks the async-recursion cycle: fork_skill →
+                    // execute_stream → … → preload_skills (the child may itself
+                    // preload skills). Boxing this edge gives the future a known size.
+                    let fork_fut = Box::pin(self.fork_skill(
+                        skill_id,
+                        &skill.content,
+                        skill.model.clone(),
+                    ));
+                    match fork_fut.await {
+                        Ok(gist) => {
+                            let entry = distri_types::ScratchpadEntry {
+                                timestamp: now,
+                                entry_type: distri_types::ScratchpadEntryType::SkillContext(
+                                    distri_types::SkillContextEntry {
+                                        skill_id: skill_id.clone(),
+                                        content: gist,
+                                        reinjected_at: now,
+                                    },
+                                ),
+                                task_id: self.task_id.clone(),
+                                parent_task_id: self.parent_task_id.clone(),
+                                entry_kind: Some("skill_context".to_string()),
+                            };
+                            if let Err(e) = scratchpad_store.add_entry(&self.thread_id, entry).await {
+                                tracing::warn!(skill_id = %skill_id, "preload_skills: failed to inject fork gist: {e}");
+                                continue;
+                            }
+                            tracing::info!(skill_id = %skill_id, "preload_skills: forked skill and injected gist at startup");
+                            injected.push(skill_id.clone());
+                        }
+                        Err(e) => {
+                            tracing::warn!(skill_id = %skill_id, "preload_skills: fork dispatch failed: {e}");
+                        }
+                    }
                 }
             }
         }
 
         Ok(injected)
+    }
+
+    /// Spawn a fork-type skill as an isolated child task and return its gist.
+    ///
+    /// Shared by the LLM-driven `load_skill` path (`skill_script.rs`) and the
+    /// metadata-driven `preload_skills` path so both produce identical fork
+    /// semantics: same thread, fresh `task_id`/`run_id`, `parent_task_id` set to
+    /// the current task, and the skill body injected as the child's
+    /// instructions. Only the child's final result (its gist) is returned — the
+    /// internal steps stay in the child's own context.
+    pub async fn fork_skill(
+        self: &Arc<Self>,
+        skill_id: &str,
+        skill_content: &str,
+        skill_model: Option<String>,
+    ) -> Result<String, AgentError> {
+        let orchestrator = self
+            .orchestrator
+            .as_ref()
+            .ok_or_else(|| AgentError::Execution("Orchestrator not initialized".to_string()))?
+            .clone();
+
+        tracing::info!(
+            skill_id = %skill_id,
+            model = skill_model.as_deref().unwrap_or("(agent default)"),
+            "fork_skill — spawning isolated child agent"
+        );
+
+        // Fork the execution context: same thread, new task_id + run_id, and
+        // parent_task_id = current task (hierarchy in the task store).
+        let child_context = self.new_task(&self.agent_id).await;
+
+        let overrides = {
+            let base = distri_types::configuration::DefinitionOverrides::default()
+                .with_instructions(skill_content.to_string());
+            match skill_model {
+                Some(model) => base.with_model(model),
+                None => base,
+            }
+        };
+
+        let message = Message {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: None,
+            parts: vec![Part::Text(format!(
+                "Execute the skill '{skill_id}' according to your instructions."
+            ))],
+            role: distri_types::MessageRole::User,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            agent_id: None,
+            parts_metadata: None,
+        };
+
+        let child_context_arc = Arc::new(child_context);
+        let child_for_result = child_context_arc.clone();
+
+        let invoke_result = orchestrator
+            .execute_stream(&self.agent_id, message, child_context_arc, Some(overrides))
+            .await?;
+
+        let gist = {
+            let final_result = child_for_result.get_final_result().await;
+            final_result
+                .and_then(|v| match v {
+                    serde_json::Value::String(s) => Some(s),
+                    other => Some(other.to_string()),
+                })
+                .or(invoke_result.content)
+                .unwrap_or_else(|| format!("Skill '{skill_id}' completed without output."))
+        };
+
+        Ok(format!("[Skill '{skill_id}' result]\n{gist}"))
     }
 
     /// Store a CompactionSummary as a scratchpad entry
