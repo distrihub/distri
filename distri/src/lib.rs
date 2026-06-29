@@ -1,0 +1,68 @@
+mod client;
+mod client_app;
+mod client_stream;
+pub mod config;
+pub mod message;
+mod printer;
+mod renderers;
+pub mod run;
+mod sub_task_tracker;
+
+/// Workflow engine — define, execute, and track multi-step workflows.
+pub mod workflow {
+    pub use distri_workflow::*;
+}
+
+use thiserror::Error;
+
+pub use crate::external_tools_runtime::ExternalToolRegistry;
+pub use crate::hooks_runtime::HookRegistry;
+pub use client::{
+    AgentListItem, AgentRegistrationResponse, ApiKeyResponse, ArtifactEntry, ArtifactListResponse,
+    ArtifactNamespace, ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse,
+    ConnectResponse, ConnectionSummary, ConnectionToken, CreatePluginRequest, CreateSkillRequest,
+    Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse, LoginUrlResponse,
+    NewPromptTemplateRequest, NewSecretRequest, PluginResponse, PluginsListResponse,
+    PromptTemplateResponse, ProviderInfo, SecretEntry, SkillResponse, SkillScriptInput,
+    SkillSource, SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary, TraceSummary,
+    TtsModelsResponse, TtsSpeechRequest, TtsSpeechResponse, UpdatePluginRequest,
+    UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,
+};
+pub use client_app::{AppError, DistriClientApp, ToolListItem};
+pub use client_stream::{AgentStreamClient, StreamError, StreamItem, parse_sse_data};
+pub use config::{BuildHttpClient, DistriConfig};
+pub use hooks_runtime::*;
+
+pub use distri_types::{
+    HookContext, HookKind, HookMutation, InlineHookRequest, InlineHookResponse, Model,
+    ModelProviderDefinition, ProviderKeyDefinition, ProviderType, TokenResponse, TtsVoiceInfo,
+};
+pub use printer::{
+    ContextHealth, EventPrinter, format_context_breakdown, print_stream, print_stream_verbose,
+    print_stream_with_health,
+};
+pub use run::{DEFAULT_RUN_AGENT, RunOptions, build_run_params, run_agent, stream_run};
+
+#[cfg(test)]
+mod tests;
+
+#[derive(Debug, Error)]
+pub enum ClientError {
+    #[error("http request failed: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("stdout transport failed: {0}")]
+    Stdout(String),
+    #[error("invalid response: {0}")]
+    InvalidResponse(String),
+    #[error("serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+mod external_tools_runtime;
+mod hooks_runtime;
+pub mod platform_tools;
+
+pub use distri_a2a as a2a;
+pub use distri_types as types;

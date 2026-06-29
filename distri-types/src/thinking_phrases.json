@@ -1,0 +1,29 @@
+{
+  "planning": [
+    { "text": "Brewing something good", "emoji": "☕", "icon": "coffee" },
+    { "text": "Pulling the right strings", "emoji": "🎭", "icon": "wand" },
+    { "text": "Assembling the crew", "emoji": "🤝", "icon": "users" },
+    { "text": "Plotting world domination", "emoji": "🗺️", "icon": "map" },
+    { "text": "Sharpening the strategy", "emoji": "♟️", "icon": "swords" },
+    { "text": "Loading the master plan", "emoji": "🎯", "icon": "target" },
+    { "text": "Cooking with gas now", "emoji": "🔥", "icon": "flame" },
+    { "text": "Spinning up the agents", "emoji": "⚡", "icon": "zap" }
+  ],
+  "replanning": [
+    { "text": "Plot twist incoming", "emoji": "🔄", "icon": "refresh-cw" },
+    { "text": "Pivoting gracefully", "emoji": "🩰", "icon": "sparkles" },
+    { "text": "Taking a different angle", "emoji": "🧭", "icon": "compass" },
+    { "text": "Recalibrating the vibe", "emoji": "🎛️", "icon": "sliders" },
+    { "text": "New plan, better plan", "emoji": "✨", "icon": "sparkles" }
+  ],
+  "thinking": [
+    { "text": "Hold my coffee", "emoji": "☕", "icon": "coffee" },
+    { "text": "Crunching the numbers", "emoji": "🧮", "icon": "calculator" },
+    { "text": "Working some magic", "emoji": "🪄", "icon": "wand" },
+    { "text": "Almost got it", "emoji": "🏁", "icon": "flag" },
+    { "text": "Neurons firing", "emoji": "🧠", "icon": "brain" },
+    { "text": "On it like a bonnet", "emoji": "🎩", "icon": "zap" },
+    { "text": "Deep in the zone", "emoji": "🎧", "icon": "headphones" },
+    { "text": "Wrangling the bits", "emoji": "🤠", "icon": "cog" }
+  ]
+}

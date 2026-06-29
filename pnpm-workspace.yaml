@@ -1,0 +1,4 @@
+packages:
+  - 'distri-ui'
+  - 'samples/*'
+  - 'distrijs/packages/*'

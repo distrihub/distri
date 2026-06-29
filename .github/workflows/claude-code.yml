@@ -1,0 +1,47 @@
+name: Claude Code
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'Task for Claude Code'
+        required: true
+        type: string
+      base_branch:
+        description: 'Branch to checkout and work from'
+        required: false
+        default: 'main'
+        type: string
+      output_branch:
+        description: 'Branch to push results to (leave blank = same as base_branch)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  claude:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.base_branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.email "claude-code[bot]@anthropic.com"
+          git config user.name "Claude Code"
+          OUTPUT_BRANCH="${{ github.event.inputs.output_branch }}"
+          if [ -n "$OUTPUT_BRANCH" ] && [ "$OUTPUT_BRANCH" != "${{ github.event.inputs.base_branch }}" ]; then
+            git checkout -b "$OUTPUT_BRANCH" 2>/dev/null || git checkout "$OUTPUT_BRANCH"
+          fi
+
+      - uses: anthropics/claude-code-action@beta
+        with:
+          prompt: ${{ github.event.inputs.prompt }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          create_pr: ${{ github.event.inputs.output_branch != '' && github.event.inputs.output_branch != github.event.inputs.base_branch }}

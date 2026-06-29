@@ -1,0 +1,32 @@
+# General
+.DS_Store
+Thumbs.db
+*.log
+
+# Deno caches and build outputs
+.deno/
+dist/
+
+# Editor settings
+.vscode/
+.idea/
+
+# Runtime publishing artifacts
+runtime/deno.lock
+node_modules/**
+samples/**/node_modules/**
+
+
+# Rust deps
+target/*
+
+#Turbo
+.turbo/*
+.distri/
+releases/*
+release-out/
+distri-home/node_modules/** 
+
+samples/maps-demo/.env
+browsr
+distri.toml

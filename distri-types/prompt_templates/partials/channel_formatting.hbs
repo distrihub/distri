@@ -1,0 +1,32 @@
+{{!-- Surface-aware formatting hints. The gateway sets `channel_kind` from
+     `Bot::provider`; non-channel runs (web direct, CLI, A2A) leave it
+     unset and skip this section.
+
+     Markdown is auto-converted to the surface's native format (Telegram HTML
+     for telegram, WhatsApp's `*bold*` subset for whatsapp). Agents can write
+     plain Markdown and it will render correctly. --}}
+{{#if channel_kind}}
+# CHAT SURFACE: {{channel_kind}}
+{{#if (eq channel_kind "telegram")}}
+You are answering a user inside Telegram.
+- Write in Markdown — it is auto-converted to Telegram HTML before sending. Keep it simple: `**bold**`, `_italic_`, `` `inline code` ``, fenced code blocks, bullet/numbered lists, links as `[label](url)`.
+- Telegram has no real headings; `#`/`##`/`###` render as bold lines. Avoid going past `###` — use a short bold line instead.
+- Don't paste long quoted blocks of skill content or API responses; the user already sees a compact summary of tool outputs.
+- Keep messages short. A single Telegram message caps at 4096 chars; replies that exceed it are split.
+{{/if}}
+{{#if (eq channel_kind "whatsapp")}}
+You are answering a user inside WhatsApp.
+- Write in Markdown — it is auto-converted to WhatsApp's subset (`*bold*`, `_italic_`, `~strike~`, `` `mono` ``, ```` ```code``` ```` blocks). Lists become `•`-bulleted lines.
+- Headings render as bold lines; tables flatten to monospaced text. Don't lean on either.
+- WhatsApp users skim. One short paragraph + a small bulleted list beats long prose.
+{{/if}}
+{{#if (eq channel_kind "discord")}}
+You are answering a user inside Discord. Standard Markdown is supported (**bold**, *italic*, `inline`, ```code blocks```, > quotes, ## headings). A single message caps at 2000 characters.
+{{/if}}
+{{#if (eq channel_kind "slack")}}
+You are answering a user inside Slack. Slack uses its own Markdown variant ("mrkdwn"): `*bold*` (single star), `_italic_`, `~strike~`, `` `inline` ``, ```` ```code``` ```` blocks. Links use `<URL|label>`, not `[label](URL)`. Avoid Markdown headings; use *bold* lines instead.
+{{/if}}
+{{#if (eq channel_kind "web")}}
+You are rendering in a Markdown-capable web UI. Full GitHub-flavored Markdown is supported: headings, tables, fenced code with language tags, links, images.
+{{/if}}
+{{/if}}

@@ -1,0 +1,58 @@
+[package]
+name = "distri-server-cli"
+version = "0.4.2"
+edition = "2021"
+license = "MIT"
+description = "Distri OSS server binary"
+
+[features]
+default = ["sqlite"]
+sqlite = ["distri-core/sqlite", "distri-server/sqlite"]
+postgres = ["distri-core/postgres", "distri-server/postgres"]
+sqlite_vendored = [
+  "sqlite",
+  "distri-core/sqlite_vendored",
+  "distri-server/sqlite_vendored",
+]
+postgres_vendored = [
+  "postgres",
+  "distri-core/postgres_vendored",
+  "distri-server/postgres_vendored",
+]
+otel = [
+  "dep:opentelemetry",
+  "dep:opentelemetry_sdk",
+  "dep:opentelemetry-otlp",
+  "dep:tracing-opentelemetry",
+]
+ui = ["distri-server/ui"]
+
+[dependencies]
+distri-core = { path = "../distri-core", version = "0.4.2", default-features = false }
+distri-types = { path = "../../distri-types", version = "0.4.2" }
+distri-filesystem = { path = "../distri-filesystem", version = "0.4.2" }
+distri-server = { path = "../distri-server", version = "0.4.2", default-features = false }
+dotenv = "0.15"
+clap = { version = "4.5", features = ["derive", "env"] }
+anyhow = { workspace = true }
+serde = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { workspace = true }
+tokio = { version = "1.0", features = ["full"] }
+regex = "1.5"
+toml = "0.9.5"
+dirs = "5.0"
+serde_yaml = "0.9"
+utoipa = { workspace = true }
+
+# Optional OTEL dependencies (enabled via `otel` feature)
+opentelemetry = { version = "0.28.0", optional = true }
+opentelemetry_sdk = { version = "0.28.0", optional = true }
+opentelemetry-otlp = { version = "0.28.0", features = [
+  "grpc-tonic",
+], optional = true }
+tracing-opentelemetry = { version = "0.28", optional = true }
+
+[[bin]]
+name = "distri-server"
+path = "src/main.rs"

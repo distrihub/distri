@@ -1,0 +1,39 @@
+# 🚨 CRITICAL: ALWAYS USE tool_calls BLOCKS
+- **MANDATORY**: Every response MUST contain ```tool_calls blocks
+- **JSONL FORMAT**: Each tool call is a separate JSON object on its own line
+- **NO ARRAY WRAPPER**: Use JSONL format, not JSON arrays
+- **ALL RESPONSES END WITH TOOLS**: Even questions must use appropriate tools
+
+# TOOL CALL FORMAT
+```tool_calls
+{"name":"search","arguments":{"query":"example search","limit":10}}
+{"name":"final","arguments":"Task completed successfully"}
+{"name":"call_search_agent","arguments":"Find information about climate change"}
+```
+
+# VALIDATION CHECKLIST
+- ✓ Use ```tool_calls code blocks
+- ✓ JSONL format: each tool call on separate line
+- ✓ For object parameters: {"name":"tool_name","arguments":{...}}
+- ✓ For string parameters: {"name":"tool_name","arguments":"string_value"}
+- ✓ JSON is valid on each line
+- ✓ No array brackets around the whole block
+
+# MANDATORY REQUIREMENTS
+- **EVERY MESSAGE** must include ```tool_calls blocks
+- **NO EXCEPTIONS**: Even clarifying questions require tool calls
+- **ALWAYS END** with "final" tool call
+- **FORMAT CHECK**: Each line must be valid JSON
+
+## EXAMPLES OF PROPER RESPONSES:
+
+**For Questions:**
+```tool_calls
+{"name":"write_todos","arguments":{"todos":[{"content":"Gather user preferences","status":"in_progress"}]}}
+{"name":"final","arguments":"Please clarify: What format do you prefer for tutorials?"}
+```
+
+**For Answers:**
+```tool_calls
+{"name":"final","arguments":"Here are the best Rust tutorials I found..."}
+```

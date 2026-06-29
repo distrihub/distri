@@ -1,0 +1,140 @@
+use distri_types::{AgentPlan, ExecutionResult, ToolCallFormat};
+use serde::{Deserialize, Serialize};
+use std::{fmt::Display, sync::Arc};
+
+use crate::{
+    agent::{strategy::planning::get_planning_definition, ExecutorContext},
+    llm::{LLMResponse, StreamResult},
+    AgentError,
+};
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", tag = "type", content = "value")]
+pub enum Step {
+    Plan(String),
+    Thought(String),
+    Action(String),
+    Observation(String),
+}
+
+impl Display for Step {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Step::Plan(plan) => write!(f, "Plan: {}", plan),
+            Step::Thought(thought) => write!(f, "Thought: {}", thought),
+            Step::Action(action) => write!(f, "Action: {}", action),
+            Step::Observation(observation) => write!(f, "Observation: {}", observation),
+        }
+    }
+}
+
+/// Strategy for planning agent actions
+#[async_trait::async_trait]
+pub trait PlanningStrategy: Send + Sync + std::fmt::Debug {
+    async fn plan(
+        &self,
+        message: &crate::types::Message,
+        context: Arc<ExecutorContext>,
+    ) -> Result<AgentPlan, AgentError>;
+
+    /// Streaming version of plan that emits tokens as they're generated for better UX
+    async fn plan_stream(
+        &self,
+        message: &crate::types::Message,
+        context: Arc<ExecutorContext>,
+    ) -> Result<AgentPlan, AgentError> {
+        // Default implementation falls back to non-streaming
+        self.plan(message, context).await
+    }
+
+    async fn replan(
+        &self,
+        message: &crate::types::Message,
+        context: Arc<ExecutorContext>,
+        _previous_plan: AgentPlan,
+    ) -> Result<AgentPlan, AgentError> {
+        self.plan(message, context).await
+    }
+
+    // By default we dont replan
+    fn needs_replanning(&self, _history: &[ExecutionResult]) -> bool {
+        false
+    }
+
+    /// Build the LLM executor used by Tier 2 (semantic) compaction. Unlike
+    /// `build_planning_executor`, the summarizer doesn't need the
+    /// agent's tool set — just the agent's model. Returns `None` if the
+    /// strategy can't synthesize a plan config from its own state (e.g.
+    /// the default trait impl with no overrides).
+    ///
+    /// Strategies that already build a `PlanConfig` for planning override
+    /// this to call `create_llm_executor` with the same model settings
+    /// and an empty tool list.
+    async fn build_summary_executor(
+        &self,
+        _context: Arc<ExecutorContext>,
+    ) -> Option<Arc<dyn crate::llm::LLMExecutorTrait>> {
+        None
+    }
+
+    async fn get_tool_descriptions(&self, context: &Arc<ExecutorContext>) -> String {
+        use distri_parsers::get_tool_descriptions;
+        get_tool_descriptions(
+            &context
+                .get_tools()
+                .await
+                .iter()
+                .map(|t| t.get_tool_definition())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Single helper that builds the per-iteration planning LLM executor.
+    /// Centralizing this here ensures every agent-loop LLM call goes through
+    /// the same tool-selection policy — namely, `context.get_tools_for_llm()`
+    /// which excludes deferred tools that the model hasn't yet loaded via
+    /// `tool_search`. Both the non-streaming and streaming paths call this so
+    /// they can't drift.
+    async fn build_planning_executor(
+        &self,
+        plan_config: &crate::types::PlanConfig,
+        context: Arc<ExecutorContext>,
+        format: ToolCallFormat,
+    ) -> Result<Box<dyn crate::llm::LLMExecutorTrait>, AgentError> {
+        let agent_name = context.agent_id.clone();
+        let tools = context.get_tools_for_llm().await;
+        crate::llm::create_llm_executor(
+            get_planning_definition(agent_name, plan_config.model_settings.clone(), format),
+            tools,
+            context,
+            None,
+            None,
+        )
+    }
+
+    async fn llm(
+        &self,
+        messages: &[crate::types::Message],
+        plan_config: &crate::types::PlanConfig,
+        context: Arc<ExecutorContext>,
+        format: ToolCallFormat,
+    ) -> Result<LLMResponse, AgentError> {
+        let planning_executor = self
+            .build_planning_executor(plan_config, context, format)
+            .await?;
+        planning_executor.execute(messages).await
+    }
+
+    /// Streaming version of llm helper method
+    async fn llm_stream(
+        &self,
+        messages: &[crate::types::Message],
+        plan_config: &crate::types::PlanConfig,
+        context: Arc<ExecutorContext>,
+        format: ToolCallFormat,
+    ) -> Result<StreamResult, AgentError> {
+        let planning_executor = self
+            .build_planning_executor(plan_config, context.clone(), format)
+            .await?;
+        planning_executor.execute_stream(messages, context).await
+    }
+}

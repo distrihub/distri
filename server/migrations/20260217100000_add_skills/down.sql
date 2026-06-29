@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS skill_scripts;
+DROP TABLE IF EXISTS skills;

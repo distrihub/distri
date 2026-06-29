@@ -1,0 +1,3 @@
+{{#each todos}}
+- [{{#if (eq status "completed")}}x{{else if (eq status "in_progress")}}/{{else}} {{/if}}] {{content}}
+{{/each}}

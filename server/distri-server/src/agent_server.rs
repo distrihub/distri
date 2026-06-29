@@ -1,0 +1,282 @@
+use actix_cors::Cors;
+#[cfg(not(feature = "ui"))]
+use actix_files::Files;
+use actix_web::dev::Service;
+use actix_web::middleware::Logger;
+use actix_web::{web, App, HttpMessage, HttpResponse, HttpServer, Result as ActixResult};
+#[cfg(feature = "ui")]
+use actix_web_static_files::ResourceFiles;
+use anyhow::Result;
+use distri_core::agent::AgentOrchestrator;
+use utoipa::OpenApi;
+use utoipa_scalar::Servable;
+
+use distri_types::configuration::ServerConfig;
+use serde_json::json;
+use std::sync::Arc;
+
+use crate::context::UserContext;
+use crate::routes;
+
+#[cfg(feature = "ui")]
+include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+
+pub struct DistriAgentServer {
+    pub service_name: String,
+    pub description: String,
+    pub capabilities: Vec<String>,
+}
+
+impl Default for DistriAgentServer {
+    fn default() -> Self {
+        Self {
+            service_name: "distri-server".to_string(),
+            description: "A Distri server instance".to_string(),
+            capabilities: vec!["agent_execution".to_string(), "task_management".to_string()],
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct VerboseLog(pub bool);
+impl VerboseLog {
+    pub fn is_verbose(&self) -> bool {
+        self.0
+    }
+}
+
+pub const DEFAULT_PORT: u16 = 8081;
+pub const DEFAULT_HOST: &str = "localhost";
+
+impl DistriAgentServer {
+    /// Start the server with the configured settings
+    pub async fn start(
+        self,
+        server_config: ServerConfig,
+        executor: Arc<AgentOrchestrator>,
+        host: Option<String>,
+        port: Option<u16>,
+        verbose: bool,
+        ui_dist: Option<std::path::PathBuf>,
+    ) -> Result<()> {
+        let service_name = self.service_name.clone();
+
+        // Use DAP configuration for server settings
+        let port = port.unwrap_or(DEFAULT_PORT);
+        let host = host.unwrap_or_else(|| DEFAULT_HOST.to_string());
+        let base_url = format!("http://{}:{}/v1", host, port);
+        tracing::info!("Starting {}...", service_name);
+        tracing::info!("Starting server on {}", base_url);
+
+        #[cfg(feature = "ui")]
+        let ui_available = true;
+        #[cfg(not(feature = "ui"))]
+        let ui_available = {
+            // Prefer explicit --ui-dist path, then legacy hardcoded location.
+            let legacy_path = "distri-server/static/ui";
+            ui_dist
+                .as_deref()
+                .map(|p| p.exists())
+                .unwrap_or_else(|| std::path::Path::new(legacy_path).exists())
+        };
+
+        tracing::info!("🌐 Server ready! Access these endpoints:");
+        tracing::info!("  📋 API Welcome:     {}/", base_url);
+        tracing::info!("  ❤️  Health Check:   {}/health", base_url);
+        tracing::info!("  🤖 Distri API:      {}/v1/*", base_url);
+
+        if ui_available {
+            tracing::info!("");
+            tracing::info!("🎉 WEB INTERFACE AVAILABLE:");
+            tracing::info!("  🖥️  Open in browser: {}/ui/", base_url);
+            tracing::info!("");
+        } else {
+            tracing::info!("");
+            tracing::warn!("⚠️  Web UI not installed. To add the web interface:");
+            tracing::warn!("   ./distri-server/download_ui.sh (or build with `--features ui`)");
+            tracing::warn!("   Then restart the server to access: {}/ui/", base_url);
+            tracing::info!("");
+        }
+
+        HttpServer::new(move || {
+            let executor = executor.clone();
+            let service_name = self.service_name.clone();
+
+            let verbose = Some(VerboseLog(verbose));
+            let mut app = App::new()
+                .wrap(Logger::default())
+                .wrap_fn(move |req, srv| {
+                    if req.extensions().get::<UserContext>().is_none() {
+                        // OSS single-tenant default: inject a stable workspace_id so
+                        // agents declaring `connections` can resolve workspace-scoped
+                        // connections without cloud auth middleware.
+                        let ctx = UserContext::with_workspace(
+                            "local_dev_user".to_string(),
+                            Some(uuid::Uuid::nil().to_string()),
+                        );
+                        req.extensions_mut().insert(ctx);
+                    }
+                    srv.call(req)
+                })
+                .app_data(web::Data::new(server_config.clone()))
+                .wrap(
+                    Cors::default()
+                        .allow_any_origin()
+                        .allow_any_method()
+                        .allow_any_header()
+                        .max_age(3600),
+                )
+                .route(
+                    "/",
+                    web::get().to(|| async {
+                        HttpResponse::Found()
+                            .append_header(("Location", "/ui/"))
+                            .finish()
+                    }),
+                )
+                .route(
+                    "/health",
+                    web::get().to({
+                        let service_name = service_name.clone();
+                        move || {
+                            let service_name = service_name.clone();
+                            async move { default_health_check(&service_name).await }
+                        }
+                    }),
+                )
+                .route(
+                    "/openapi.json",
+                    web::get().to(crate::openapi::serve_openapi),
+                )
+                .service(utoipa_scalar::Scalar::with_url(
+                    "/docs",
+                    crate::openapi::ServerApiDoc::openapi(),
+                ))
+                .configure(|cfg| {
+                    cfg.app_data(web::Data::new(verbose));
+                    // Provider routes (`/v1/providers`) delegate to a
+                    // `ProviderStore`. The standalone server's store is backed
+                    // by the `server_settings` table (built by the store
+                    // factory); the multi-tenant cloud registers its own
+                    // workspace-scoped `ProviderStore` separately.
+                    if let Some(provider_store) = executor.stores.provider_store.clone() {
+                        cfg.app_data(web::Data::new(provider_store));
+                    }
+                    cfg.app_data(web::Data::new(executor)).configure(|cfg| {
+                        cfg.service(web::scope("/v1").configure(routes::distri));
+                    });
+                });
+
+            // Serve UI files if they exist
+            #[cfg(feature = "ui")]
+            {
+                let generated = generate();
+                let static_files = ResourceFiles::new("/ui", generated).resolve_not_found_to_root();
+                app = app.service(static_files).route(
+                    "/ui",
+                    web::get().to(|| async {
+                        HttpResponse::Found()
+                            .append_header(("Location", "/ui/"))
+                            .finish()
+                    }),
+                );
+            }
+
+            #[cfg(not(feature = "ui"))]
+            {
+                // Prefer explicit --ui-dist path, then legacy hardcoded location.
+                let legacy = std::path::PathBuf::from("distri-server/static/ui");
+                let resolved_ui: Option<std::path::PathBuf> = ui_dist
+                    .clone()
+                    .filter(|p| p.exists())
+                    .or_else(|| if legacy.exists() { Some(legacy) } else { None });
+
+                if let Some(ui_path) = resolved_ui {
+                    let assets_path = ui_path.join("assets");
+                    let logo_path = ui_path.join("distri-logo.svg");
+                    let index_path = ui_path.join("index.html");
+                    app = app
+                        // Serve static UI files under /ui
+                        .service(
+                            Files::new("/ui", &ui_path)
+                                .index_file("index.html")
+                                .use_last_modified(true)
+                                .use_etag(true)
+                                .prefer_utf8(true),
+                        )
+                        // Also serve assets at root level for absolute paths in HTML
+                        .service(
+                            Files::new("/assets", assets_path)
+                                .use_last_modified(true)
+                                .use_etag(true),
+                        )
+                        // Serve favicon/logo at root if it exists
+                        .route(
+                            "/distri-logo.svg",
+                            web::get().to(move || {
+                                let logo_path = logo_path.clone();
+                                async move { serve_logo_from(logo_path).await }
+                            }),
+                        )
+                        // Redirect /ui to /ui/ for proper routing
+                        .route(
+                            "/ui",
+                            web::get().to(|| async {
+                                HttpResponse::Found()
+                                    .append_header(("Location", "/ui/"))
+                                    .finish()
+                            }),
+                        )
+                        // For SPA routing - serve index.html for any unmatched /ui/* routes
+                        .route(
+                            "/ui/{path:.*}",
+                            web::get().to(move || {
+                                let index_path = index_path.clone();
+                                async move { serve_ui_fallback_from(index_path).await }
+                            }),
+                        );
+                }
+            }
+
+            app
+        })
+        .bind((host, port))?
+        .run()
+        .await?;
+
+        Ok(())
+    }
+}
+
+async fn default_health_check(service_name: &str) -> ActixResult<HttpResponse> {
+    Ok(HttpResponse::Ok().json(json!({
+        "status": "healthy",
+        "service": service_name,
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    })))
+}
+
+/// Fallback handler for SPA routing - serves index.html for unmatched UI routes
+#[cfg(not(feature = "ui"))]
+async fn serve_ui_fallback_from(index_path: std::path::PathBuf) -> ActixResult<HttpResponse> {
+    match std::fs::read_to_string(&index_path) {
+        Ok(content) => Ok(HttpResponse::Ok()
+            .content_type("text/html; charset=utf-8")
+            .body(content)),
+        Err(_) => Ok(HttpResponse::NotFound().json(json!({
+            "error": "UI not available",
+            "message": "Run 'distri serve' to download the UI files"
+        }))),
+    }
+}
+
+/// Serve logo/favicon from UI directory
+#[cfg(not(feature = "ui"))]
+async fn serve_logo_from(logo_path: std::path::PathBuf) -> ActixResult<HttpResponse> {
+    match std::fs::read(&logo_path) {
+        Ok(content) => Ok(HttpResponse::Ok()
+            .content_type("image/svg+xml")
+            .body(content)),
+        Err(_) => Ok(HttpResponse::NotFound().finish()),
+    }
+}

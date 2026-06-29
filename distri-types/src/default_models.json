@@ -1,0 +1,321 @@
+{
+  "providers": [
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "keys": [
+        {
+          "key": "OPENAI_API_KEY",
+          "label": "API key",
+          "placeholder": "sk-...",
+          "required": true,
+          "sensitive": true
+        }
+      ],
+      "models": [
+        {
+          "id": "gpt-4.1",
+          "name": "GPT-4.1",
+          "capability": "completion",
+          "context_window": 1047576,
+          "pricing": {
+            "type": "completion",
+            "input": 2.00,
+            "output": 8.00,
+            "cached_input": 0.50
+          }
+        },
+        {
+          "id": "gpt-4.1-mini",
+          "name": "GPT-4.1 Mini",
+          "capability": "completion",
+          "context_window": 1047576,
+          "pricing": {
+            "type": "completion",
+            "input": 0.40,
+            "output": 1.60,
+            "cached_input": 0.10
+          }
+        },
+        {
+          "id": "gpt-4.1-nano",
+          "name": "GPT-4.1 Nano",
+          "capability": "completion",
+          "context_window": 1047576,
+          "pricing": {
+            "type": "completion",
+            "input": 0.10,
+            "output": 0.40,
+            "cached_input": 0.025
+          }
+        },
+        {
+          "id": "gpt-4o",
+          "name": "GPT-4o",
+          "capability": "completion",
+          "context_window": 128000,
+          "pricing": {
+            "type": "completion",
+            "input": 2.50,
+            "output": 10.00,
+            "cached_input": 1.25
+          }
+        },
+        {
+          "id": "gpt-4o-mini",
+          "name": "GPT-4o Mini",
+          "capability": "completion",
+          "context_window": 128000,
+          "pricing": {
+            "type": "completion",
+            "input": 0.15,
+            "output": 0.60,
+            "cached_input": 0.075
+          }
+        },
+        {
+          "id": "o3-mini",
+          "name": "o3-mini",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 1.10,
+            "output": 4.40,
+            "cached_input": 0.55
+          }
+        },
+        {
+          "id": "o3",
+          "name": "o3",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 2.00,
+            "output": 8.00,
+            "cached_input": 0.50
+          }
+        },
+        {
+          "id": "o4-mini",
+          "name": "o4-mini",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 1.10,
+            "output": 4.40,
+            "cached_input": 0.55
+          }
+        },
+        {
+          "id": "gpt-4o-mini-tts",
+          "name": "GPT-4o Mini TTS",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 12.00
+          },
+          "voices": [
+            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "ash", "name": "Ash", "description": "Warm and confident", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "ballad", "name": "Ballad", "description": "Expressive and melodic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "coral", "name": "Coral", "description": "Clear and friendly", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "sage", "name": "Sage", "description": "Calm and measured", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "opus",
+            "aac",
+            "flac",
+            "pcm"
+          ]
+        },
+        {
+          "id": "tts-1",
+          "name": "TTS-1",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 15.00
+          },
+          "voices": [
+            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "opus",
+            "aac",
+            "flac",
+            "pcm"
+          ]
+        },
+        {
+          "id": "tts-1-hd",
+          "name": "TTS-1 HD",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 30.00
+          },
+          "voices": [
+            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "opus",
+            "aac",
+            "flac",
+            "pcm"
+          ]
+        },
+        {
+          "id": "whisper-1",
+          "name": "Whisper",
+          "capability": "stt",
+          "pricing": {
+            "type": "stt",
+            "per_minute": 0.006
+          }
+        },
+        {
+          "id": "gpt-image-1",
+          "name": "GPT Image 1",
+          "capability": "image",
+          "pricing": {
+            "type": "image",
+            "per_image": 0.042,
+            "per_quality": {
+              "low": 0.011,
+              "medium": 0.042,
+              "high": 0.167
+            }
+          }
+        },
+        {
+          "id": "gpt-image-2",
+          "name": "GPT Image 2",
+          "capability": "image",
+          "pricing": {
+            "type": "image",
+            "per_image": 0.042,
+            "per_quality": {
+              "low": 0.011,
+              "medium": 0.042,
+              "high": 0.167
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "label": "Anthropic",
+      "keys": [
+        {
+          "key": "ANTHROPIC_API_KEY",
+          "label": "API key",
+          "placeholder": "sk-ant-...",
+          "required": true,
+          "sensitive": true
+        }
+      ],
+      "models": [
+        {
+          "id": "claude-sonnet-4",
+          "name": "Claude Sonnet 4",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 3.00,
+            "output": 15.00,
+            "cached_input": 0.30
+          }
+        },
+        {
+          "id": "claude-opus-4",
+          "name": "Claude Opus 4",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 15.00,
+            "output": 75.00,
+            "cached_input": 1.50
+          }
+        },
+        {
+          "id": "claude-haiku-3.5",
+          "name": "Claude Haiku 3.5",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 0.80,
+            "output": 4.00,
+            "cached_input": 0.08
+          }
+        }
+      ]
+    },
+    {
+      "id": "gemini",
+      "label": "Google Gemini",
+      "keys": [
+        {
+          "key": "GEMINI_API_KEY",
+          "label": "API key",
+          "placeholder": "AIza...",
+          "required": true,
+          "sensitive": true
+        }
+      ],
+      "models": [
+        {
+          "id": "gemini-2.5-flash",
+          "name": "Gemini 2.5 Flash",
+          "capability": "completion",
+          "context_window": 1048576,
+          "pricing": {
+            "type": "completion",
+            "input": 0.15,
+            "output": 0.60,
+            "cached_input": 0.0375
+          }
+        },
+        {
+          "id": "gemini-2.5-pro",
+          "name": "Gemini 2.5 Pro",
+          "capability": "completion",
+          "context_window": 1048576,
+          "pricing": {
+            "type": "completion",
+            "input": 1.25,
+            "output": 10.00,
+            "cached_input": 0.315
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+[submodule "distrijs"]
+	path = distrijs
+	url = git@github.com:distrihub/distrijs.git

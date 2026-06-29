@@ -1,0 +1,49 @@
+/target
+/config.yaml
+
+code_samples/
+
+.env
+node_modules/
+distri-ui/node_modules/
+distri-ui/dist/
+docs/
+
+# Downloaded UI files
+distri-server/static/
+
+worktrees/*
+
+local/*
+
+# Plugin directories should not be committed
+examples/plugins
+
+distri-wasm-tools/target/
+wasm-tools/target/
+wasm-tools/**/target/
+**/**/target/
+
+plugins/**/dist/
+
+
+**/**/.DS_Store
+# Ignore everything in .distri by default
+.distri/**
+
+# Re-include the .distri directory itself and the subtrees you want
+!.distri/
+
+.distri/requests/
+.distri/history.txt
+
+
+**/.distri/**
+
+threads/*
+distrijs
+browsr_scenarios.json
+releases/*
+distri.toml
+node_modules/.pnpm/@babel+code-frame@7.27.1/node_modules/@babel/code-frame/package.json
+.turbo/*

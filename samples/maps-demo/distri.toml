@@ -1,0 +1,25 @@
+name = "Distri Maps using vLLora"
+version = "0.1.0"
+
+[model_settings]
+model = "gpt-4.1-mini"
+temperature = 0.5
+max_tokens = 2000
+
+
+[analysis_model_settings]
+model = "gpt-4.1-mini"
+temperature = 0.3
+max_tokens = 800
+context_size = 8000
+
+# You can use any OpenAI compatible provider 
+# Refer to docs for provider configurations
+
+# [model_settings.provider]
+# name = "vllora"
+# base_url = "http://localhost:1237/v1"
+
+# [analysis_model_settings.provider]
+# name = "vllora"
+# base_url = "http://localhost:1237/v1"

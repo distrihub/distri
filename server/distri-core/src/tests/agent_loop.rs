@@ -1,0 +1,186 @@
+use std::sync::Arc;
+
+use crate::agent::{parse_agent_markdown_content, ExecutorContext};
+use crate::tests::helpers::test_store_config;
+use crate::AgentOrchestratorBuilder;
+
+// ── Agent definition parsing ────────────────────────────────────
+
+// coder.md was removed (dormant — replaced by distri_runner / distri_browser_runner).
+// The parse-fixture tests below now use distri_runner.md.
+
+#[tokio::test]
+async fn parse_runner_agent() {
+    let content = include_str!("../../../agents/distri_runner.md");
+    let def = parse_agent_markdown_content(content).await.unwrap();
+    assert_eq!(def.name, "distri_runner");
+    assert!(def.max_iterations.unwrap() >= 10);
+    let tools = def
+        .tools
+        .as_ref()
+        .expect("distri_runner agent should have tools config");
+    assert!(tools.builtin.contains(&"final".to_string()));
+    // Filesystem tools must not be builtins — they live as external tools.
+    assert!(
+        !tools.builtin.iter().any(|t| t.starts_with("fs_")),
+        "distri_runner should not have fs_ tools as builtins"
+    );
+    let external = tools
+        .external
+        .as_ref()
+        .expect("distri_runner should have external tools");
+    assert!(
+        external.contains(&"execute_command".to_string()),
+        "distri_runner should list execute_command as external tool"
+    );
+}
+
+#[test]
+fn builtin_tools_have_no_filesystem_tools() {
+    let tools = crate::tools::get_builtin_tools();
+    let tool_names: Vec<String> = tools.iter().map(|t| t.get_name()).collect();
+    assert!(
+        !tool_names.iter().any(|n| n.starts_with("fs_")),
+        "builtin tools should not include fs_ tools"
+    );
+    assert!(
+        !tool_names.contains(&"apply_diff".to_string()),
+        "builtin tools should not include apply_diff"
+    );
+    assert!(
+        !tool_names.contains(&"list_artifacts".to_string()),
+        "builtin tools should not include artifact tools"
+    );
+    // Shell tools should still be present
+    assert!(tool_names.contains(&"start_shell".to_string()));
+    assert!(tool_names.contains(&"execute_shell".to_string()));
+    assert!(tool_names.contains(&"stop_shell".to_string()));
+}
+
+#[tokio::test]
+async fn parse_distri_agent() {
+    let content = include_str!("../../../agents/distri.md");
+    let def = parse_agent_markdown_content(content).await.unwrap();
+    assert_eq!(def.name, "distri");
+    assert!(!def.instructions.is_empty());
+}
+
+// deepresearch.md was removed from server/agents (not shipped by default). Test removed with it.
+
+#[tokio::test]
+async fn agent_definition_has_instructions() {
+    let content = include_str!("../../../agents/distri_runner.md");
+    let def = parse_agent_markdown_content(content).await.unwrap();
+    assert!(!def.instructions.is_empty());
+}
+
+// ── Orchestrator builder ────────────────────────────────────────
+
+#[tokio::test]
+async fn orchestrator_builds_with_defaults() {
+    let orchestrator = AgentOrchestratorBuilder::default()
+        .with_store_config(test_store_config())
+        .build()
+        .await;
+    assert!(orchestrator.is_ok());
+}
+
+#[tokio::test]
+async fn orchestrator_registers_agent() {
+    let content = include_str!("../../../agents/distri_runner.md");
+    let def = parse_agent_markdown_content(content).await.unwrap();
+    let name = def.name.clone();
+
+    let orchestrator = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .build()
+            .await
+            .unwrap(),
+    );
+
+    orchestrator.register_agent_definition(def).await.unwrap();
+
+    let agent = orchestrator.get_agent(&name).await;
+    assert!(agent.is_some());
+}
+
+#[tokio::test]
+async fn orchestrator_get_nonexistent_agent_returns_none() {
+    let orchestrator = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .build()
+            .await
+            .unwrap(),
+    );
+
+    let agent = orchestrator.get_agent("nonexistent_agent_xyz").await;
+    assert!(agent.is_none());
+}
+
+#[tokio::test]
+async fn orchestrator_registers_multiple_agents() {
+    let orchestrator = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .build()
+            .await
+            .unwrap(),
+    );
+
+    let runner_def = parse_agent_markdown_content(include_str!("../../../agents/distri_runner.md"))
+        .await
+        .unwrap();
+    let distri_def = parse_agent_markdown_content(include_str!("../../../agents/distri.md"))
+        .await
+        .unwrap();
+
+    orchestrator
+        .register_agent_definition(runner_def)
+        .await
+        .unwrap();
+    orchestrator
+        .register_agent_definition(distri_def)
+        .await
+        .unwrap();
+
+    assert!(orchestrator.get_agent("distri_runner").await.is_some());
+    assert!(orchestrator.get_agent("distri").await.is_some());
+}
+
+// ── ExecutorContext ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn executor_context_default_has_valid_ids() {
+    let ctx = ExecutorContext::default();
+    assert!(!ctx.thread_id.is_empty());
+    assert!(!ctx.task_id.is_empty());
+    assert!(!ctx.run_id.is_empty());
+    assert!(!ctx.user_id.is_empty());
+}
+
+#[tokio::test]
+async fn executor_context_final_result_initially_none() {
+    let ctx = ExecutorContext::default();
+    let result = ctx.get_final_result().await;
+    assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn executor_context_set_and_get_final_result() {
+    let ctx = ExecutorContext::default();
+    let value = serde_json::json!({"answer": 42});
+    ctx.set_final_result(Some(value.clone())).await;
+    let result = ctx.get_final_result().await;
+    assert_eq!(result, Some(value));
+}
+
+#[tokio::test]
+async fn executor_context_clear_final_result() {
+    let ctx = ExecutorContext::default();
+    ctx.set_final_result(Some(serde_json::json!("test"))).await;
+    ctx.set_final_result(None).await;
+    let result = ctx.get_final_result().await;
+    assert!(result.is_none());
+}

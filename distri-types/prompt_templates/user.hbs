@@ -1,0 +1,23 @@
+{{#if max_steps}}
+# STEP LIMIT
+Steps remaining: {{remaining_steps}}/{{max_steps}}
+{{/if}}
+
+{{#if todos}}
+# TODOs
+{{todos}}
+{{/if}}
+
+{{!-- Only include if json tools are not supported --}}
+{{#unless json_tools}}
+{{#if scratchpad}}
+# PREVIOUS STEPS
+{{scratchpad}}
+{{/if}}
+{{/unless}}
+
+{{#if dynamic_sections}}
+{{#each dynamic_sections}}
+{{{content}}}
+{{/each}}
+{{/if}}

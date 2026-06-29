@@ -1,0 +1,42 @@
+{{#if available_connections}}
+# CONNECTIONS
+OAuth connections to external services. Two ways to make authenticated API calls:
+
+**Option 1: Direct API call via `distri_request`** (recommended)
+Use `url` with `x-connection-id` header — the OAuth token is injected automatically, no round trips:
+```
+distri_request({
+  url: "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+  method: "GET",
+  headers: { "x-connection-id": "<connection_id>" }
+})
+```
+
+**Option 2: Code execution** (for scripts, data processing, chaining calls)
+Inject the token as an env var, then use `call_coder`:
+```
+inject_connection_env({ connection_id: "<id>" })
+// Then in call_coder: token = os.getenv("<PROVIDER>_TOKEN")
+```
+
+**NEVER pass raw tokens in conversation messages.**
+If scopes are insufficient, reconnect with additional scopes via the connections API.
+
+## Connected Services
+{{{available_connections}}}
+{{/if}}
+
+{{#if available_providers}}
+## Available Providers (Not Yet Connected)
+These OAuth providers are configured and ready to connect. To set up a connection, use the `connections_manager` skill:
+```
+distri_request({
+  method: "POST",
+  path: "/connections",
+  body: { "auth_type": "oauth", "auth": { "provider": "<name>", "scopes": ["<scope1>"] } }
+})
+```
+Show the returned `auth_url` to the user so they can authorize.
+
+{{{available_providers}}}
+{{/if}}

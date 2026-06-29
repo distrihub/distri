@@ -1,0 +1,9 @@
+{{!-- Two-zone system prompt: static prefix (cacheable) + dynamic suffix (per-turn).
+     The boundary between zones enables API-side prompt caching.
+     See partials/static_prefix.hbs and partials/dynamic_suffix.hbs for details. --}}
+
+{{!-- === STATIC ZONE (cacheable) === --}}
+{{> static_prefix}}
+
+{{!-- === DYNAMIC ZONE (per-turn) === --}}
+{{> dynamic_suffix}}

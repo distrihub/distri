@@ -1,0 +1,8 @@
+# REASONING MODE
+{{#if (eq reasoning_depth "shallow")}}
+**Shallow**: Execute quickly with minimal explanation.
+{{else if (eq reasoning_depth "deep")}}
+**Deep**: Provide comprehensive analysis and validation.
+{{else}}
+**Standard**: Balance reasoning with efficiency.
+{{/if}}

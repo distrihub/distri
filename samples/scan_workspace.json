@@ -1,0 +1,36 @@
+{
+  "id": "scan-workspace",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "api_base": { "type": "string", "description": "Base URL for the Distri API" }
+    },
+    "required": ["api_base"]
+  },
+  "steps": [
+    {
+      "id": "list_agents",
+      "label": "List all agents",
+      "kind": { "type": "tool_call", "tool_name": "list_agents" },
+      "execution": "parallel"
+    },
+    {
+      "id": "list_skills",
+      "label": "List all skills",
+      "kind": { "type": "tool_call", "tool_name": "list_skills" },
+      "execution": "parallel"
+    },
+    {
+      "id": "list_workflows",
+      "label": "List workflows",
+      "kind": { "type": "tool_call", "tool_name": "list_workflows" },
+      "execution": "parallel"
+    },
+    {
+      "id": "done",
+      "label": "Workspace scan complete",
+      "kind": { "type": "checkpoint", "message": "Scanned agents, skills, and workflows." },
+      "depends_on": ["list_agents", "list_skills", "list_workflows"]
+    }
+  ]
+}

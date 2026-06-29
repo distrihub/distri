@@ -1,0 +1,4998 @@
+#![allow(dead_code)]
+
+#[cfg(test)]
+mod cancel_task_test;
+#[cfg(test)]
+mod provider_store_test;
+#[cfg(test)]
+mod thread_tokens_test;
+use std::{collections::HashMap, fmt::Display, sync::Arc};
+
+use crate::models::*;
+use crate::schema::{
+    agent_configs, external_tool_calls, integrations, memory_entries, message_reads, message_votes,
+    scratchpad_entries, session_entries, task_messages, tasks, threads,
+};
+use anyhow::{Context, Result, anyhow};
+use async_trait::async_trait;
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use dashmap::DashMap;
+use diesel::prelude::*;
+use diesel::query_builder::QueryFragment;
+use diesel::result::{DatabaseErrorKind, Error as DieselError};
+use diesel_async::AsyncConnectionCore;
+#[cfg(feature = "sqlite")]
+use diesel_async::AsyncMigrationHarness;
+use diesel_async::RunQueryDsl;
+#[cfg(feature = "sqlite")]
+use diesel_async::SimpleAsyncConnection;
+use diesel_async::methods::ExecuteDsl;
+use diesel_async::pooled_connection::deadpool::{Object, Pool};
+use diesel_async::pooled_connection::{AsyncDieselConnectionManager, PoolableConnection};
+#[cfg(feature = "sqlite")]
+use diesel_async::sync_connection_wrapper::SyncConnectionWrapper;
+use diesel_migrations::{EmbeddedMigrations, embed_migrations};
+use distri_types::auth::{AuthError, AuthSecret, AuthSession, OAuth2State, ToolAuthStore};
+use distri_types::connections::{AuthScope, Connection, ConnectionStatus, NewConnection};
+use distri_types::connections::{ConnectionAuth, ConnectionToken};
+use distri_types::stores::SessionSummary;
+use distri_types::stores::{
+    AgentStatsInfo, AgentStore, AgentUsageInfo, ConnectionStore, ConnectionTokenStore,
+    ExternalToolCallsStore, FilterMessageType, MemoryStore, MessageFilter, MessageReadStatus,
+    MessageVote, MessageVoteSummary, NewPromptTemplate, NewSecret, NewSkill, NoteStore,
+    PromptTemplateRecord, PromptTemplateStore, ProviderStore, ScratchpadStore, SecretRecord,
+    SecretStore, ServerSettings, SessionMemory, SessionStore, SkillRecord, SkillStore, TaskStore,
+    ThreadListFilter, ThreadListResponse, ThreadStore, UpdatePromptTemplate, UpdateSkill,
+    UpsertProviderRequest, UpsertProviderResponse, VoteMessageRequest, VoteType,
+};
+use distri_types::{
+    AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
+    TaskEvent, TaskMessage, TaskStatus, Thread, ThreadSummary, ToolResponse, UpdateThreadRequest,
+};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value as JsonValue;
+use tokio::sync::oneshot;
+use tracing::warn;
+use uuid::Uuid;
+
+pub const EMBEDDED_MIGRATIONS: EmbeddedMigrations = embed_migrations!("../migrations");
+
+#[cfg(feature = "sqlite")]
+pub(crate) type StoreBackend = diesel::sqlite::Sqlite;
+
+#[cfg(all(not(feature = "sqlite"), feature = "postgres"))]
+pub(crate) type StoreBackend = diesel::pg::Pg;
+
+pub type DieselConnectionManager<Conn> = AsyncDieselConnectionManager<Conn>;
+pub type DieselPool<Conn> = Pool<Conn>;
+pub type DieselConn<'a, Conn> = Object<Conn>;
+
+#[cfg(feature = "sqlite")]
+pub type SqliteConnectionWrapper = SyncConnectionWrapper<diesel::sqlite::SqliteConnection>;
+#[cfg(feature = "sqlite")]
+pub type SqliteManager = DieselConnectionManager<SqliteConnectionWrapper>;
+#[cfg(feature = "sqlite")]
+pub type SqlitePool = DieselPool<SqliteConnectionWrapper>;
+#[cfg(feature = "sqlite")]
+pub type SqliteConn<'a> = DieselConn<'a, SqliteConnectionWrapper>;
+#[cfg(feature = "sqlite")]
+pub type SqliteStorePool = DieselStorePool<SqliteConnectionWrapper>;
+#[cfg(feature = "sqlite")]
+pub type SqliteStoreBuilder = DieselStoreBuilder<SqliteConnectionWrapper>;
+
+#[cfg(all(not(feature = "sqlite"), feature = "postgres"))]
+pub type PgManager = DieselConnectionManager<diesel_async::AsyncPgConnection>;
+#[cfg(all(not(feature = "sqlite"), feature = "postgres"))]
+pub type PgPool = DieselPool<diesel_async::AsyncPgConnection>;
+#[cfg(all(not(feature = "sqlite"), feature = "postgres"))]
+pub type PgConn<'a> = DieselConn<'a, diesel_async::AsyncPgConnection>;
+#[cfg(all(not(feature = "sqlite"), feature = "postgres"))]
+pub type PgStorePool = DieselStorePool<diesel_async::AsyncPgConnection>;
+#[cfg(all(not(feature = "sqlite"), feature = "postgres"))]
+pub type PgStoreBuilder = DieselStoreBuilder<diesel_async::AsyncPgConnection>;
+
+pub trait DieselBackendConnection:
+    PoolableConnection + AsyncConnectionCore<Backend = StoreBackend> + Send + 'static
+where
+    StoreBackend: diesel::backend::DieselReserveSpecialization + diesel::backend::Backend,
+{
+}
+
+impl<T> DieselBackendConnection for T
+where
+    T: PoolableConnection + AsyncConnectionCore<Backend = StoreBackend> + Send + 'static,
+    StoreBackend: diesel::backend::DieselReserveSpecialization + diesel::backend::Backend,
+{
+}
+
+fn now_naive() -> NaiveDateTime {
+    Utc::now().naive_utc()
+}
+
+fn to_naive(dt: DateTime<Utc>) -> NaiveDateTime {
+    dt.naive_utc()
+}
+
+fn opt_to_naive(dt: Option<DateTime<Utc>>) -> Option<NaiveDateTime> {
+    dt.map(|d| d.naive_utc())
+}
+
+fn from_naive(dt: NaiveDateTime) -> DateTime<Utc> {
+    Utc.from_utc_datetime(&dt)
+}
+
+fn task_status_to_str(status: &TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Pending => "pending",
+        TaskStatus::Running => "running",
+        TaskStatus::InputRequired => "input_required",
+        TaskStatus::Completed => "completed",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Canceled => "canceled",
+    }
+}
+
+fn task_status_from_str(status: &str) -> TaskStatus {
+    match status {
+        "running" => TaskStatus::Running,
+        "input_required" => TaskStatus::InputRequired,
+        "completed" => TaskStatus::Completed,
+        "failed" => TaskStatus::Failed,
+        "canceled" => TaskStatus::Canceled,
+        _ => TaskStatus::Pending,
+    }
+}
+
+fn metadata_to_value_str(metadata: &HashMap<String, JsonValue>) -> Result<String> {
+    serde_json::to_string(metadata).context("failed to serialize thread metadata")
+}
+
+fn metadata_from_str(value: &str) -> HashMap<String, JsonValue> {
+    serde_json::from_str(value).unwrap_or_default()
+}
+
+fn to_task(model: TaskModel) -> Task {
+    Task {
+        id: model.id,
+        thread_id: model.thread_id,
+        parent_task_id: model.parent_task_id,
+        status: task_status_from_str(&model.status),
+        created_at: model.created_at,
+        updated_at: model.updated_at,
+    }
+}
+
+fn to_thread(model: ThreadModel) -> Thread {
+    let user_id = if model.user_id.is_empty() {
+        None
+    } else {
+        Some(model.user_id)
+    };
+    Thread {
+        id: model.id,
+        title: model.title,
+        agent_id: model.agent_id.clone(),
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+        message_count: model.message_count.max(0) as u32,
+        last_message: model.last_message,
+        metadata: metadata_from_str(&model.metadata),
+        attributes: serde_json::from_str(&model.attributes).unwrap_or(serde_json::Value::Null),
+        user_id,
+        external_id: model.external_id,
+        channel_id: None,
+        input_tokens: model.input_tokens.max(0) as u64,
+        output_tokens: model.output_tokens.max(0) as u64,
+        total_tokens: model.total_tokens.max(0) as u64,
+        active_task_id: None,
+        last_context_budget: model
+            .last_context_budget
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok()),
+    }
+}
+
+fn to_thread_summary(thread: &Thread) -> ThreadSummary {
+    ThreadSummary {
+        id: thread.id.clone(),
+        agent_id: thread.agent_id.clone(),
+        agent_name: String::new(),
+        title: thread.title.clone(),
+        updated_at: thread.updated_at,
+        message_count: thread.message_count,
+        last_message: thread.last_message.clone(),
+        user_id: thread.user_id.clone(),
+        external_id: thread.external_id.clone(),
+        channel_id: thread.channel_id.clone(),
+        channel_name: None,
+        tags: None,
+        input_tokens: thread.input_tokens,
+        output_tokens: thread.output_tokens,
+        total_tokens: thread.total_tokens,
+    }
+}
+
+fn to_task_message(model: &TaskMessageModel) -> Result<TaskMessage> {
+    match model.kind.as_str() {
+        "message" => {
+            let message: Message = serde_json::from_str(&model.payload)
+                .context("failed to deserialize task message payload")?;
+            Ok(TaskMessage::Message(message))
+        }
+        "event" => {
+            let event: TaskEvent = serde_json::from_str(&model.payload)
+                .context("failed to deserialize task event payload")?;
+            Ok(TaskMessage::Event(event))
+        }
+        other => Err(anyhow!("unknown task message kind {other}")),
+    }
+}
+
+fn serialize_agent_event(event: AgentEvent) -> TaskEvent {
+    let is_final = matches!(event.event, AgentEventType::RunFinished { .. })
+        || matches!(event.event, AgentEventType::RunError { .. });
+    TaskEvent {
+        event: event.event,
+        created_at: Utc::now().timestamp_millis(),
+        is_final,
+    }
+}
+
+fn session_entry_to_value(entry: &SessionEntryModel) -> Option<JsonValue> {
+    if let Some(expiry) = entry.expiry
+        && from_naive(expiry) < Utc::now()
+    {
+        return None;
+    }
+    serde_json::from_str(&entry.value).ok()
+}
+
+fn message_filter_matches(filter: &MessageFilter, message: &TaskMessage) -> bool {
+    match &filter.filter {
+        Some(filters) if !filters.is_empty() => match message {
+            TaskMessage::Event(_) => filters.contains(&FilterMessageType::Events),
+            TaskMessage::Message(_) => {
+                filters.contains(&FilterMessageType::Messages)
+                    || filters.contains(&FilterMessageType::Artifacts)
+            }
+        },
+        _ => true,
+    }
+}
+
+fn attributes_match(attributes: &JsonValue, filter: &JsonValue) -> bool {
+    match (attributes, filter) {
+        (JsonValue::Object(attrs), JsonValue::Object(filter_map)) => filter_map
+            .iter()
+            .all(|(key, value)| attrs.get(key) == Some(value)),
+        _ => true,
+    }
+}
+const GLOBAL_PROVIDER: &str = "__global__";
+
+fn current_timestamp() -> i64 {
+    Utc::now().timestamp()
+}
+
+fn map_store_error<E: Display>(err: E) -> AuthError {
+    AuthError::StoreError(err.to_string())
+}
+
+fn serialize_value<T: Serialize>(value: &T) -> Result<String, AuthError> {
+    serde_json::to_string(value).map_err(map_store_error)
+}
+
+fn deserialize_value<T: DeserializeOwned>(value: &str) -> Result<T, AuthError> {
+    serde_json::from_str(value).map_err(map_store_error)
+}
+
+fn parse_map<T: DeserializeOwned>(value: &Option<String>) -> Result<HashMap<String, T>, AuthError> {
+    match value {
+        Some(json) => deserialize_value(json),
+        None => Ok(HashMap::new()),
+    }
+}
+
+fn store_map<T: Serialize>(map: HashMap<String, T>) -> Result<Option<String>, AuthError> {
+    if map.is_empty() {
+        Ok(None)
+    } else {
+        serialize_value(&map).map(Some)
+    }
+}
+
+fn normalize_user_id(user_id: &str) -> Result<String, AuthError> {
+    let trimmed = user_id.trim();
+    if trimmed.is_empty() {
+        Err(AuthError::InvalidConfig(
+            "user_id cannot be empty".to_string(),
+        ))
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn normalize_optional_provider(provider: Option<&str>) -> Result<String, AuthError> {
+    match provider {
+        Some(value) => normalize_provider(value),
+        None => Ok(GLOBAL_PROVIDER.to_string()),
+    }
+}
+
+fn normalize_provider(provider: &str) -> Result<String, AuthError> {
+    let trimmed = provider.trim();
+    if trimmed.is_empty() {
+        Err(AuthError::InvalidConfig(
+            "provider/auth_entity cannot be empty".to_string(),
+        ))
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredOAuthState {
+    redirect_uri: Option<String>,
+    user_id: String,
+    scopes: Vec<String>,
+    metadata: HashMap<String, JsonValue>,
+    created_at: i64,
+}
+
+/// SQLite-specific pool wrapper
+pub struct DieselStorePool<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselPool<Conn>,
+}
+
+impl<Conn> DieselStorePool<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselPool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    pub async fn get(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to get connection from pool")
+    }
+
+    pub fn clone_pool(&self) -> DieselPool<Conn> {
+        self.pool.clone()
+    }
+
+    /// Clone the entire store pool (for passing to stores)
+    pub fn clone_store_pool(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+        }
+    }
+}
+
+impl<Conn> Clone for DieselStorePool<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+        }
+    }
+}
+
+#[cfg(feature = "sqlite")]
+impl DieselStorePool<SqliteConnectionWrapper> {
+    async fn sqlite_pool(database_url: &str, max_connections: u32) -> Result<SqlitePool> {
+        tracing::debug!("Creating connection pool with URL: {}", database_url);
+        let manager = SqliteManager::new(database_url);
+        let pool = SqlitePool::builder(manager)
+            .max_size(max_connections as usize)
+            .build()
+            .context("failed to build SQLite pool")?;
+
+        tracing::debug!("Pool created successfully for: {}", database_url);
+        Ok(pool)
+    }
+
+    pub async fn new_sqlite(database_url: &str, max_connections: u32) -> Result<Self> {
+        let is_in_memory =
+            database_url.contains(":memory:") || database_url.contains("mode=memory");
+
+        if is_in_memory {
+            // For in-memory databases with shared cache (file:name?mode=memory&cache=shared):
+            // 1. Create the pool first
+            // 2. Get a connection from the pool
+            // 3. Run migrations on that connection's inner sync connection
+            // 4. Return connection to pool - all future pool connections share the same DB
+            // See: https://github.com/weiznich/diesel_async/issues/213
+            tracing::debug!(
+                "Creating ephemeral in-memory SQLite with shared cache: {}",
+                database_url
+            );
+
+            // Create pool first
+
+            let pool = Self::sqlite_pool(database_url, max_connections).await?;
+
+            // Run migrations using AsyncMigrationHarness
+            // The harness provides sync methods that work directly with the connection
+            tracing::info!("Running migrations on in-memory database");
+
+            let mut harness = AsyncMigrationHarness::new(pool.get().await?);
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                diesel_migrations::MigrationHarness::run_pending_migrations(
+                    &mut harness,
+                    EMBEDDED_MIGRATIONS,
+                )
+                .map_err(|err| anyhow!("failed to run diesel migrations: {err}"))?;
+                Ok(())
+            })
+            .await
+            .map_err(|err| anyhow!("migration thread panicked: {err}"))??;
+            // TODO: this will not work per request
+            // harness
+            //     .run_pending_migrations(EMBEDDED_MIGRATIONS)
+            //     .map_err(|err| anyhow!("failed to run diesel migrations: {err}"))?;
+
+            tracing::info!("In-memory database initialized with migrations ✅");
+
+            // Connection returns to pool, database stays alive due to shared cache
+            tracing::debug!("In-memory pool ready ✅");
+
+            Ok(Self { pool })
+        } else {
+            // For file-based databases, use connection pool normally
+            run_migrations(database_url).await?;
+
+            let pool = Self::sqlite_pool(database_url, max_connections).await?;
+            Ok(Self { pool })
+        }
+    }
+}
+
+#[cfg(all(not(feature = "sqlite"), feature = "postgres"))]
+impl DieselStorePool<diesel_async::AsyncPgConnection> {
+    pub async fn postgres_pool(database_url: &str, max_connections: u32) -> Result<PgPool> {
+        let manager = PgManager::new(database_url);
+        let pool = PgPool::builder(manager)
+            .max_size(max_connections as usize)
+            .build()
+            .context("failed to build Postgres pool")?;
+        Ok(pool)
+    }
+
+    pub async fn new_postgres(database_url: &str, max_connections: u32) -> Result<Self> {
+        let pool = Self::postgres_pool(database_url, max_connections).await?;
+        Ok(Self { pool })
+    }
+}
+
+/// Ensures parent directories exist for file-backed SQLite URLs so opening the DB can create the file.
+#[cfg(feature = "sqlite")]
+fn ensure_sqlite_parent_dir_exists(database_url: &str) -> Result<()> {
+    use std::path::Path;
+    if database_url.contains(":memory:") || database_url.contains("mode=memory") {
+        return Ok(());
+    }
+    let path_part = database_url.split('?').next().unwrap_or(database_url);
+    let path_part = path_part.strip_prefix("file:").unwrap_or(path_part);
+    // `file:///absolute/path` becomes `///absolute/path` after stripping `file:`.
+    let path_part = match path_part.strip_prefix("//") {
+        Some(rest) if rest.starts_with('/') => rest,
+        _ => path_part,
+    };
+    let path = Path::new(path_part);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create database directory {}", parent.display())
+            })?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sqlite")]
+async fn run_migrations(database_url: &str) -> Result<()> {
+    tracing::debug!("Running migrations for database: {}", database_url);
+
+    ensure_sqlite_parent_dir_exists(database_url)?;
+
+    // Create a temporary connection pool to run migrations
+    let manager = SqliteManager::new(database_url);
+    let pool = SqlitePool::builder(manager)
+        .max_size(1)
+        .build()
+        .context("failed to create migration pool")?;
+
+    let mut conn = pool
+        .get()
+        .await
+        .context("failed to get migration connection")?;
+
+    // Enable WAL mode for file-based databases (done via pragma)
+    conn.batch_execute("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")
+        .await
+        .context("failed to configure SQLite")?;
+
+    // Run migrations using AsyncMigrationHarness inside spawn_blocking
+    let mut harness = diesel_async::AsyncMigrationHarness::new(conn);
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        diesel_migrations::MigrationHarness::run_pending_migrations(
+            &mut harness,
+            EMBEDDED_MIGRATIONS,
+        )
+        .map_err(|err| anyhow!("failed to run diesel migrations: {err}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|err| anyhow!("migration thread panicked: {err}"))??;
+
+    tracing::debug!("Migrations completed successfully for: {}", database_url);
+    Ok(())
+}
+
+#[derive(Clone)]
+pub struct DieselAgentStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselAgentStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection")
+    }
+}
+
+#[async_trait]
+impl<Conn> AgentStore for DieselAgentStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn list(
+        &self,
+        cursor: Option<String>,
+        limit: Option<usize>,
+    ) -> (
+        Vec<distri_types::configuration::AgentConfig>,
+        Option<String>,
+    ) {
+        let mut connection = match self.conn().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                warn!("failed to list agents via diesel store: {err:?}");
+                return (vec![], cursor);
+            }
+        };
+
+        let mut query = agent_configs::table.into_boxed();
+        if let Some(ref cursor_value) = cursor {
+            query = query.filter(agent_configs::name.gt(cursor_value));
+        }
+
+        let fetch_limit = limit.unwrap_or(100) as i64;
+        let rows = match query
+            .order(agent_configs::name.asc())
+            .limit(fetch_limit + 1)
+            .load::<AgentConfigModel>(&mut connection)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(err) => {
+                warn!("failed to load agent configs: {err:?}");
+                return (vec![], None);
+            }
+        };
+
+        let mut configs = Vec::new();
+        let mut next_cursor = None;
+
+        for (index, row) in rows.into_iter().enumerate() {
+            if index as i64 == fetch_limit {
+                next_cursor = Some(row.name.clone());
+                break;
+            }
+
+            match serde_json::from_str(&row.config) {
+                Ok(config) => configs.push(config),
+                Err(err) => warn!("failed to deserialize agent config: {err:?}"),
+            }
+        }
+
+        (configs, next_cursor)
+    }
+
+    async fn get(&self, name: &str) -> Option<distri_types::configuration::AgentConfig> {
+        let mut connection = self.conn().await.ok()?;
+        agent_configs::table
+            .find(name)
+            .first::<AgentConfigModel>(&mut connection)
+            .await
+            .ok()
+            .and_then(|row| serde_json::from_str(&row.config).ok())
+    }
+
+    async fn register(&self, config: distri_types::configuration::AgentConfig) -> Result<()> {
+        if let distri_types::configuration::AgentConfig::StandardAgent(def) = &config {
+            distri_types::prompt::validate_template_content(&def.instructions).with_context(
+                || format!("agent '{}' has invalid handlebars instructions", def.name),
+            )?;
+        }
+        let mut connection = self.conn().await?;
+        let name = config.get_name().to_string();
+        let serialized =
+            serde_json::to_string(&config).context("failed to serialize agent config")?;
+        let timestamp = now_naive();
+
+        let insert = NewAgentConfigModel {
+            name: &name,
+            config: &serialized,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+
+        let changes = AgentConfigChangeset {
+            config: &serialized,
+            updated_at: timestamp,
+        };
+
+        diesel::insert_into(agent_configs::table)
+            .values(&insert)
+            .on_conflict(agent_configs::name)
+            .do_update()
+            .set(&changes)
+            .execute(&mut connection)
+            .await
+            .context("failed to upsert agent config")?;
+
+        Ok(())
+    }
+
+    async fn update(&self, config: distri_types::configuration::AgentConfig) -> Result<()> {
+        self.register(config).await
+    }
+
+    async fn clear(&self) -> Result<()> {
+        let mut connection = self.conn().await?;
+        diesel::delete(agent_configs::table)
+            .execute(&mut connection)
+            .await
+            .context("failed to clear agent configs")?;
+        Ok(())
+    }
+
+    async fn delete(&self, id: &str) -> Result<()> {
+        let mut connection = self.conn().await?;
+        let deleted = diesel::delete(agent_configs::table.filter(agent_configs::name.eq(id)))
+            .execute(&mut connection)
+            .await
+            .context("failed to delete agent config")?;
+        if deleted == 0 {
+            anyhow::bail!("agent not found: {}", id);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselThreadStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselThreadStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection")
+    }
+
+    async fn fetch_thread(&self, thread_id: &str) -> Result<Option<Thread>> {
+        let mut connection = self
+            .conn()
+            .await
+            .context("failed to get connection for thread fetch")?;
+        let row = threads::table
+            .find(thread_id)
+            .first::<ThreadModel>(&mut connection)
+            .await
+            .optional()
+            .context(format!(
+                "failed to query thread table for thread_id: {}",
+                thread_id
+            ))?;
+        Ok(row.map(to_thread))
+    }
+}
+
+impl<Conn> std::fmt::Debug for DieselThreadStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DieselThreadStore").finish()
+    }
+}
+
+#[async_trait]
+impl<Conn> ThreadStore for DieselThreadStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    async fn create_thread(&self, request: CreateThreadRequest) -> Result<Thread> {
+        let mut thread = Thread::new(
+            request.agent_id,
+            request.title,
+            request.thread_id,
+            None,
+            request.external_id,
+        );
+        if let Some(attributes) = request.attributes {
+            thread.attributes = attributes;
+        }
+
+        let metadata_value = metadata_to_value_str(&thread.metadata)?;
+        let created_at = to_naive(thread.created_at);
+        let updated_at = to_naive(thread.updated_at);
+
+        let user_id = thread.user_id.as_deref().unwrap_or("");
+        let new_model = NewThreadModel {
+            id: &thread.id,
+            agent_id: &thread.agent_id,
+            title: &thread.title,
+            created_at,
+            updated_at,
+            message_count: thread.message_count as i32,
+            last_message: thread.last_message.as_deref(),
+            metadata: &metadata_value,
+            attributes: &thread.attributes.to_string(),
+            external_id: thread.external_id.as_deref(),
+            channel_id: None,
+            user_id,
+            input_tokens: thread.input_tokens as i64,
+            output_tokens: thread.output_tokens as i64,
+            total_tokens: thread.total_tokens as i64,
+        };
+
+        let mut connection = self
+            .conn()
+            .await
+            .context("failed to get connection for create_thread")?;
+
+        #[cfg(feature = "sqlite")]
+        {
+            // Debug: Check what tables are visible to this connection
+            use diesel::QueryableByName;
+            #[derive(QueryableByName)]
+            struct TableName {
+                #[diesel(sql_type = diesel::sql_types::Text)]
+                name: String,
+            }
+
+            let tables_result = diesel::dsl::sql_query(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+            )
+            .load::<TableName>(&mut connection)
+            .await;
+
+            match tables_result {
+                Ok(rows) => {
+                    let names: Vec<String> = rows.into_iter().map(|t| t.name).collect();
+                    tracing::debug!("Pool connection sees tables: {:?}", names);
+                }
+                Err(e) => tracing::error!("Pool connection failed to list tables: {}", e),
+            }
+        }
+
+        tracing::debug!(
+            "Attempting to insert thread {} into threads table",
+            thread.id
+        );
+        diesel::insert_into(threads::table)
+            .values(&new_model)
+            .on_conflict(threads::id)
+            .do_nothing()
+            .execute(&mut connection)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to insert thread {}: {}", thread.id, e);
+                anyhow!("failed to insert thread (thread_id: {}): {}", thread.id, e)
+            })?;
+
+        Ok(thread)
+    }
+
+    async fn get_thread(&self, thread_id: &str) -> Result<Option<Thread>> {
+        self.fetch_thread(thread_id).await
+    }
+
+    async fn update_thread(&self, thread_id: &str, request: UpdateThreadRequest) -> Result<Thread> {
+        let mut connection = self.conn().await?;
+        let record = threads::table
+            .find(thread_id)
+            .first::<ThreadModel>(&mut connection)
+            .await
+            .context("thread not found")?;
+
+        let mut thread = to_thread(record);
+
+        if let Some(title) = request.title {
+            thread.title = title;
+        }
+        if let Some(metadata) = request.metadata {
+            thread.metadata.extend(metadata);
+        }
+        if let Some(attributes) = request.attributes {
+            thread.attributes = attributes;
+        }
+
+        thread.updated_at = Utc::now();
+
+        let metadata_value = metadata_to_value_str(&thread.metadata)?;
+        let attr_str = thread.attributes.to_string();
+
+        let changeset = ThreadChangeset {
+            title: Some(&thread.title),
+            updated_at: to_naive(thread.updated_at),
+            message_count: Some(thread.message_count as i32),
+            last_message: Some(thread.last_message.as_deref()),
+            metadata: Some(&metadata_value),
+            attributes: Some(&attr_str),
+            external_id: None,
+            channel_id: None,
+            last_context_budget: None,
+        };
+
+        diesel::update(threads::table.find(thread_id))
+            .set(&changeset)
+            .execute(&mut connection)
+            .await
+            .context("failed to update thread")?;
+
+        Ok(thread)
+    }
+
+    async fn delete_thread(&self, thread_id: &str) -> Result<()> {
+        let mut connection = self.conn().await?;
+        diesel::delete(threads::table.filter(threads::id.eq(thread_id)))
+            .execute(&mut connection)
+            .await
+            .context("failed to delete thread")?;
+        Ok(())
+    }
+
+    async fn list_threads(
+        &self,
+        filter: &ThreadListFilter,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<ThreadListResponse> {
+        let mut connection = self.conn().await?;
+        let page_size = limit.unwrap_or(30).min(100);
+        let offset_val = offset.unwrap_or(0);
+
+        let mut query = threads::table.into_boxed();
+
+        // Local store is single-tenant, so we ignore user_id filter
+        // Filter by agent_id if provided
+        if let Some(agent) = &filter.agent_id {
+            query = query.filter(threads::agent_id.eq(agent.as_str()));
+        }
+
+        // Filter by external_id if provided
+        if let Some(ext_id) = &filter.external_id {
+            query = query.filter(threads::external_id.eq(ext_id.as_str()));
+        }
+
+        // Get total count first
+        let total: i64 = {
+            let mut count_query = threads::table.into_boxed();
+            if let Some(agent) = &filter.agent_id {
+                count_query = count_query.filter(threads::agent_id.eq(agent.as_str()));
+            }
+            if let Some(ext_id) = &filter.external_id {
+                count_query = count_query.filter(threads::external_id.eq(ext_id.as_str()));
+            }
+            count_query
+                .count()
+                .get_result(&mut connection)
+                .await
+                .unwrap_or(0)
+        };
+
+        let rows = query
+            .order(threads::updated_at.desc())
+            .offset(offset_val as i64)
+            .limit(page_size as i64)
+            .load::<ThreadModel>(&mut connection)
+            .await?;
+
+        let mut summaries = Vec::new();
+
+        for row in rows {
+            let thread = to_thread(row);
+            if filter
+                .attributes
+                .as_ref()
+                .is_none_or(|f| attributes_match(&thread.attributes, f))
+            {
+                summaries.push(to_thread_summary(&thread));
+            }
+        }
+
+        let page = (offset_val / page_size) + 1;
+
+        Ok(ThreadListResponse {
+            threads: summaries,
+            total,
+            page,
+            page_size,
+        })
+    }
+
+    async fn get_agents_by_usage(&self, search: Option<&str>) -> Result<Vec<AgentUsageInfo>> {
+        let mut connection = self.conn().await?;
+
+        // Get tenant context for filtering
+        let user_id = distri_types::context::current_user_id()
+            .ok_or_else(|| anyhow::anyhow!("User context required"))?;
+        let workspace_id = distri_types::context::current_workspace_id();
+
+        #[derive(QueryableByName)]
+        struct AgentCount {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_name: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            thread_count: i64,
+        }
+
+        // Build search pattern for ILIKE filtering
+        let search_pattern = search
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("%{}%", s.replace('%', "\\%").replace('_', "\\_")));
+
+        let results: Vec<AgentCount> = if let Some(ws_id) = workspace_id {
+            // With workspace: UNION used agents (from threads) with unused agents (from agent_configs)
+            let sql = if search_pattern.is_some() {
+                "SELECT agent_id, agent_name, thread_count FROM (
+                    SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+                    FROM threads t
+                    LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.workspace_id = $2::uuid
+                    WHERE t.user_id = $1::uuid AND t.workspace_id = $2::uuid
+                    GROUP BY t.agent_id, a.name
+                    UNION ALL
+                    SELECT a.name as agent_id, a.name as agent_name, 0 as thread_count
+                    FROM agent_configs a
+                    WHERE a.workspace_id = $2::uuid
+                      AND a.name NOT IN (
+                          SELECT DISTINCT agent_id FROM threads WHERE user_id = $1::uuid AND workspace_id = $2::uuid
+                      )
+                ) combined
+                WHERE agent_name ILIKE $3
+                ORDER BY thread_count DESC, agent_name ASC"
+            } else {
+                "SELECT agent_id, agent_name, thread_count FROM (
+                    SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+                    FROM threads t
+                    LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.workspace_id = $2::uuid
+                    WHERE t.user_id = $1::uuid AND t.workspace_id = $2::uuid
+                    GROUP BY t.agent_id, a.name
+                    UNION ALL
+                    SELECT a.name as agent_id, a.name as agent_name, 0 as thread_count
+                    FROM agent_configs a
+                    WHERE a.workspace_id = $2::uuid
+                      AND a.name NOT IN (
+                          SELECT DISTINCT agent_id FROM threads WHERE user_id = $1::uuid AND workspace_id = $2::uuid
+                      )
+                ) combined
+                ORDER BY thread_count DESC, agent_name ASC"
+            };
+
+            let query = diesel::sql_query(sql)
+                .bind::<diesel::sql_types::Text, _>(user_id.to_string())
+                .bind::<diesel::sql_types::Text, _>(ws_id.to_string());
+
+            if let Some(ref pattern) = search_pattern {
+                query
+                    .bind::<diesel::sql_types::Text, _>(pattern.clone())
+                    .get_results(&mut connection)
+                    .await
+                    .context("failed to get agents by usage")?
+            } else {
+                query
+                    .get_results(&mut connection)
+                    .await
+                    .context("failed to get agents by usage")?
+            }
+        } else {
+            // Without workspace: UNION used agents with unused agents
+            let sql = if search_pattern.is_some() {
+                "SELECT agent_id, agent_name, thread_count FROM (
+                    SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+                    FROM threads t
+                    LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.owner_user_id = $1::uuid AND a.workspace_id IS NULL
+                    WHERE t.user_id = $1::uuid AND t.workspace_id IS NULL
+                    GROUP BY t.agent_id, a.name
+                    UNION ALL
+                    SELECT a.name as agent_id, a.name as agent_name, 0 as thread_count
+                    FROM agent_configs a
+                    WHERE a.owner_user_id = $1::uuid AND a.workspace_id IS NULL
+                      AND a.name NOT IN (
+                          SELECT DISTINCT agent_id FROM threads WHERE user_id = $1::uuid AND workspace_id IS NULL
+                      )
+                ) combined
+                WHERE agent_name ILIKE $2
+                ORDER BY thread_count DESC, agent_name ASC"
+            } else {
+                "SELECT agent_id, agent_name, thread_count FROM (
+                    SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+                    FROM threads t
+                    LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.owner_user_id = $1::uuid AND a.workspace_id IS NULL
+                    WHERE t.user_id = $1::uuid AND t.workspace_id IS NULL
+                    GROUP BY t.agent_id, a.name
+                    UNION ALL
+                    SELECT a.name as agent_id, a.name as agent_name, 0 as thread_count
+                    FROM agent_configs a
+                    WHERE a.owner_user_id = $1::uuid AND a.workspace_id IS NULL
+                      AND a.name NOT IN (
+                          SELECT DISTINCT agent_id FROM threads WHERE user_id = $1::uuid AND workspace_id IS NULL
+                      )
+                ) combined
+                ORDER BY thread_count DESC, agent_name ASC"
+            };
+
+            let query =
+                diesel::sql_query(sql).bind::<diesel::sql_types::Text, _>(user_id.to_string());
+
+            if let Some(ref pattern) = search_pattern {
+                query
+                    .bind::<diesel::sql_types::Text, _>(pattern.clone())
+                    .get_results(&mut connection)
+                    .await
+                    .context("failed to get agents by usage")?
+            } else {
+                query
+                    .get_results(&mut connection)
+                    .await
+                    .context("failed to get agents by usage")?
+            }
+        };
+
+        Ok(results
+            .into_iter()
+            .map(|r| AgentUsageInfo {
+                agent_id: r.agent_id,
+                agent_name: r.agent_name,
+                thread_count: r.thread_count,
+            })
+            .collect())
+    }
+
+    async fn get_agent_stats_map(
+        &self,
+    ) -> Result<std::collections::HashMap<String, AgentStatsInfo>> {
+        let mut connection = self.conn().await?;
+
+        #[derive(QueryableByName)]
+        struct StatsRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_id: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            thread_count: i64,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Timestamp>)]
+            last_used_at: Option<chrono::NaiveDateTime>,
+        }
+
+        // Get thread stats
+        let thread_stats: Vec<StatsRow> = diesel::sql_query(
+            "SELECT agent_id, COUNT(*) as thread_count, MAX(updated_at) as last_used_at
+             FROM threads
+             GROUP BY agent_id",
+        )
+        .get_results(&mut connection)
+        .await
+        .unwrap_or_default();
+
+        // Get sub-agent usage counts using SQLite JSON functions
+        #[derive(QueryableByName)]
+        struct SubAgentRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            sub_agent_name: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            usage_count: i64,
+        }
+
+        let sub_agent_stats: Vec<SubAgentRow> = diesel::sql_query(
+            "SELECT j.value AS sub_agent_name, COUNT(*) AS usage_count
+             FROM agent_configs, json_each(json_extract(config, '$.sub_agents')) AS j
+             WHERE json_extract(config, '$.sub_agents') IS NOT NULL
+             GROUP BY j.value",
+        )
+        .get_results(&mut connection)
+        .await
+        .unwrap_or_default();
+
+        let mut stats_map: std::collections::HashMap<String, AgentStatsInfo> =
+            std::collections::HashMap::new();
+
+        // Add thread stats
+        for r in thread_stats {
+            stats_map.insert(
+                r.agent_id,
+                AgentStatsInfo {
+                    thread_count: r.thread_count,
+                    sub_agent_usage_count: 0,
+                    last_used_at: r
+                        .last_used_at
+                        .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc)),
+                },
+            );
+        }
+
+        // Add sub-agent usage counts
+        for r in sub_agent_stats {
+            stats_map
+                .entry(r.sub_agent_name)
+                .and_modify(|s| s.sub_agent_usage_count = r.usage_count)
+                .or_insert(AgentStatsInfo {
+                    thread_count: 0,
+                    sub_agent_usage_count: r.usage_count,
+                    last_used_at: None,
+                });
+        }
+
+        Ok(stats_map)
+    }
+
+    async fn update_thread_with_message(&self, thread_id: &str, message: &str) -> Result<()> {
+        let mut connection = self.conn().await?;
+        let record = threads::table
+            .find(thread_id)
+            .first::<ThreadModel>(&mut connection)
+            .await
+            .context("thread not found")?;
+
+        let mut thread = to_thread(record);
+        thread.update_with_message(message);
+
+        let metadata_value = metadata_to_value_str(&thread.metadata)?;
+        let attr_str = thread.attributes.to_string();
+
+        let changeset = ThreadChangeset {
+            title: Some(&thread.title),
+            updated_at: to_naive(thread.updated_at),
+            message_count: Some(thread.message_count as i32),
+            last_message: Some(thread.last_message.as_deref()),
+            metadata: Some(&metadata_value),
+            attributes: Some(&attr_str),
+            external_id: None,
+            channel_id: None,
+            last_context_budget: None,
+        };
+
+        diesel::update(threads::table.find(thread_id))
+            .set(&changeset)
+            .execute(&mut connection)
+            .await
+            .context("failed to update thread with message")?;
+
+        Ok(())
+    }
+
+    async fn get_home_stats(&self) -> Result<distri_types::stores::HomeStats> {
+        let mut connection = self.conn().await?;
+
+        // Count total agents
+        let total_agents = agent_configs::table
+            .count()
+            .get_result::<i64>(&mut connection)
+            .await
+            .context("Failed to count agents")?;
+
+        // Count total threads
+        let total_threads = threads::table
+            .count()
+            .get_result::<i64>(&mut connection)
+            .await
+            .context("Failed to count threads")?;
+
+        // Sum all message counts from threads
+        let total_messages: Option<i64> = threads::table
+            .select(diesel::dsl::sum(threads::message_count))
+            .first(&mut connection)
+            .await
+            .context("Failed to sum message counts")?;
+
+        // Get latest 5 threads
+        let latest_thread_rows: Vec<(String, String, String, NaiveDateTime)> = threads::table
+            .select((
+                threads::id,
+                threads::title,
+                threads::agent_id,
+                threads::updated_at,
+            ))
+            .order(threads::updated_at.desc())
+            .limit(5)
+            .load(&mut connection)
+            .await
+            .context("Failed to load latest threads")?;
+
+        let latest_threads: Vec<distri_types::stores::LatestThreadInfo> = latest_thread_rows
+            .into_iter()
+            .map(
+                |(id, title, aid, updated_at)| distri_types::stores::LatestThreadInfo {
+                    id,
+                    title,
+                    agent_id: aid.clone(),
+                    agent_name: aid,
+                    updated_at: chrono::DateTime::from_naive_utc_and_offset(
+                        updated_at,
+                        chrono::Utc,
+                    ),
+                },
+            )
+            .collect();
+
+        // Get most active agent (agent with most threads)
+        #[derive(QueryableByName)]
+        struct AgentThreadCount {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_name: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            thread_count: i64,
+        }
+
+        let most_active: Option<AgentThreadCount> = diesel::sql_query(
+            "SELECT t.agent_id, t.agent_id as agent_name, COUNT(*) as thread_count
+             FROM threads t
+             LEFT JOIN agent_configs a ON t.agent_id = a.name
+             GROUP BY t.agent_id, a.name
+             ORDER BY thread_count DESC
+             LIMIT 1",
+        )
+        .get_result(&mut connection)
+        .await
+        .optional()?;
+
+        let most_active_agent = most_active.map(|a| distri_types::stores::MostActiveAgent {
+            id: a.agent_id,
+            name: a.agent_name,
+            thread_count: a.thread_count,
+        });
+
+        // Calculate average run time from run_started → run_finished/run_error events
+        // This measures actual agent run duration, not task creation-to-completion gaps
+        #[derive(QueryableByName)]
+        struct AvgResult {
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Double>)]
+            avg_duration: Option<f64>,
+        }
+
+        let avg_result: Option<AvgResult> = diesel::sql_query(
+            "SELECT AVG(run_end - run_start) as avg_duration
+             FROM (
+                 SELECT task_id,
+                        MAX(CASE WHEN json_extract(payload, '$.event.type') = 'run_started' THEN created_at END) as run_start,
+                        MAX(CASE WHEN json_extract(payload, '$.event.type') IN ('run_finished', 'run_error') THEN created_at END) as run_end
+                 FROM task_messages
+                 WHERE kind = 'event'
+                 GROUP BY task_id
+             ) runs
+             WHERE run_start IS NOT NULL AND run_end IS NOT NULL AND run_end > run_start",
+        )
+        .get_result(&mut connection)
+        .await
+        .optional()
+        ?;
+
+        let avg_run_time_ms = avg_result.and_then(|r| r.avg_duration);
+
+        // Get recently used agents (last 10 distinct agents by most recent thread activity)
+        #[derive(QueryableByName)]
+        struct RecentAgentRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_name: String,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            description: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Timestamp)]
+            last_used_at: chrono::NaiveDateTime,
+        }
+
+        let recent_agents: Vec<RecentAgentRow> = diesel::sql_query(
+            "SELECT agent_id, COALESCE(a.name, agent_id) as agent_name, a.description, MAX(t.updated_at) as last_used_at
+             FROM threads t
+             LEFT JOIN agent_configs a ON t.agent_id = a.name
+             GROUP BY t.agent_id, a.name, a.description
+             ORDER BY last_used_at DESC
+             LIMIT 10",
+        )
+        .get_results(&mut connection)
+        .await
+        .unwrap_or_default();
+
+        let recently_used_agents: Vec<distri_types::stores::RecentlyUsedAgent> = recent_agents
+            .into_iter()
+            .map(|r| distri_types::stores::RecentlyUsedAgent {
+                id: r.agent_id,
+                name: r.agent_name,
+                description: r.description,
+                last_used_at: chrono::DateTime::from_naive_utc_and_offset(
+                    r.last_used_at,
+                    chrono::Utc,
+                ),
+            })
+            .collect();
+
+        Ok(distri_types::stores::HomeStats {
+            total_agents,
+            total_threads,
+            total_messages: total_messages.unwrap_or(0),
+            avg_run_time_ms,
+            // Local is single-tenant, so owned = accessible = total
+            total_owned_agents: Some(total_agents),
+            total_accessible_agents: Some(total_agents),
+            most_active_agent,
+            latest_threads: Some(latest_threads),
+            recently_used_agents: Some(recently_used_agents),
+            custom_metrics: None,
+        })
+    }
+
+    // ========== Message Read Status Methods ==========
+
+    async fn mark_message_read(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<MessageReadStatus> {
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
+        let now = Utc::now();
+
+        let mut connection = self.conn().await?;
+
+        // Check if record already exists
+        let existing = message_reads::table
+            .filter(message_reads::thread_id.eq(thread_id))
+            .filter(message_reads::message_id.eq(message_id))
+            .filter(message_reads::user_id.eq(&user_id))
+            .select(MessageReadModel::as_select())
+            .first::<MessageReadModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to query existing read status")?;
+
+        if let Some(existing_read) = existing {
+            // Update existing record
+            diesel::update(message_reads::table.filter(message_reads::id.eq(&existing_read.id)))
+                .set(message_reads::read_at.eq(now.naive_utc()))
+                .execute(&mut connection)
+                .await
+                .context("failed to update message read status")?;
+        } else {
+            // Insert new record
+            let id = Uuid::new_v4().to_string();
+            let new_read = NewMessageReadModel {
+                id: &id,
+                thread_id,
+                message_id,
+                user_id: &user_id,
+                read_at: now.naive_utc(),
+                created_at: now.naive_utc(),
+            };
+
+            diesel::insert_into(message_reads::table)
+                .values(&new_read)
+                .execute(&mut connection)
+                .await
+                .context("failed to mark message as read")?;
+        }
+
+        Ok(MessageReadStatus {
+            thread_id: thread_id.to_string(),
+            message_id: message_id.to_string(),
+            user_id,
+            read_at: now,
+        })
+    }
+
+    async fn get_message_read_status(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<Option<MessageReadStatus>> {
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
+        let mut connection = self.conn().await?;
+
+        let row = message_reads::table
+            .filter(message_reads::thread_id.eq(thread_id))
+            .filter(message_reads::message_id.eq(message_id))
+            .filter(message_reads::user_id.eq(&user_id))
+            .select(MessageReadModel::as_select())
+            .first::<MessageReadModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to query message read status")?;
+
+        Ok(row.map(|r| MessageReadStatus {
+            thread_id: r.thread_id,
+            message_id: r.message_id,
+            user_id: r.user_id,
+            read_at: DateTime::from_naive_utc_and_offset(r.read_at, Utc),
+        }))
+    }
+
+    async fn get_thread_read_status(&self, thread_id: &str) -> Result<Vec<MessageReadStatus>> {
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
+        let mut connection = self.conn().await?;
+
+        let rows = message_reads::table
+            .filter(message_reads::thread_id.eq(thread_id))
+            .filter(message_reads::user_id.eq(&user_id))
+            .select(MessageReadModel::as_select())
+            .load::<MessageReadModel>(&mut connection)
+            .await
+            .context("failed to query thread read status")?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| MessageReadStatus {
+                thread_id: r.thread_id,
+                message_id: r.message_id,
+                user_id: r.user_id,
+                read_at: DateTime::from_naive_utc_and_offset(r.read_at, Utc),
+            })
+            .collect())
+    }
+
+    // ========== Message Voting Methods ==========
+
+    async fn vote_message(&self, request: VoteMessageRequest) -> Result<MessageVote> {
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
+        let now = Utc::now();
+
+        // Validate: downvotes require a comment
+        if request.vote_type == VoteType::Downvote && request.comment.is_none() {
+            return Err(anyhow!("Downvotes require a comment explaining the issue"));
+        }
+
+        let vote_type_str = match request.vote_type {
+            VoteType::Upvote => "upvote",
+            VoteType::Downvote => "downvote",
+        };
+
+        let mut connection = self.conn().await?;
+
+        // Check if user already voted on this message
+        let existing = message_votes::table
+            .filter(message_votes::thread_id.eq(&request.thread_id))
+            .filter(message_votes::message_id.eq(&request.message_id))
+            .filter(message_votes::user_id.eq(&user_id))
+            .select(MessageVoteModel::as_select())
+            .first::<MessageVoteModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to query existing vote")?;
+
+        if let Some(existing_vote) = existing {
+            // Update existing vote
+            let changeset = MessageVoteChangeset {
+                vote_type: vote_type_str,
+                comment: Some(request.comment.as_deref()),
+                updated_at: now.naive_utc(),
+            };
+
+            diesel::update(message_votes::table.filter(message_votes::id.eq(&existing_vote.id)))
+                .set(&changeset)
+                .execute(&mut connection)
+                .await
+                .context("failed to update vote")?;
+
+            Ok(MessageVote {
+                id: existing_vote.id,
+                thread_id: request.thread_id,
+                message_id: request.message_id,
+                user_id,
+                vote_type: request.vote_type,
+                comment: request.comment,
+                created_at: DateTime::from_naive_utc_and_offset(existing_vote.created_at, Utc),
+                updated_at: now,
+            })
+        } else {
+            // Insert new vote
+            let id = Uuid::new_v4().to_string();
+            let new_vote = NewMessageVoteModel {
+                id: &id,
+                thread_id: &request.thread_id,
+                message_id: &request.message_id,
+                user_id: &user_id,
+                vote_type: vote_type_str,
+                comment: request.comment.as_deref(),
+                created_at: now.naive_utc(),
+                updated_at: now.naive_utc(),
+            };
+
+            diesel::insert_into(message_votes::table)
+                .values(&new_vote)
+                .execute(&mut connection)
+                .await
+                .context("failed to insert vote")?;
+
+            Ok(MessageVote {
+                id,
+                thread_id: request.thread_id,
+                message_id: request.message_id,
+                user_id,
+                vote_type: request.vote_type,
+                comment: request.comment,
+                created_at: now,
+                updated_at: now,
+            })
+        }
+    }
+
+    async fn remove_vote(&self, thread_id: &str, message_id: &str) -> Result<()> {
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
+        let mut connection = self.conn().await?;
+
+        diesel::delete(
+            message_votes::table
+                .filter(message_votes::thread_id.eq(thread_id))
+                .filter(message_votes::message_id.eq(message_id))
+                .filter(message_votes::user_id.eq(&user_id)),
+        )
+        .execute(&mut connection)
+        .await
+        .context("failed to remove vote")?;
+
+        Ok(())
+    }
+
+    async fn get_user_vote(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<Option<MessageVote>> {
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
+        let mut connection = self.conn().await?;
+
+        let row = message_votes::table
+            .filter(message_votes::thread_id.eq(thread_id))
+            .filter(message_votes::message_id.eq(message_id))
+            .filter(message_votes::user_id.eq(&user_id))
+            .select(MessageVoteModel::as_select())
+            .first::<MessageVoteModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to query user vote")?;
+
+        Ok(row.map(|r| MessageVote {
+            id: r.id,
+            thread_id: r.thread_id,
+            message_id: r.message_id,
+            user_id: r.user_id,
+            vote_type: match r.vote_type.as_str() {
+                "upvote" => VoteType::Upvote,
+                _ => VoteType::Downvote,
+            },
+            comment: r.comment,
+            created_at: DateTime::from_naive_utc_and_offset(r.created_at, Utc),
+            updated_at: DateTime::from_naive_utc_and_offset(r.updated_at, Utc),
+        }))
+    }
+
+    async fn get_message_vote_summary(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<MessageVoteSummary> {
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
+        let mut connection = self.conn().await?;
+
+        // Count upvotes
+        let upvotes: i64 = message_votes::table
+            .filter(message_votes::thread_id.eq(thread_id))
+            .filter(message_votes::message_id.eq(message_id))
+            .filter(message_votes::vote_type.eq("upvote"))
+            .count()
+            .get_result(&mut connection)
+            .await
+            .context("failed to count upvotes")?;
+
+        // Count downvotes
+        let downvotes: i64 = message_votes::table
+            .filter(message_votes::thread_id.eq(thread_id))
+            .filter(message_votes::message_id.eq(message_id))
+            .filter(message_votes::vote_type.eq("downvote"))
+            .count()
+            .get_result(&mut connection)
+            .await
+            .context("failed to count downvotes")?;
+
+        // Get current user's vote
+        let user_vote = message_votes::table
+            .filter(message_votes::thread_id.eq(thread_id))
+            .filter(message_votes::message_id.eq(message_id))
+            .filter(message_votes::user_id.eq(&user_id))
+            .select(message_votes::vote_type)
+            .first::<String>(&mut connection)
+            .await
+            .optional()
+            .context("failed to get user vote")?
+            .map(|vt| match vt.as_str() {
+                "upvote" => VoteType::Upvote,
+                _ => VoteType::Downvote,
+            });
+
+        Ok(MessageVoteSummary {
+            message_id: message_id.to_string(),
+            upvotes,
+            downvotes,
+            user_vote,
+        })
+    }
+
+    async fn get_message_votes(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<Vec<MessageVote>> {
+        let mut connection = self.conn().await?;
+
+        let rows = message_votes::table
+            .filter(message_votes::thread_id.eq(thread_id))
+            .filter(message_votes::message_id.eq(message_id))
+            .select(MessageVoteModel::as_select())
+            .load::<MessageVoteModel>(&mut connection)
+            .await
+            .context("failed to query message votes")?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| MessageVote {
+                id: r.id,
+                thread_id: r.thread_id,
+                message_id: r.message_id,
+                user_id: r.user_id,
+                vote_type: match r.vote_type.as_str() {
+                    "upvote" => VoteType::Upvote,
+                    _ => VoteType::Downvote,
+                },
+                comment: r.comment,
+                created_at: DateTime::from_naive_utc_and_offset(r.created_at, Utc),
+                updated_at: DateTime::from_naive_utc_and_offset(r.updated_at, Utc),
+            })
+            .collect())
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselTaskStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselTaskStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection")
+    }
+}
+
+#[async_trait]
+impl<Conn> TaskStore for DieselTaskStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn create_task(&self, input: distri_types::stores::CreateTaskInput) -> Result<Task> {
+        let mut connection = self.conn().await?;
+        let task_id = input
+            .task_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let status = input.status.unwrap_or(TaskStatus::Pending);
+        let now = Utc::now().timestamp_millis();
+        let invocation_text =
+            serde_json::to_string(&input.invocation).context("failed to serialize invocation")?;
+
+        let new_task = NewTaskModel {
+            id: &task_id,
+            thread_id: &input.thread_id,
+            parent_task_id: input.parent_task_id.as_deref(),
+            status: task_status_to_str(&status),
+            created_at: now,
+            updated_at: now,
+            remote: input.remote,
+            inner_task_id: input.inner_task_id.as_deref(),
+            invocation: &invocation_text,
+        };
+
+        diesel::insert_into(tasks::table)
+            .values(&new_task)
+            .execute(&mut connection)
+            .await
+            .context("failed to insert task")?;
+
+        Ok(Task {
+            id: task_id,
+            thread_id: input.thread_id,
+            parent_task_id: input.parent_task_id,
+            status,
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    async fn get_task(&self, task_id: &str) -> Result<Option<Task>> {
+        let mut connection = self.conn().await?;
+        let row = tasks::table
+            .find(task_id)
+            .first::<TaskModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to load task")?;
+        Ok(row.map(to_task))
+    }
+
+    async fn add_event_to_task(&self, task_id: &str, event: AgentEvent) -> Result<()> {
+        let mut connection = self.conn().await?;
+        let task_event = serialize_agent_event(event);
+        let payload =
+            serde_json::to_string(&task_event).context("failed to serialize task event")?;
+
+        let new_message = NewTaskMessageModel {
+            task_id,
+            kind: "event",
+            payload: &payload,
+            created_at: task_event.created_at,
+        };
+
+        diesel::insert_into(task_messages::table)
+            .values(&new_message)
+            .execute(&mut connection)
+            .await
+            .context("failed to insert task event")?;
+
+        Ok(())
+    }
+
+    async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> Result<()> {
+        let mut connection = self.conn().await?;
+        let changeset = TaskStatusChangeset {
+            status: task_status_to_str(&status),
+            updated_at: Utc::now().timestamp_millis(),
+        };
+
+        diesel::update(tasks::table.find(task_id))
+            .set(&changeset)
+            .execute(&mut connection)
+            .await
+            .context("failed to update task status")?;
+
+        Ok(())
+    }
+
+    async fn update_parent_task(&self, task_id: &str, parent_task_id: Option<&str>) -> Result<()> {
+        let mut connection = self.conn().await?;
+        diesel::update(tasks::table.find(task_id))
+            .set((
+                tasks::parent_task_id.eq(parent_task_id),
+                tasks::updated_at.eq(Utc::now().timestamp_millis()),
+            ))
+            .execute(&mut connection)
+            .await
+            .context("failed to update task parent")?;
+        Ok(())
+    }
+
+    async fn cancel_task(&self, task_id: &str) -> Result<Task> {
+        // Idempotent: if already terminal (Completed | Canceled | Failed),
+        // return the existing record without issuing an UPDATE. This preserves
+        // the original terminal state (e.g. a task that Completed before a
+        // cancel request arrived stays Completed).
+        if let Some(existing) = self.get_task(task_id).await? {
+            if existing.status.is_terminal() {
+                return Ok(existing);
+            }
+        } else {
+            return Err(anyhow!("task not found: {task_id}"));
+        }
+
+        self.update_task_status(task_id, TaskStatus::Canceled)
+            .await?;
+        self.get_task(task_id)
+            .await?
+            .ok_or_else(|| anyhow!("task not found after cancel"))
+    }
+
+    async fn cancel_task_cascade(&self, root_task_id: &str) -> Result<Vec<Task>> {
+        let mut connection = self.conn().await?;
+        let now = Utc::now().timestamp_millis();
+
+        #[derive(diesel::QueryableByName)]
+        struct CanceledRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            thread_id: String,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            parent_task_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            created_at: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            updated_at: i64,
+        }
+
+        // Sqlite supports recursive CTEs and `UPDATE ... RETURNING` (>= 3.35).
+        let rows: Vec<CanceledRow> = diesel::sql_query(
+            r"
+            WITH RECURSIVE descendants(id) AS (
+                SELECT id FROM tasks WHERE id = ?
+                UNION ALL
+                SELECT t.id FROM tasks t
+                  JOIN descendants d ON t.parent_task_id = d.id
+            )
+            UPDATE tasks
+               SET status = 'canceled', updated_at = ?, ended_at = ?
+             WHERE id IN (SELECT id FROM descendants)
+               AND status NOT IN ('completed', 'failed', 'canceled')
+            RETURNING id, thread_id, parent_task_id, created_at, updated_at
+            ",
+        )
+        .bind::<diesel::sql_types::Text, _>(root_task_id)
+        .bind::<diesel::sql_types::BigInt, _>(now)
+        .bind::<diesel::sql_types::BigInt, _>(now)
+        .get_results(&mut connection)
+        .await
+        .context("failed to cancel task cascade")?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| Task {
+                id: r.id,
+                thread_id: r.thread_id,
+                parent_task_id: r.parent_task_id,
+                status: TaskStatus::Canceled,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect())
+    }
+
+    async fn add_message_to_task(&self, task_id: &str, message: &Message) -> Result<()> {
+        let mut connection = self.conn().await?;
+
+        // Filter parts based on parts_metadata before saving
+        // Parts with save: false will be excluded from persistence
+        let message_to_save = message.filter_for_save(message.parts_metadata.as_ref());
+
+        // Skip saving if all parts were filtered out
+        if message_to_save.parts.is_empty() {
+            tracing::debug!(
+                "Skipping message save - all parts filtered out for message {}",
+                message.id
+            );
+            return Ok(());
+        }
+
+        let payload =
+            serde_json::to_string(&message_to_save).context("failed to serialize task message")?;
+
+        let new_message = NewTaskMessageModel {
+            task_id,
+            kind: "message",
+            payload: &payload,
+            created_at: message.created_at,
+        };
+
+        diesel::insert_into(task_messages::table)
+            .values(&new_message)
+            .execute(&mut connection)
+            .await
+            .context("failed to insert task message")?;
+
+        Ok(())
+    }
+
+    async fn list_tasks(&self, context_id: Option<&str>) -> Result<Vec<Task>> {
+        let mut connection = self.conn().await?;
+        let mut query = tasks::table.into_boxed();
+
+        if let Some(thread_id) = context_id {
+            query = query.filter(tasks::thread_id.eq(thread_id));
+        }
+
+        let rows = query
+            .order(tasks::created_at.asc())
+            .load::<TaskModel>(&mut connection)
+            .await
+            .context("failed to list tasks")?;
+
+        Ok(rows.into_iter().map(to_task).collect())
+    }
+
+    async fn list_descendant_tasks(&self, root_task_id: &str) -> Result<Vec<Task>> {
+        let mut connection = self.conn().await?;
+
+        #[derive(diesel::QueryableByName)]
+        struct Row {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            thread_id: String,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            parent_task_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            status: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            created_at: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            updated_at: i64,
+            #[diesel(sql_type = diesel::sql_types::Integer)]
+            depth: i32,
+        }
+
+        let rows: Vec<Row> = diesel::sql_query(
+            r"
+            WITH RECURSIVE descendants(id, depth) AS (
+                SELECT id, 0 FROM tasks WHERE id = ?
+                UNION ALL
+                SELECT t.id, d.depth + 1 FROM tasks t
+                  JOIN descendants d ON t.parent_task_id = d.id
+            )
+            SELECT t.id, t.thread_id, t.parent_task_id, t.status,
+                   t.created_at, t.updated_at, d.depth
+              FROM tasks t
+              JOIN descendants d ON t.id = d.id
+             ORDER BY d.depth ASC, t.created_at ASC
+            ",
+        )
+        .bind::<diesel::sql_types::Text, _>(root_task_id)
+        .get_results(&mut connection)
+        .await
+        .context("failed to list descendant tasks")?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| Task {
+                id: r.id,
+                thread_id: r.thread_id,
+                parent_task_id: r.parent_task_id,
+                status: task_status_from_str(&r.status),
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect())
+    }
+
+    async fn list_running_tasks(&self, thread_id: Option<&str>) -> Result<Vec<Task>> {
+        let mut connection = self.conn().await?;
+        let mut query = tasks::table
+            .filter(tasks::status.eq("running"))
+            .into_boxed();
+        if let Some(tid) = thread_id {
+            query = query.filter(tasks::thread_id.eq(tid));
+        }
+
+        let rows = query
+            .order(tasks::created_at.asc())
+            .load::<TaskModel>(&mut connection)
+            .await
+            .context("failed to list running tasks")?;
+
+        Ok(rows.into_iter().map(to_task).collect())
+    }
+
+    async fn get_history(
+        &self,
+        thread_id: &str,
+        filter: Option<MessageFilter>,
+    ) -> Result<Vec<(Task, Vec<TaskMessage>)>> {
+        let mut connection = self.conn().await?;
+        let task_rows = tasks::table
+            .filter(tasks::thread_id.eq(thread_id))
+            .order(tasks::created_at.asc())
+            .load::<TaskModel>(&mut connection)
+            .await
+            .context("failed to load tasks for history")?;
+
+        if task_rows.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let task_ids: Vec<String> = task_rows.iter().map(|task| task.id.clone()).collect();
+
+        let message_rows = task_messages::table
+            .filter(task_messages::task_id.eq_any(&task_ids))
+            .order(task_messages::created_at.asc())
+            .load::<TaskMessageModel>(&mut connection)
+            .await
+            .context("failed to load task messages")?;
+
+        let mut grouped: HashMap<String, Vec<TaskMessage>> = HashMap::new();
+        for row in &message_rows {
+            match to_task_message(row) {
+                Ok(message) => grouped
+                    .entry(row.task_id.clone())
+                    .or_default()
+                    .push(message),
+                Err(err) => warn!("failed to deserialize task message: {err:?}"),
+            }
+        }
+
+        let filter = filter.unwrap_or(MessageFilter {
+            filter: None,
+            limit: None,
+            offset: None,
+        });
+        let mut history = Vec::new();
+
+        for task_row in task_rows {
+            let task = to_task(task_row.clone());
+            let messages = grouped
+                .get(&task.id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|msg| message_filter_matches(&filter, msg))
+                .collect::<Vec<_>>();
+            history.push((task, messages));
+        }
+
+        if let Some(offset) = filter.offset {
+            history = history.into_iter().skip(offset).collect();
+        }
+
+        if let Some(limit) = filter.limit {
+            history.truncate(limit);
+        }
+
+        Ok(history)
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselSessionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselSessionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection")
+    }
+}
+
+impl<Conn> std::fmt::Debug for DieselSessionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DieselSessionStore").finish()
+    }
+}
+
+#[async_trait]
+impl<Conn> SessionStore for DieselSessionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn clear_session(&self, namespace: &str) -> Result<()> {
+        let mut connection = self.conn().await?;
+        diesel::delete(session_entries::table.filter(session_entries::thread_id.eq(namespace)))
+            .execute(&mut connection)
+            .await
+            .context("failed to clear session namespace")?;
+        Ok(())
+    }
+
+    async fn set_value(&self, namespace: &str, key: &str, value: &JsonValue) -> Result<()> {
+        self.set_value_with_expiry(namespace, key, value, None)
+            .await
+    }
+
+    async fn set_value_with_expiry(
+        &self,
+        namespace: &str,
+        key: &str,
+        value: &JsonValue,
+        expiry: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let mut connection = self.conn().await?;
+        let now = now_naive();
+        let value_str =
+            serde_json::to_string(value).context("failed to serialize session value")?;
+
+        let insertion = NewSessionEntryModel {
+            thread_id: namespace,
+            key,
+            value: &value_str,
+            expiry: opt_to_naive(expiry),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let changeset = SessionEntryChangeset {
+            value: &value_str,
+            expiry: opt_to_naive(expiry),
+            updated_at: now,
+        };
+
+        diesel::insert_into(session_entries::table)
+            .values(&insertion)
+            .on_conflict((session_entries::thread_id, session_entries::key))
+            .do_update()
+            .set(&changeset)
+            .execute(&mut connection)
+            .await
+            .context("failed to set session value")?;
+
+        Ok(())
+    }
+
+    async fn get_value(&self, namespace: &str, key: &str) -> Result<Option<JsonValue>> {
+        let mut connection = self.conn().await?;
+        let row = session_entries::table
+            .filter(session_entries::thread_id.eq(namespace))
+            .filter(session_entries::key.eq(key))
+            .first::<SessionEntryModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to fetch session entry")?;
+
+        Ok(row.as_ref().and_then(session_entry_to_value))
+    }
+
+    async fn delete_value(&self, namespace: &str, key: &str) -> Result<()> {
+        let mut connection = self.conn().await?;
+        diesel::delete(
+            session_entries::table
+                .filter(session_entries::thread_id.eq(namespace))
+                .filter(session_entries::key.eq(key)),
+        )
+        .execute(&mut connection)
+        .await
+        .context("failed to delete session entry")?;
+        Ok(())
+    }
+
+    async fn get_all_values(&self, namespace: &str) -> Result<HashMap<String, JsonValue>> {
+        let mut connection = self.conn().await?;
+        let entries = session_entries::table
+            .filter(session_entries::thread_id.eq(namespace))
+            .load::<SessionEntryModel>(&mut connection)
+            .await
+            .context("failed to fetch session entries")?;
+
+        let mut map = HashMap::new();
+
+        for entry in entries {
+            if let Some(value) = session_entry_to_value(&entry) {
+                map.insert(entry.key.clone(), value);
+            } else {
+                diesel::delete(
+                    session_entries::table
+                        .filter(session_entries::thread_id.eq(namespace))
+                        .filter(session_entries::key.eq(&entry.key)),
+                )
+                .execute(&mut connection)
+                .await
+                .ok();
+            }
+        }
+
+        Ok(map)
+    }
+
+    async fn list_sessions(
+        &self,
+        namespace: Option<&str>,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<Vec<SessionSummary>> {
+        let mut connection = self.conn().await?;
+
+        // 1. Get distinct thread_ids (paginated)
+        let mut thread_query = session_entries::table
+            .select(session_entries::thread_id)
+            .distinct()
+            .into_boxed();
+
+        if let Some(ns) = namespace {
+            thread_query = thread_query.filter(session_entries::thread_id.eq(ns));
+        }
+
+        let thread_ids = thread_query
+            .order(session_entries::updated_at.desc())
+            .limit(limit.unwrap_or(50) as i64)
+            .offset(offset.unwrap_or(0) as i64)
+            .load::<String>(&mut connection)
+            .await
+            .context("failed to list session threads")?;
+
+        if thread_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 2. Fetch entries for these threads
+        let entries = session_entries::table
+            .filter(session_entries::thread_id.eq_any(&thread_ids))
+            .select(SessionEntryModel::as_select())
+            .load::<SessionEntryModel>(&mut connection)
+            .await
+            .context("failed to fetch session entries details")?;
+
+        let mut summaries: HashMap<String, SessionSummary> = HashMap::new();
+
+        for tid in &thread_ids {
+            summaries.insert(
+                tid.clone(),
+                SessionSummary {
+                    session_id: tid.clone(),
+                    keys: Vec::new(),
+                    key_count: 0,
+                    updated_at: None,
+                },
+            );
+        }
+
+        for entry in entries {
+            if let Some(summary) = summaries.get_mut(&entry.thread_id) {
+                summary.keys.push(entry.key);
+                summary.key_count += 1;
+                let entry_updated = Utc.from_utc_datetime(&entry.updated_at);
+                if summary.updated_at.is_none_or(|curr| entry_updated > curr) {
+                    summary.updated_at = Some(entry_updated);
+                }
+            }
+        }
+
+        let result = thread_ids
+            .into_iter()
+            .filter_map(|tid| summaries.remove(&tid))
+            .collect();
+
+        Ok(result)
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselMemoryStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselMemoryStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection")
+    }
+}
+
+#[async_trait]
+impl<Conn> MemoryStore for DieselMemoryStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn store_memory(&self, user_id: &str, session_memory: SessionMemory) -> Result<()> {
+        let mut connection = self.conn().await?;
+        let content = format!(
+            "Agent: {} | Session: {} ({})\nSummary: {}\nInsights: {}\nFacts: {}",
+            session_memory.agent_id,
+            session_memory.thread_id,
+            session_memory.timestamp.format("%Y-%m-%d %H:%M:%S"),
+            session_memory.session_summary,
+            session_memory.key_insights.join("; "),
+            session_memory.important_facts.join("; "),
+        );
+
+        let new_entry = NewMemoryEntryModel {
+            user_id,
+            content: &content,
+            created_at: now_naive(),
+        };
+
+        diesel::insert_into(memory_entries::table)
+            .values(&new_entry)
+            .execute(&mut connection)
+            .await
+            .context("failed to insert memory entry")?;
+
+        Ok(())
+    }
+
+    async fn search_memories(
+        &self,
+        user_id: &str,
+        query: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<String>> {
+        let mut connection = self.conn().await?;
+        let rows = memory_entries::table
+            .filter(memory_entries::user_id.eq(user_id))
+            .order(memory_entries::created_at.desc())
+            .load::<MemoryEntryModel>(&mut connection)
+            .await
+            .context("failed to load memory entries")?;
+
+        let mut results = Vec::new();
+        let query_lower = query.to_lowercase();
+
+        for row in rows {
+            let content = row.content;
+            if content.to_lowercase().contains(&query_lower) {
+                results.push(content);
+
+                if limit.is_some_and(|limit| results.len() >= limit) {
+                    break;
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn get_user_memories(&self, user_id: &str) -> Result<Vec<String>> {
+        let mut connection = self.conn().await?;
+        let rows = memory_entries::table
+            .filter(memory_entries::user_id.eq(user_id))
+            .order(memory_entries::created_at.desc())
+            .load::<MemoryEntryModel>(&mut connection)
+            .await
+            .context("failed to load memories")?;
+
+        Ok(rows.into_iter().map(|row| row.content).collect())
+    }
+
+    async fn clear_user_memories(&self, user_id: &str) -> Result<()> {
+        let mut connection = self.conn().await?;
+        diesel::delete(memory_entries::table.filter(memory_entries::user_id.eq(user_id)))
+            .execute(&mut connection)
+            .await
+            .context("failed to clear user memories")?;
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselScratchpadStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselScratchpadStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection")
+    }
+}
+
+impl<Conn> std::fmt::Debug for DieselScratchpadStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DieselScratchpadStore").finish()
+    }
+}
+
+#[async_trait]
+impl<Conn> ScratchpadStore for DieselScratchpadStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn add_entry(&self, thread_id: &str, entry: ScratchpadEntry) -> Result<(), AgentError> {
+        let mut connection = self
+            .conn()
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))?;
+
+        let payload =
+            serde_json::to_string(&entry).map_err(|err| AgentError::Execution(err.to_string()))?;
+
+        let new_entry = NewScratchpadEntryModel {
+            thread_id,
+            task_id: &entry.task_id,
+            parent_task_id: entry.parent_task_id.as_deref(),
+            entry: &payload,
+            entry_type: entry.entry_kind.as_deref(),
+            timestamp: entry.timestamp,
+            created_at: now_naive(),
+        };
+
+        diesel::insert_into(scratchpad_entries::table)
+            .values(&new_entry)
+            .execute(&mut connection)
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn clear_entries(&self, thread_id: &str) -> Result<(), AgentError> {
+        let mut connection = self
+            .conn()
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))?;
+
+        diesel::delete(
+            scratchpad_entries::table.filter(scratchpad_entries::thread_id.eq(thread_id)),
+        )
+        .execute(&mut connection)
+        .await
+        .map_err(|err| AgentError::Execution(err.to_string()))?;
+        Ok(())
+    }
+    async fn get_all_entries(
+        &self,
+        thread_id: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<ScratchpadEntry>, AgentError> {
+        let mut connection = self
+            .conn()
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))?;
+
+        let mut query = scratchpad_entries::table
+            .filter(scratchpad_entries::thread_id.eq(thread_id))
+            // Exclude entries that belong to sub-tasks (parent_task_id set)
+            .filter(scratchpad_entries::parent_task_id.is_null())
+            .order(scratchpad_entries::created_at.desc())
+            .into_boxed();
+
+        if let Some(limit) = limit {
+            query = query.limit(limit as i64);
+        }
+
+        let rows = query
+            .load::<ScratchpadEntryModel>(&mut connection)
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))?;
+
+        let mut entries = Vec::new();
+        for row in rows {
+            match serde_json::from_str::<ScratchpadEntry>(&row.entry) {
+                Ok(mut entry) => {
+                    if entry.entry_kind.is_none() {
+                        entry.entry_kind = row.entry_type.clone();
+                    }
+                    if entry.parent_task_id.is_none() {
+                        entry.parent_task_id = row.parent_task_id.clone();
+                    }
+                    entries.push(entry)
+                }
+                Err(err) => warn!("failed to deserialize scratchpad entry: {err:?}"),
+            }
+        }
+
+        entries.reverse();
+        Ok(entries)
+    }
+    async fn get_entries(
+        &self,
+        thread_id: &str,
+        task_id: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<ScratchpadEntry>, AgentError> {
+        let mut connection = self
+            .conn()
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))?;
+
+        let mut query = scratchpad_entries::table
+            .filter(scratchpad_entries::thread_id.eq(thread_id))
+            .filter(scratchpad_entries::task_id.eq(task_id))
+            .order(scratchpad_entries::created_at.desc())
+            .into_boxed();
+
+        if let Some(limit) = limit {
+            query = query.limit(limit as i64);
+        }
+
+        let rows = query
+            .load::<ScratchpadEntryModel>(&mut connection)
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))?;
+
+        let mut entries = Vec::new();
+        for row in rows {
+            match serde_json::from_str::<ScratchpadEntry>(&row.entry) {
+                Ok(mut entry) => {
+                    if entry.entry_kind.is_none() {
+                        entry.entry_kind = row.entry_type.clone();
+                    }
+                    if entry.parent_task_id.is_none() {
+                        entry.parent_task_id = row.parent_task_id.clone();
+                    }
+                    entries.push(entry)
+                }
+                Err(err) => warn!("failed to deserialize scratchpad entry: {err:?}"),
+            }
+        }
+
+        entries.reverse();
+        Ok(entries)
+    }
+
+    async fn replace_entries(
+        &self,
+        thread_id: &str,
+        task_id: &str,
+        new_entries: Vec<ScratchpadEntry>,
+    ) -> Result<(), AgentError> {
+        use diesel_async::AsyncConnection;
+
+        let mut connection = self
+            .conn()
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))?;
+
+        // Pre-serialize before opening the transaction so a malformed entry
+        // doesn't leave us with an empty scratchpad mid-DELETE.
+        let payloads: Vec<(String, ScratchpadEntry)> = new_entries
+            .into_iter()
+            .map(|entry| {
+                serde_json::to_string(&entry)
+                    .map(|p| (p, entry))
+                    .map_err(|err| AgentError::Execution(err.to_string()))
+            })
+            .collect::<Result<_, _>>()?;
+
+        let thread_id = thread_id.to_string();
+        let task_id = task_id.to_string();
+        connection
+            .transaction::<_, diesel::result::Error, _>(|conn| {
+                Box::pin(async move {
+                    diesel::delete(
+                        scratchpad_entries::table
+                            .filter(scratchpad_entries::thread_id.eq(&thread_id))
+                            .filter(scratchpad_entries::task_id.eq(&task_id)),
+                    )
+                    .execute(conn)
+                    .await?;
+
+                    for (payload, entry) in &payloads {
+                        let row = NewScratchpadEntryModel {
+                            thread_id: &thread_id,
+                            task_id: &entry.task_id,
+                            parent_task_id: entry.parent_task_id.as_deref(),
+                            entry: payload,
+                            entry_type: entry.entry_kind.as_deref(),
+                            timestamp: entry.timestamp,
+                            created_at: now_naive(),
+                        };
+                        diesel::insert_into(scratchpad_entries::table)
+                            .values(&row)
+                            .execute(conn)
+                            .await?;
+                    }
+                    Ok(())
+                })
+            })
+            .await
+            .map_err(|err| AgentError::Execution(err.to_string()))
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselBrowserSessionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselBrowserSessionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection")
+    }
+}
+
+impl<Conn> std::fmt::Debug for DieselBrowserSessionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DieselBrowserSessionStore").finish()
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselToolAuthStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselToolAuthStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection")
+    }
+
+    async fn load_record(
+        &self,
+        conn: &mut DieselConn<'_, Conn>,
+        user: &str,
+        provider_name: &str,
+    ) -> Result<Option<IntegrationModel>, AuthError> {
+        use crate::schema::integrations::dsl::{integrations as integrations_table, provider};
+
+        integrations_table
+            .filter(integrations::user_id.eq(user))
+            .filter(provider.eq(provider_name))
+            .first::<IntegrationModel>(conn)
+            .await
+            .optional()
+            .map_err(map_store_error)
+    }
+
+    async fn ensure_record(
+        &self,
+        conn: &mut DieselConn<'_, Conn>,
+        user: &str,
+        provider_name: &str,
+    ) -> Result<IntegrationModel, AuthError> {
+        if let Some(record) = self.load_record(conn, user, provider_name).await? {
+            Ok(record)
+        } else {
+            let now = current_timestamp();
+            let new_record = NewIntegrationModel {
+                id: &Uuid::new_v4().to_string(),
+                user_id: user,
+                provider: provider_name,
+                session_data: None,
+                secrets_data: None,
+                oauth_state: None,
+                oauth_state_data: None,
+                created_at: now,
+                updated_at: now,
+            };
+
+            diesel::insert_into(integrations::table)
+                .values(&new_record)
+                .execute(conn)
+                .await
+                .map_err(map_store_error)?;
+
+            // Create the record manually instead of fetching to avoid connection issues
+            Ok(IntegrationModel {
+                id: new_record.id.to_string(),
+                user_id: new_record.user_id.to_string(),
+                provider: new_record.provider.to_string(),
+                session_data: new_record.session_data.map(|s| s.to_string()),
+                secrets_data: new_record.secrets_data.map(|s| s.to_string()),
+                oauth_state: new_record.oauth_state.map(|s| s.to_string()),
+                oauth_state_data: new_record.oauth_state_data.map(|s| s.to_string()),
+                created_at: new_record.created_at,
+                updated_at: new_record.updated_at,
+            })
+        }
+    }
+
+    async fn save_record(
+        &self,
+        conn: &mut DieselConn<'_, Conn>,
+        record: &IntegrationModel,
+    ) -> Result<(), AuthError> {
+        use crate::schema::integrations::dsl::{
+            id, oauth_state, oauth_state_data, secrets_data, session_data, updated_at,
+        };
+
+        diesel::update(integrations::table.filter(id.eq(&record.id)))
+            .set((
+                session_data.eq(&record.session_data),
+                secrets_data.eq(&record.secrets_data),
+                oauth_state.eq(&record.oauth_state),
+                oauth_state_data.eq(&record.oauth_state_data),
+                updated_at.eq(record.updated_at),
+            ))
+            .execute(conn)
+            .await
+            .map_err(map_store_error)?;
+
+        Ok(())
+    }
+
+    fn session_from_record(record: &IntegrationModel) -> Result<Option<AuthSession>, AuthError> {
+        match &record.session_data {
+            Some(value) => deserialize_value(value).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn secrets_from_record(
+        record: &IntegrationModel,
+    ) -> Result<HashMap<String, AuthSecret>, AuthError> {
+        parse_map(&record.secrets_data)
+    }
+}
+
+#[async_trait]
+impl<Conn> ToolAuthStore for DieselToolAuthStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn get_session(
+        &self,
+        auth_entity: &str,
+        user_id: &str,
+    ) -> Result<Option<AuthSession>, AuthError> {
+        let user_id = normalize_user_id(user_id)?;
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+
+        if let Some(record) = self.load_record(&mut conn, &user_id, auth_entity).await? {
+            Self::session_from_record(&record)
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn store_session(
+        &self,
+        auth_entity: &str,
+        user_id: &str,
+        session: AuthSession,
+    ) -> Result<(), AuthError> {
+        let user_id = normalize_user_id(user_id)?;
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+
+        let mut record = self.ensure_record(&mut conn, &user_id, auth_entity).await?;
+        record.session_data = Some(serialize_value(&session)?);
+        record.updated_at = current_timestamp();
+
+        self.save_record(&mut conn, &record).await
+    }
+
+    async fn remove_session(&self, auth_entity: &str, user_id: &str) -> Result<bool, AuthError> {
+        let user_id = normalize_user_id(user_id)?;
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+
+        if let Some(mut record) = self.load_record(&mut conn, &user_id, auth_entity).await? {
+            let existed = record.session_data.is_some();
+            if existed {
+                record.session_data = None;
+                record.updated_at = current_timestamp();
+                self.save_record(&mut conn, &record).await?;
+            }
+            Ok(existed)
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn store_secret(
+        &self,
+        user_id: &str,
+        auth_entity: Option<&str>,
+        secret: AuthSecret,
+    ) -> Result<(), AuthError> {
+        let user_id = normalize_user_id(user_id)?;
+        let provider = normalize_optional_provider(auth_entity)?;
+
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+        let mut record = self.ensure_record(&mut conn, &user_id, &provider).await?;
+
+        let mut secrets = Self::secrets_from_record(&record)?;
+        secrets.insert(secret.key.clone(), secret);
+        record.secrets_data = store_map(secrets)?;
+        record.updated_at = current_timestamp();
+
+        self.save_record(&mut conn, &record).await
+    }
+
+    async fn get_secret(
+        &self,
+        user_id: &str,
+        auth_entity: Option<&str>,
+        key: &str,
+    ) -> Result<Option<AuthSecret>, AuthError> {
+        let user_id = normalize_user_id(user_id)?;
+        let provider = normalize_optional_provider(auth_entity)?;
+
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+
+        if let Some(record) = self.load_record(&mut conn, &user_id, &provider).await? {
+            let secrets = Self::secrets_from_record(&record)?;
+            Ok(secrets.get(key).cloned())
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn remove_secret(
+        &self,
+        user_id: &str,
+        auth_entity: Option<&str>,
+        key: &str,
+    ) -> Result<bool, AuthError> {
+        let user_id = normalize_user_id(user_id)?;
+        let provider = normalize_optional_provider(auth_entity)?;
+
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+
+        if let Some(mut record) = self.load_record(&mut conn, &user_id, &provider).await? {
+            let mut secrets = Self::secrets_from_record(&record)?;
+            let existed = secrets.remove(key).is_some();
+            record.secrets_data = store_map(secrets)?;
+            record.updated_at = current_timestamp();
+            self.save_record(&mut conn, &record).await?;
+            Ok(existed)
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn store_oauth2_state(&self, state: OAuth2State) -> Result<(), AuthError> {
+        let user_id = normalize_user_id(&state.user_id)?;
+
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+        let mut record = self
+            .ensure_record(&mut conn, &user_id, &state.provider_name)
+            .await?;
+
+        let stored = StoredOAuthState {
+            redirect_uri: state.redirect_uri.clone(),
+            user_id,
+            scopes: state.scopes.clone(),
+            metadata: state.metadata.clone(),
+            created_at: state.created_at.timestamp(),
+        };
+
+        record.oauth_state = Some(state.state.clone());
+        record.oauth_state_data = Some(serialize_value(&stored)?);
+        record.updated_at = current_timestamp();
+
+        self.save_record(&mut conn, &record).await
+    }
+
+    async fn get_oauth2_state(&self, state_token: &str) -> Result<Option<OAuth2State>, AuthError> {
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+
+        use crate::schema::integrations::dsl::{integrations as integrations_table, oauth_state};
+
+        let record = integrations_table
+            .filter(oauth_state.eq(state_token))
+            .first::<IntegrationModel>(&mut conn)
+            .await
+            .optional()
+            .map_err(map_store_error)?;
+
+        if let Some(record) = record {
+            if let Some(data) = record.oauth_state_data {
+                let stored: StoredOAuthState = deserialize_value(&data)?;
+                let created_at = Utc
+                    .timestamp_opt(stored.created_at, 0)
+                    .single()
+                    .ok_or_else(|| {
+                        AuthError::StoreError("Invalid timestamp in stored state".to_string())
+                    })?;
+
+                Ok(Some(OAuth2State {
+                    state: state_token.to_string(),
+                    provider_name: record.provider,
+                    redirect_uri: stored.redirect_uri.clone(),
+                    user_id: stored.user_id,
+                    scopes: stored.scopes,
+                    metadata: stored.metadata,
+                    created_at,
+                }))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn remove_oauth2_state(&self, state_token: &str) -> Result<(), AuthError> {
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+
+        use crate::schema::integrations::dsl::{integrations as integrations_table, oauth_state};
+
+        if let Some(mut record) = integrations_table
+            .filter(oauth_state.eq(state_token))
+            .first::<IntegrationModel>(&mut conn)
+            .await
+            .optional()
+            .map_err(map_store_error)?
+        {
+            record.oauth_state = None;
+            record.oauth_state_data = None;
+            record.updated_at = current_timestamp();
+            self.save_record(&mut conn, &record).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn list_secrets(&self, user_id: &str) -> Result<HashMap<String, AuthSecret>, AuthError> {
+        let user_id = normalize_user_id(user_id)?;
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+
+        use crate::schema::integrations::dsl::{
+            integrations as integrations_table, user_id as col_user_id,
+        };
+
+        let records = integrations_table
+            .filter(col_user_id.eq(&user_id))
+            .load::<IntegrationModel>(&mut conn)
+            .await
+            .map_err(map_store_error)?;
+
+        let mut secrets = HashMap::new();
+        for record in records {
+            let provider = record.provider.clone();
+            let entries = Self::secrets_from_record(&record)?;
+            for (key, secret) in entries {
+                secrets.insert(format!("{}::{}", provider, key), secret);
+            }
+        }
+
+        Ok(secrets)
+    }
+
+    async fn list_sessions(
+        &self,
+        user_id: &str,
+    ) -> Result<HashMap<String, AuthSession>, AuthError> {
+        let user_id = normalize_user_id(user_id)?;
+        let mut conn = self.conn().await.map_err(map_store_error)?;
+
+        use crate::schema::integrations::dsl::{
+            integrations as integrations_table, user_id as col_user_id,
+        };
+
+        let records = integrations_table
+            .filter(col_user_id.eq(&user_id))
+            .load::<IntegrationModel>(&mut conn)
+            .await
+            .map_err(map_store_error)?;
+
+        let mut sessions = HashMap::new();
+        for record in records {
+            if let Some(session) = Self::session_from_record(&record)? {
+                sessions.insert(record.provider.clone(), session);
+            }
+        }
+
+        Ok(sessions)
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselExternalToolCallsStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+    pending_channels: Arc<DashMap<String, oneshot::Sender<ToolResponse>>>,
+}
+
+impl<Conn> DieselExternalToolCallsStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self {
+            pool,
+            pending_channels: Arc::new(DashMap::new()),
+        }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection")
+    }
+}
+
+impl<Conn> std::fmt::Debug for DieselExternalToolCallsStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DieselExternalToolCallsStore")
+            .field("pending", &self.pending_channels.len())
+            .finish()
+    }
+}
+
+#[async_trait]
+impl<Conn> ExternalToolCallsStore for DieselExternalToolCallsStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn register_external_tool_call(
+        &self,
+        session_id: &str,
+    ) -> Result<oneshot::Receiver<ToolResponse>> {
+        let mut connection = self.conn().await?;
+        let new_call = NewExternalToolCallModel {
+            id: session_id,
+            status: "pending",
+            request: None,
+            response: None,
+            created_at: now_naive(),
+            updated_at: now_naive(),
+            locked_at: None,
+        };
+
+        if let Err(err) = diesel::insert_into(external_tool_calls::table)
+            .values(&new_call)
+            .execute(&mut connection)
+            .await
+        {
+            if matches!(
+                err,
+                DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _)
+            ) {
+                return Err(anyhow!(
+                    "external tool call {session_id} is already registered"
+                ));
+            }
+            return Err(err).context("failed to register external tool call");
+        }
+
+        let (sender, receiver) = oneshot::channel();
+        if self
+            .pending_channels
+            .insert(session_id.to_string(), sender)
+            .is_some()
+        {
+            warn!(
+                "duplicate registration detected for external tool call {session_id}, replacing previous receiver"
+            );
+        }
+        Ok(receiver)
+    }
+
+    async fn complete_external_tool_call(
+        &self,
+        session_id: &str,
+        tool_response: ToolResponse,
+    ) -> Result<()> {
+        let mut connection = self.conn().await?;
+        // Filter out non-saveable parts (e.g., images) when storing to DB to prevent storage bloat
+        let filtered_response = tool_response.filter_for_save();
+        let response_json = serde_json::to_string(&filtered_response)
+            .context("failed to serialize tool response")?;
+
+        let changes = ExternalToolCallChangeset {
+            status: Some("completed"),
+            request: None,
+            response: Some(Some(&response_json)),
+            updated_at: now_naive(),
+            locked_at: Some(None),
+        };
+
+        diesel::update(external_tool_calls::table.find(session_id))
+            .set(&changes)
+            .execute(&mut connection)
+            .await
+            .context("failed to update external tool call")?;
+
+        // Send full response (including images) to the running agent so it can see them in current turn
+        if let Some((_, sender)) = self.pending_channels.remove(session_id) {
+            if sender.send(tool_response).is_err() {
+                warn!(
+                    "receiver dropped before external tool call {session_id} completed response was delivered"
+                );
+            }
+        } else {
+            warn!("no pending receiver when completing external tool call {session_id}");
+        }
+
+        Ok(())
+    }
+
+    async fn remove_tool_call(&self, session_id: &str) -> Result<()> {
+        let mut connection = self.conn().await?;
+        diesel::delete(external_tool_calls::table.find(session_id))
+            .execute(&mut connection)
+            .await
+            .context("failed to delete external tool call")?;
+        self.pending_channels.remove(session_id);
+        Ok(())
+    }
+
+    async fn list_pending_tool_calls(&self) -> Result<Vec<String>> {
+        let mut connection = self.conn().await?;
+        let rows = external_tool_calls::table
+            .filter(external_tool_calls::status.eq("pending"))
+            .select(external_tool_calls::id)
+            .load::<String>(&mut connection)
+            .await
+            .context("failed to list pending external tool calls")?;
+        Ok(rows)
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselStoreBuilder<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselStoreBuilder<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    pub fn agent_store(&self) -> DieselAgentStore<Conn> {
+        DieselAgentStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn thread_store(&self) -> DieselThreadStore<Conn> {
+        DieselThreadStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn task_store(&self) -> DieselTaskStore<Conn> {
+        DieselTaskStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn session_store(&self) -> DieselSessionStore<Conn> {
+        DieselSessionStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn memory_store(&self) -> DieselMemoryStore<Conn> {
+        DieselMemoryStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn scratchpad_store(&self) -> DieselScratchpadStore<Conn> {
+        DieselScratchpadStore::new(self.pool.clone_store_pool())
+    }
+    pub fn tool_auth_store(&self) -> DieselToolAuthStore<Conn> {
+        DieselToolAuthStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn external_tool_calls_store(&self) -> DieselExternalToolCallsStore<Conn> {
+        DieselExternalToolCallsStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn browser_session_store(&self) -> DieselBrowserSessionStore<Conn> {
+        DieselBrowserSessionStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn pool(&self) -> DieselStorePool<Conn> {
+        self.pool.clone()
+    }
+
+    pub fn prompt_template_store(&self) -> DieselPromptTemplateStore<Conn> {
+        DieselPromptTemplateStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn secret_store(&self) -> DieselSecretStore<Conn> {
+        DieselSecretStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn provider_store(&self) -> DieselServerSettingsProviderStore<Conn> {
+        DieselServerSettingsProviderStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn skill_store(&self) -> DieselSkillStore<Conn> {
+        DieselSkillStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn connection_store(&self) -> DieselConnectionStore<Conn> {
+        DieselConnectionStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn connection_token_store(&self) -> DieselConnectionTokenStore<Conn> {
+        DieselConnectionTokenStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn note_store(&self) -> DieselNoteStore<Conn> {
+        DieselNoteStore::new(self.pool.clone_store_pool())
+    }
+}
+
+// ========== Prompt Template Store ==========
+
+// ========== Secret Store ==========
+
+fn to_secret_record(model: SecretModel) -> SecretRecord {
+    SecretRecord {
+        id: model.id,
+        key: model.key,
+        value: model.value,
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+    }
+}
+
+pub struct DieselSecretStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselSecretStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for secrets")
+    }
+}
+
+#[async_trait]
+impl<Conn> SecretStore for DieselSecretStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn list(&self) -> Result<Vec<SecretRecord>> {
+        use crate::schema::secrets::dsl::*;
+        let mut conn = self.conn().await?;
+        let results = secrets
+            .select(SecretModel::as_select())
+            .load::<SecretModel>(&mut conn)
+            .await?;
+        Ok(results.into_iter().map(to_secret_record).collect())
+    }
+
+    async fn get(&self, secret_key: &str) -> Result<Option<SecretRecord>> {
+        use crate::schema::secrets::dsl::*;
+        let mut conn = self.conn().await?;
+        let result = secrets
+            .filter(key.eq(secret_key))
+            .select(SecretModel::as_select())
+            .first::<SecretModel>(&mut conn)
+            .await
+            .optional()?;
+        Ok(result.map(to_secret_record))
+    }
+
+    async fn create(&self, secret: NewSecret) -> Result<SecretRecord> {
+        use crate::schema::secrets::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let new_id = Uuid::new_v4().to_string();
+
+        let model = NewSecretModel {
+            id: &new_id,
+            key: &secret.key,
+            value: &secret.value,
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(secrets)
+            .values(&model)
+            .execute(&mut conn)
+            .await?;
+
+        let result = secrets
+            .filter(id.eq(&new_id))
+            .select(SecretModel::as_select())
+            .first::<SecretModel>(&mut conn)
+            .await?;
+
+        Ok(to_secret_record(result))
+    }
+
+    async fn update(&self, secret_key: &str, new_value: &str) -> Result<SecretRecord> {
+        use crate::schema::secrets::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+
+        diesel::update(secrets.filter(key.eq(secret_key)))
+            .set((value.eq(new_value), updated_at.eq(now)))
+            .execute(&mut conn)
+            .await?;
+
+        let result = secrets
+            .filter(key.eq(secret_key))
+            .select(SecretModel::as_select())
+            .first::<SecretModel>(&mut conn)
+            .await?;
+
+        Ok(to_secret_record(result))
+    }
+
+    async fn delete(&self, secret_key: &str) -> Result<()> {
+        use crate::schema::secrets::dsl::*;
+        let mut conn = self.conn().await?;
+        diesel::delete(secrets.filter(key.eq(secret_key)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+}
+
+// ========== Provider Store (server_settings-backed) ==========
+
+/// Reserved id of the single `server_settings` row.
+const SERVER_SETTINGS_ROW_ID: &str = "default";
+
+/// `ProviderStore` for the single-tenant standalone server.
+///
+/// Provider API keys go to the `secrets` table; the provider settings
+/// (default model, custom providers/models, connection providers) go to the
+/// single `server_settings` row — the standalone analogue of the cloud's
+/// `workspaces.settings`. This mirrors the cloud's `PgProviderStore`, minus
+/// the per-workspace scoping (the standalone server has exactly one tenant).
+pub struct DieselServerSettingsProviderStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselServerSettingsProviderStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for provider store")
+    }
+
+    /// Load the single `server_settings` row, or a default if it doesn't exist yet.
+    async fn load_settings(&self) -> Result<ServerSettings> {
+        use crate::schema::server_settings::dsl::*;
+        let mut conn = self.conn().await?;
+        let row = server_settings
+            .filter(id.eq(SERVER_SETTINGS_ROW_ID))
+            .select(ServerSettingsModel::as_select())
+            .first::<ServerSettingsModel>(&mut conn)
+            .await
+            .optional()?;
+        match row {
+            Some(model) => Ok(serde_json::from_str(&model.config_json)
+                .context("failed to deserialize server_settings.config_json")?),
+            None => Ok(ServerSettings::default()),
+        }
+    }
+
+    /// Persist the single `server_settings` row (insert on first write).
+    async fn save_settings(&self, settings: &ServerSettings) -> Result<()> {
+        use crate::schema::server_settings::dsl::*;
+        let json =
+            serde_json::to_string(settings).context("failed to serialize server settings")?;
+        let now = Utc::now().naive_utc();
+        let mut conn = self.conn().await?;
+        let updated = diesel::update(server_settings.filter(id.eq(SERVER_SETTINGS_ROW_ID)))
+            .set(ServerSettingsChangeset {
+                config_json: &json,
+                updated_at: now,
+            })
+            .execute(&mut conn)
+            .await?;
+        if updated == 0 {
+            diesel::insert_into(server_settings)
+                .values(NewServerSettingsModel {
+                    id: SERVER_SETTINGS_ROW_ID,
+                    config_json: &json,
+                    created_at: now,
+                    updated_at: now,
+                })
+                .execute(&mut conn)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Upsert a single secret by key (update when present, insert otherwise).
+    async fn upsert_secret(&self, secret_key: &str, secret_value: &str) -> Result<()> {
+        use crate::schema::secrets::dsl::*;
+        let now = Utc::now().naive_utc();
+        let mut conn = self.conn().await?;
+        let updated = diesel::update(secrets.filter(key.eq(secret_key)))
+            .set((value.eq(secret_value), updated_at.eq(now)))
+            .execute(&mut conn)
+            .await?;
+        if updated == 0 {
+            let new_id = Uuid::new_v4().to_string();
+            diesel::insert_into(secrets)
+                .values(NewSecretModel {
+                    id: &new_id,
+                    key: secret_key,
+                    value: secret_value,
+                    created_at: now,
+                    updated_at: now,
+                })
+                .execute(&mut conn)
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl<Conn> ProviderStore for DieselServerSettingsProviderStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn upsert_provider(&self, req: UpsertProviderRequest) -> Result<UpsertProviderResponse> {
+        // 1. Persist provider API keys to the `secrets` table.
+        for (key, value) in &req.secrets {
+            self.upsert_secret(key, value).await?;
+        }
+        let secrets_saved = req.secrets.len();
+
+        // 2. Merge any provided settings fields into the `server_settings` row.
+        let needs_settings_update = req.config.is_some()
+            || req.custom_models.is_some()
+            || req.default_model.is_some()
+            || req.connection_provider.is_some();
+
+        let config_saved = if needs_settings_update {
+            let mut settings = self.load_settings().await?;
+
+            if let Some(config) = req.config {
+                match settings
+                    .custom_providers
+                    .iter()
+                    .position(|p| p.id == config.id)
+                {
+                    Some(pos) => settings.custom_providers[pos] = config,
+                    None => settings.custom_providers.push(config),
+                }
+            }
+            if let Some(models) = req.custom_models {
+                settings.custom_models = models;
+            }
+            // Some("provider/model") sets, Some("") clears, None leaves untouched.
+            if let Some(ref dm) = req.default_model {
+                settings.default_model = if dm.is_empty() {
+                    None
+                } else {
+                    Some(dm.clone())
+                };
+            }
+            if let Some(cp) = req.connection_provider {
+                match settings
+                    .connection_providers
+                    .iter()
+                    .position(|p| p.id == cp.id)
+                {
+                    Some(pos) => settings.connection_providers[pos] = cp,
+                    None => settings.connection_providers.push(cp),
+                }
+            }
+
+            self.save_settings(&settings).await?;
+            true
+        } else {
+            false
+        };
+
+        Ok(UpsertProviderResponse {
+            provider_id: req.provider_id,
+            secrets_saved,
+            config_saved,
+        })
+    }
+
+    async fn delete_provider(&self, provider_id: &str) -> Result<()> {
+        // Delete the provider's secrets (all keys prefixed `{PROVIDER_ID}_`).
+        {
+            use crate::schema::secrets::dsl::*;
+            let pattern = format!("{}_%", provider_id.to_uppercase());
+            let mut conn = self.conn().await?;
+            diesel::delete(secrets.filter(key.like(pattern)))
+                .execute(&mut conn)
+                .await?;
+        }
+
+        // Drop the provider (and its models / connection config) from settings,
+        // and clear default_model if it pointed at this provider.
+        let mut settings = self.load_settings().await?;
+        let mut changed = false;
+
+        let before = settings.custom_providers.len();
+        settings.custom_providers.retain(|p| p.id != provider_id);
+        changed |= settings.custom_providers.len() != before;
+
+        let before = settings.custom_models.len();
+        settings.custom_models.retain(|m| m.provider != provider_id);
+        changed |= settings.custom_models.len() != before;
+
+        let before = settings.connection_providers.len();
+        settings
+            .connection_providers
+            .retain(|p| p.id != provider_id);
+        changed |= settings.connection_providers.len() != before;
+
+        let prefix = format!("{}/", provider_id);
+        if settings
+            .default_model
+            .as_deref()
+            .is_some_and(|dm| dm.starts_with(&prefix))
+        {
+            settings.default_model = None;
+            changed = true;
+        }
+
+        if changed {
+            self.save_settings(&settings).await?;
+        }
+        Ok(())
+    }
+
+    async fn get_default_model(&self) -> Result<Option<String>> {
+        Ok(self.load_settings().await?.default_model)
+    }
+
+    async fn resolve_provider_endpoint(
+        &self,
+        provider_id: &str,
+    ) -> Result<distri_types::stores::ResolvedProviderEndpoint> {
+        let settings = self.load_settings().await?;
+        let secret_store = DieselSecretStore::new(self.pool.clone_store_pool());
+        distri_types::stores::resolve_provider_test_endpoint(
+            provider_id,
+            &secret_store,
+            &settings.custom_providers,
+        )
+        .await
+    }
+}
+
+fn to_prompt_template_record(model: PromptTemplateModel) -> PromptTemplateRecord {
+    PromptTemplateRecord {
+        id: model.id,
+        name: model.name,
+        template: model.template,
+        description: model.description,
+        version: model.version,
+        is_system: model.is_system != 0,
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselPromptTemplateStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselPromptTemplateStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for prompt templates")
+    }
+}
+
+#[async_trait]
+impl<Conn> PromptTemplateStore for DieselPromptTemplateStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn list(&self) -> Result<Vec<PromptTemplateRecord>> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+        let results = prompt_templates
+            .select(PromptTemplateModel::as_select())
+            .load::<PromptTemplateModel>(&mut conn)
+            .await?;
+        Ok(results.into_iter().map(to_prompt_template_record).collect())
+    }
+
+    async fn get(&self, template_id: &str) -> Result<Option<PromptTemplateRecord>> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+        let result = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await
+            .optional()?;
+        Ok(result.map(to_prompt_template_record))
+    }
+
+    async fn get_by_names(&self, names: &[String]) -> Result<Vec<PromptTemplateRecord>> {
+        use crate::schema::prompt_templates::dsl::*;
+        if names.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut conn = self.conn().await?;
+        let results = prompt_templates
+            .filter(name.eq_any(names))
+            .select(PromptTemplateModel::as_select())
+            .load::<PromptTemplateModel>(&mut conn)
+            .await?;
+        Ok(results.into_iter().map(to_prompt_template_record).collect())
+    }
+
+    async fn create(&self, template_data: NewPromptTemplate) -> Result<PromptTemplateRecord> {
+        use crate::schema::prompt_templates::dsl::*;
+        distri_types::prompt::validate_template_content(&template_data.template).with_context(
+            || {
+                format!(
+                    "prompt template '{}' has invalid handlebars syntax",
+                    template_data.name
+                )
+            },
+        )?;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let new_id = Uuid::new_v4().to_string();
+
+        let model = NewPromptTemplateModel {
+            id: &new_id,
+            name: &template_data.name,
+            template: &template_data.template,
+            description: template_data.description.as_deref(),
+            version: template_data.version.as_deref(),
+            is_system: if template_data.is_system { 1 } else { 0 },
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(prompt_templates)
+            .values(&model)
+            .execute(&mut conn)
+            .await?;
+
+        let result = prompt_templates
+            .filter(id.eq(&new_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        Ok(to_prompt_template_record(result))
+    }
+
+    async fn update(
+        &self,
+        template_id: &str,
+        update_data: UpdatePromptTemplate,
+    ) -> Result<PromptTemplateRecord> {
+        use crate::schema::prompt_templates::dsl::*;
+        distri_types::prompt::validate_template_content(&update_data.template).with_context(
+            || {
+                format!(
+                    "prompt template '{}' has invalid handlebars syntax",
+                    update_data.name
+                )
+            },
+        )?;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+
+        // Check if it's a system template
+        let existing = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        if existing.is_system != 0 {
+            return Err(anyhow!("system templates cannot be modified"));
+        }
+
+        diesel::update(prompt_templates.filter(id.eq(template_id)))
+            .set((
+                name.eq(&update_data.name),
+                template.eq(&update_data.template),
+                description.eq(update_data.description.as_deref()),
+                updated_at.eq(now),
+            ))
+            .execute(&mut conn)
+            .await?;
+
+        let result = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        Ok(to_prompt_template_record(result))
+    }
+
+    async fn delete(&self, template_id: &str) -> Result<()> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+
+        // Check if it's a system template
+        let existing = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await
+            .optional()?;
+
+        if let Some(record) = existing {
+            if record.is_system != 0 {
+                return Err(anyhow!("system templates cannot be deleted"));
+            }
+
+            diesel::delete(prompt_templates.filter(id.eq(template_id)))
+                .execute(&mut conn)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn clone_template(&self, template_id: &str) -> Result<PromptTemplateRecord> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+
+        // Fetch the source template
+        let source_tpl = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        let now = Utc::now().naive_utc();
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let new_name = format!("Clone of {}", source_tpl.name);
+
+        let new_model = NewPromptTemplateModel {
+            id: &new_id,
+            name: &new_name,
+            template: &source_tpl.template,
+            description: source_tpl.description.as_deref(),
+            version: source_tpl.version.as_deref(),
+            is_system: 0,
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(prompt_templates)
+            .values(&new_model)
+            .execute(&mut conn)
+            .await?;
+
+        let result = prompt_templates
+            .filter(id.eq(&new_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        Ok(to_prompt_template_record(result))
+    }
+
+    async fn sync_system_templates(&self, templates_to_sync: Vec<NewPromptTemplate>) -> Result<()> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+
+        for tpl in templates_to_sync {
+            // Check if exists by name (system templates are identified by name for syncing)
+            let existing = prompt_templates
+                .filter(name.eq(&tpl.name))
+                .filter(is_system.eq(1))
+                .select(PromptTemplateModel::as_select())
+                .first::<PromptTemplateModel>(&mut conn)
+                .await
+                .optional()?;
+
+            if let Some(existing_model) = existing {
+                // Update if content changed
+                if existing_model.template != tpl.template {
+                    diesel::update(prompt_templates.filter(id.eq(existing_model.id)))
+                        .set((
+                            template.eq(&tpl.template),
+                            description.eq(tpl.description.as_deref()),
+                            version.eq(tpl.version.as_deref()),
+                            updated_at.eq(now),
+                        ))
+                        .execute(&mut conn)
+                        .await?;
+                }
+            } else {
+                // Create new
+                let new_id = Uuid::new_v4().to_string();
+                let model = NewPromptTemplateModel {
+                    id: &new_id,
+                    name: &tpl.name,
+                    template: &tpl.template,
+                    description: tpl.description.as_deref(),
+                    version: tpl.version.as_deref(),
+                    is_system: 1,
+                    created_at: now,
+                    updated_at: now,
+                };
+
+                diesel::insert_into(prompt_templates)
+                    .values(&model)
+                    .execute(&mut conn)
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// ========== Skill Store ==========
+
+fn to_skill_record(model: SkillModel) -> SkillRecord {
+    let tags: Vec<String> = serde_json::from_str(&model.tags).unwrap_or_default();
+    let full_name = format!("local/{}", model.name);
+    SkillRecord {
+        id: model.id,
+        workspace_slug: "local".to_string(),
+        name: model.name,
+        full_name,
+        description: model.description,
+        content: model.content,
+        tags,
+        is_owner: true,
+        is_workspace: true,
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+        model: model.model,
+        context: model.context.parse().unwrap_or_default(),
+    }
+}
+
+pub struct DieselSkillStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselSkillStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for skills")
+    }
+}
+
+#[async_trait]
+impl<Conn> SkillStore for DieselSkillStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn list(
+        &self,
+        filter: distri_types::stores::SkillFilter,
+    ) -> Result<distri_types::stores::SkillListResponse> {
+        use crate::schema::skills::dsl::*;
+        use distri_types::stores::SkillScope;
+        let mut conn = self.conn().await?;
+
+        // OSS only knows about local skills. Discover (external registries)
+        // is a CLI-side concern and returns empty here.
+        if matches!(filter.scope, SkillScope::Discover) {
+            return Ok(distri_types::stores::SkillListResponse {
+                skills: vec![],
+                total: 0,
+                page: filter.page,
+                per_page: filter.per_page,
+                total_pages: 0,
+            });
+        }
+
+        let query = skills.into_boxed();
+
+        // Load all matching scope
+        let all_results: Vec<SkillModel> = query
+            .order(updated_at.desc())
+            .select(SkillModel::as_select())
+            .load::<SkillModel>(&mut conn)
+            .await?;
+
+        // Apply search filter in-memory (SQLite doesn't support ILIKE)
+        let all_results: Vec<SkillModel> = if let Some(ref q) = filter.search {
+            let q = q.to_lowercase();
+            all_results
+                .into_iter()
+                .filter(|m| {
+                    m.name.to_lowercase().contains(&q)
+                        || m.description
+                            .as_ref()
+                            .is_some_and(|d| d.to_lowercase().contains(&q))
+                })
+                .collect()
+        } else {
+            all_results
+        };
+
+        let total = all_results.len() as i64;
+        let page = filter.page.max(1);
+        let per_page = filter.per_page.clamp(1, 100);
+        let total_pages = (total + per_page - 1) / per_page;
+        let offset = ((page - 1) * per_page) as usize;
+
+        let records: Vec<distri_types::stores::SkillListItem> = all_results
+            .into_iter()
+            .skip(offset)
+            .take(per_page as usize)
+            .map(|m| {
+                let r = to_skill_record(m);
+                distri_types::stores::SkillListItem {
+                    id: r.id,
+                    workspace_slug: r.workspace_slug,
+                    name: r.name,
+                    full_name: r.full_name,
+                    description: r.description,
+                    tags: r.tags,
+                    is_owner: r.is_owner,
+                    is_workspace: r.is_workspace,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
+                }
+            })
+            .collect();
+
+        Ok(distri_types::stores::SkillListResponse {
+            skills: records,
+            total,
+            page,
+            per_page,
+            total_pages,
+        })
+    }
+
+    async fn get(&self, skill_id_val: &str) -> Result<Option<SkillRecord>> {
+        use crate::schema::skills::dsl::*;
+        let mut conn = self.conn().await?;
+        // Try by ID first, then by name
+        let result = skills
+            .filter(id.eq(skill_id_val))
+            .select(SkillModel::as_select())
+            .first::<SkillModel>(&mut conn)
+            .await
+            .optional()?;
+
+        let result = match result {
+            Some(r) => Some(r),
+            None => {
+                // Fallback: look up by name
+                skills
+                    .filter(name.eq(skill_id_val))
+                    .select(SkillModel::as_select())
+                    .first::<SkillModel>(&mut conn)
+                    .await
+                    .optional()?
+            }
+        };
+
+        match result {
+            Some(skill_model) => Ok(Some(to_skill_record(skill_model))),
+            None => Ok(None),
+        }
+    }
+
+    async fn create(&self, skill: NewSkill) -> Result<SkillRecord> {
+        use crate::schema::skills::dsl::*;
+        distri_types::prompt::validate_template_content(&skill.content)
+            .with_context(|| format!("skill '{}' has invalid handlebars template", skill.name))?;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let new_id = Uuid::new_v4().to_string();
+        let tags_json = serde_json::to_string(&skill.tags)?;
+        let context_str = skill.context.to_string();
+
+        let new_skill = NewSkillModel {
+            id: &new_id,
+            name: &skill.name,
+            description: skill.description.as_deref(),
+            content: &skill.content,
+            tags: &tags_json,
+            created_at: now,
+            updated_at: now,
+            model: skill.model.as_deref(),
+            context: &context_str,
+        };
+
+        diesel::insert_into(skills)
+            .values(&new_skill)
+            .execute(&mut conn)
+            .await?;
+
+        let result = skills
+            .filter(id.eq(&new_id))
+            .select(SkillModel::as_select())
+            .first::<SkillModel>(&mut conn)
+            .await?;
+        Ok(to_skill_record(result))
+    }
+
+    async fn update(&self, skill_id_val: &str, update: UpdateSkill) -> Result<SkillRecord> {
+        use crate::schema::skills::dsl::*;
+        if let Some(ref c) = update.content {
+            distri_types::prompt::validate_template_content(c).with_context(|| {
+                format!("skill '{}' has invalid handlebars template", skill_id_val)
+            })?;
+        }
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+
+        // Build dynamic update
+        if let Some(ref n) = update.name {
+            diesel::update(skills.filter(id.eq(skill_id_val)))
+                .set(name.eq(n))
+                .execute(&mut conn)
+                .await?;
+        }
+        if let Some(ref d) = update.description {
+            diesel::update(skills.filter(id.eq(skill_id_val)))
+                .set(description.eq(d))
+                .execute(&mut conn)
+                .await?;
+        }
+        if let Some(ref c) = update.content {
+            diesel::update(skills.filter(id.eq(skill_id_val)))
+                .set(content.eq(c))
+                .execute(&mut conn)
+                .await?;
+        }
+        if let Some(ref t) = update.tags {
+            let tags_json = serde_json::to_string(t)?;
+            diesel::update(skills.filter(id.eq(skill_id_val)))
+                .set(tags.eq(tags_json))
+                .execute(&mut conn)
+                .await?;
+        }
+        if let Some(ref m) = update.model {
+            diesel::update(skills.filter(id.eq(skill_id_val)))
+                .set(crate::schema::skills::model.eq(m))
+                .execute(&mut conn)
+                .await?;
+        }
+        if let Some(ref ctx) = update.context {
+            diesel::update(skills.filter(id.eq(skill_id_val)))
+                .set(crate::schema::skills::context.eq(ctx.to_string()))
+                .execute(&mut conn)
+                .await?;
+        }
+
+        diesel::update(skills.filter(id.eq(skill_id_val)))
+            .set(updated_at.eq(now))
+            .execute(&mut conn)
+            .await?;
+
+        let result = skills
+            .filter(id.eq(skill_id_val))
+            .select(SkillModel::as_select())
+            .first::<SkillModel>(&mut conn)
+            .await?;
+        Ok(to_skill_record(result))
+    }
+
+    async fn delete(&self, skill_id_val: &str) -> Result<()> {
+        use crate::schema::skills::dsl::*;
+        let mut conn = self.conn().await?;
+        // Scripts are deleted via ON DELETE CASCADE
+        diesel::delete(skills.filter(id.eq(skill_id_val)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    // Marketplace methods (star, unstar, clone_skill) removed.
+}
+
+#[cfg(feature = "sqlite")]
+impl DieselStoreBuilder<SqliteConnectionWrapper> {
+    pub async fn sqlite(database_url: &str, max_connections: u32) -> Result<Self> {
+        Ok(Self {
+            pool: DieselStorePool::new_sqlite(database_url, max_connections).await?,
+        })
+    }
+}
+
+#[cfg(all(not(feature = "sqlite"), feature = "postgres"))]
+impl DieselStoreBuilder<diesel_async::AsyncPgConnection> {
+    pub async fn postgres(database_url: &str, max_connections: u32) -> Result<Self> {
+        Ok(Self {
+            pool: DieselStorePool::new_postgres(database_url, max_connections).await?,
+        })
+    }
+}
+
+// ========== Connection Store ==========
+
+fn to_connection(model: ConnectionModel) -> anyhow::Result<Connection> {
+    let status: ConnectionStatus = serde_json::from_value(serde_json::Value::String(model.status))
+        .map_err(|e| anyhow::anyhow!("invalid status: {}", e))?;
+    let auth_scope: AuthScope = serde_json::from_value(serde_json::Value::String(model.auth_scope))
+        .map_err(|e| anyhow::anyhow!("invalid auth_scope: {}", e))?;
+    // OSS diesel-store still has an `auth_type` TEXT column. The unified Rust
+    // model now carries `ConnectionAuth` on the Connection — OSS rows default
+    // to `ConnectionAuth::None` (cloud uses `PgConnectionStore` which reads
+    // the proper jsonb `auth` column).
+    let auth: ConnectionAuth =
+        serde_json::from_str(&model.auth_type).unwrap_or(ConnectionAuth::None);
+    let config: serde_json::Value = serde_json::from_str(&model.config)
+        .map_err(|e| anyhow::anyhow!("invalid config: {}", e))?;
+    let id = uuid::Uuid::parse_str(&model.id).map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
+    let workspace_id = uuid::Uuid::parse_str(&model.workspace_id)
+        .map_err(|e| anyhow::anyhow!("invalid workspace_id: {}", e))?;
+    let skill_id = uuid::Uuid::parse_str(&model.skill_id)
+        .map_err(|e| anyhow::anyhow!("invalid skill_id: {}", e))?;
+    let connected_by = model
+        .connected_by
+        .as_deref()
+        .map(uuid::Uuid::parse_str)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid connected_by: {}", e))?;
+
+    Ok(Connection {
+        id,
+        workspace_id,
+        skill_id,
+        name: model.name,
+        status,
+        config,
+        connected_by,
+        auth_scope,
+        auth,
+        kind: distri_types::connections::ConnectionKind::Default {
+            skill_content: None,
+        },
+        is_system: model.is_system != 0,
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+    })
+}
+
+pub struct DieselConnectionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselConnectionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for connections")
+    }
+}
+
+#[async_trait]
+impl<Conn> ConnectionStore for DieselConnectionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn create(&self, new_conn: NewConnection) -> anyhow::Result<Connection> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let new_id = Uuid::new_v4().to_string();
+        let ws_id = new_conn.workspace_id.to_string();
+        let sk_id = new_conn.skill_id.to_string();
+        let status_str = serde_json::to_string(&new_conn.status)
+            .map_err(|e| anyhow::anyhow!("serialize status: {}", e))?;
+        // serde_json::to_string wraps strings in quotes; unwrap to plain text
+        let status_str = status_str.trim_matches('"').to_string();
+        let config_str = serde_json::to_string(&new_conn.config)
+            .map_err(|e| anyhow::anyhow!("serialize config: {}", e))?;
+        let auth_scope_str = serde_json::to_string(&new_conn.auth_scope)
+            .map_err(|e| anyhow::anyhow!("serialize auth_scope: {}", e))?;
+        let auth_scope_str = auth_scope_str.trim_matches('"').to_string();
+        // OSS diesel-store still has an `auth_type` TEXT column. Serialize
+        // the unified `ConnectionAuth` into it so the read path can decode
+        // it back. The cloud path uses `PgConnectionStore` directly against
+        // the jsonb `auth` column and never touches this.
+        let auth_type_str = serde_json::to_string(&new_conn.auth)
+            .map_err(|e| anyhow::anyhow!("serialize auth: {}", e))?;
+        let connected_by_str = new_conn.connected_by.map(|u| u.to_string());
+
+        let model = crate::models::NewConnectionModel {
+            id: &new_id,
+            workspace_id: &ws_id,
+            skill_id: &sk_id,
+            name: &new_conn.name,
+            status: &status_str,
+            config: &config_str,
+            connected_by: connected_by_str.as_deref(),
+            auth_scope: &auth_scope_str,
+            auth_type: &auth_type_str,
+            is_system: if new_conn.is_system { 1 } else { 0 },
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(connections)
+            .values(&model)
+            .execute(&mut conn)
+            .await?;
+
+        let result = connections
+            .filter(id.eq(&new_id))
+            .select(crate::models::ConnectionModel::as_select())
+            .first::<crate::models::ConnectionModel>(&mut conn)
+            .await?;
+
+        to_connection(result)
+    }
+
+    async fn get_by_id(&self, conn_id: &str) -> anyhow::Result<Option<Connection>> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let result = connections
+            .filter(id.eq(conn_id))
+            .select(crate::models::ConnectionModel::as_select())
+            .first::<crate::models::ConnectionModel>(&mut conn)
+            .await
+            .optional()?;
+        result.map(to_connection).transpose()
+    }
+
+    async fn list_by_workspace(&self, ws_id: &str) -> anyhow::Result<Vec<Connection>> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let results = connections
+            .filter(workspace_id.eq(ws_id))
+            .select(crate::models::ConnectionModel::as_select())
+            .load::<crate::models::ConnectionModel>(&mut conn)
+            .await?;
+        results.into_iter().map(to_connection).collect()
+    }
+
+    async fn update_status(
+        &self,
+        conn_id: &str,
+        new_status: ConnectionStatus,
+    ) -> anyhow::Result<()> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let status_str = serde_json::to_string(&new_status)
+            .map_err(|e| anyhow::anyhow!("serialize status: {}", e))?;
+        let status_str = status_str.trim_matches('"').to_string();
+        diesel::update(connections.filter(id.eq(conn_id)))
+            .set((status.eq(&status_str), updated_at.eq(now)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn update_skill_id(&self, conn_id: &str, new_skill_id: Uuid) -> anyhow::Result<()> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let sk_id = new_skill_id.to_string();
+        diesel::update(connections.filter(id.eq(conn_id)))
+            .set((skill_id.eq(&sk_id), updated_at.eq(now)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn update(&self, conn_id: &str, new_name: Option<String>) -> anyhow::Result<Connection> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let changeset = crate::models::ConnectionChangeset {
+            name: new_name.as_deref(),
+            status: None,
+            auth_type: None,
+            skill_id: None,
+            updated_at: now,
+        };
+        diesel::update(connections.filter(id.eq(conn_id)))
+            .set(&changeset)
+            .execute(&mut conn)
+            .await?;
+        let result = connections
+            .filter(id.eq(conn_id))
+            .select(crate::models::ConnectionModel::as_select())
+            .first::<crate::models::ConnectionModel>(&mut conn)
+            .await?;
+        to_connection(result)
+    }
+
+    async fn delete(&self, conn_id: &str) -> anyhow::Result<()> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        diesel::delete(connections.filter(id.eq(conn_id)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_by_provider(
+        &self,
+        ws_id: &str,
+        provider: &str,
+    ) -> anyhow::Result<Option<Connection>> {
+        // OSS diesel-store no longer carries provider/material on the
+        // Connection row — the cloud path resolves provider through the
+        // credentials table via `PgConnectionStore`. Match by name as a
+        // best-effort fallback for legacy callers.
+        let all = self.list_by_workspace(ws_id).await?;
+        Ok(all.into_iter().find(|c| c.name == provider))
+    }
+}
+
+// ========== Connection Token Store ==========
+
+pub struct DieselConnectionTokenStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselConnectionTokenStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for connection tokens")
+    }
+}
+
+#[async_trait]
+impl<Conn> ConnectionTokenStore for DieselConnectionTokenStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn store_token(&self, conn_id: &str, token: ConnectionToken) -> anyhow::Result<()> {
+        use crate::schema::connection_tokens::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let token_json_str =
+            serde_json::to_string(&token).map_err(|e| anyhow::anyhow!("serialize token: {}", e))?;
+        let model = crate::models::NewConnectionTokenModel {
+            connection_id: conn_id,
+            token_json: &token_json_str,
+            created_at: now,
+            updated_at: now,
+        };
+        diesel::insert_into(connection_tokens)
+            .values(&model)
+            .on_conflict(connection_id)
+            .do_update()
+            .set(&model)
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_token(&self, conn_id: &str) -> anyhow::Result<Option<ConnectionToken>> {
+        use crate::schema::connection_tokens::dsl::*;
+        let mut conn = self.conn().await?;
+        let result = connection_tokens
+            .filter(connection_id.eq(conn_id))
+            .select(crate::models::ConnectionTokenModel::as_select())
+            .first::<crate::models::ConnectionTokenModel>(&mut conn)
+            .await
+            .optional()?;
+        result
+            .map(|m| {
+                serde_json::from_str::<ConnectionToken>(&m.token_json)
+                    .map_err(|e| anyhow::anyhow!("deserialize token: {}", e))
+            })
+            .transpose()
+    }
+
+    async fn remove_token(&self, conn_id: &str) -> anyhow::Result<()> {
+        use crate::schema::connection_tokens::dsl::*;
+        let mut conn = self.conn().await?;
+        diesel::delete(connection_tokens.filter(connection_id.eq(conn_id)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn store_oauth_state(
+        &self,
+        state_key_val: &str,
+        state: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        use crate::schema::connection_oauth_states::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let state_json_str =
+            serde_json::to_string(&state).map_err(|e| anyhow::anyhow!("serialize state: {}", e))?;
+        let model = crate::models::NewConnectionOAuthStateModel {
+            state_key: state_key_val,
+            state_json: &state_json_str,
+            created_at: now,
+        };
+        diesel::insert_into(connection_oauth_states)
+            .values(&model)
+            .on_conflict(state_key)
+            .do_update()
+            .set(state_json.eq(&state_json_str))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_oauth_state(
+        &self,
+        state_key_val: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        use crate::schema::connection_oauth_states::dsl::*;
+        let mut conn = self.conn().await?;
+        let result = connection_oauth_states
+            .filter(state_key.eq(state_key_val))
+            .select(crate::models::ConnectionOAuthStateModel::as_select())
+            .first::<crate::models::ConnectionOAuthStateModel>(&mut conn)
+            .await
+            .optional()?;
+        result
+            .map(|m| {
+                serde_json::from_str::<serde_json::Value>(&m.state_json)
+                    .map_err(|e| anyhow::anyhow!("deserialize state: {}", e))
+            })
+            .transpose()
+    }
+
+    async fn remove_oauth_state(&self, state_key_val: &str) -> anyhow::Result<()> {
+        use crate::schema::connection_oauth_states::dsl::*;
+        let mut conn = self.conn().await?;
+        diesel::delete(connection_oauth_states.filter(state_key.eq(state_key_val)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+}
+
+// ========== Note Store ==========
+
+fn to_note_record(
+    model: crate::models::NoteModel,
+) -> anyhow::Result<distri_types::api::notes::NoteRecord> {
+    let tags: Vec<String> = serde_json::from_str(&model.tags).unwrap_or_default();
+    let id = Uuid::parse_str(&model.id).map_err(|e| anyhow::anyhow!("invalid note id: {}", e))?;
+    let workspace_id = Uuid::parse_str(&model.workspace_id)
+        .map_err(|e| anyhow::anyhow!("invalid workspace_id: {}", e))?;
+    let created_by = model
+        .created_by
+        .as_deref()
+        .map(|s| Uuid::parse_str(s))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid created_by: {}", e))?;
+    Ok(distri_types::api::notes::NoteRecord {
+        id,
+        workspace_id,
+        title: model.title,
+        content: model.content,
+        tags,
+        created_by,
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+    })
+}
+
+pub struct DieselNoteStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselNoteStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for notes")
+    }
+}
+
+#[async_trait]
+impl<Conn> NoteStore for DieselNoteStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn list(
+        &self,
+        query: &distri_types::api::notes::ListNotesQuery,
+    ) -> anyhow::Result<Vec<distri_types::api::notes::NoteRecord>> {
+        use crate::schema::notes::dsl::*;
+        let mut conn = self.conn().await?;
+
+        // We load all notes for the nil workspace and filter in-process for tag/search.
+        // For production volumes this is fine — notes are few and local.
+        let nil_ws = Uuid::nil().to_string();
+        let rows = notes
+            .filter(workspace_id.eq(&nil_ws))
+            .order_by(updated_at.desc())
+            .select(crate::models::NoteModel::as_select())
+            .load::<crate::models::NoteModel>(&mut conn)
+            .await
+            .context("failed to list notes")?;
+
+        let records: Vec<distri_types::api::notes::NoteRecord> = rows
+            .into_iter()
+            .map(to_note_record)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        // Apply tag filter
+        let records = if let Some(tag) = &query.tag {
+            records
+                .into_iter()
+                .filter(|n| n.tags.iter().any(|t| t == tag))
+                .collect()
+        } else {
+            records
+        };
+
+        // Apply search filter
+        let records = if let Some(search) = &query.search {
+            let search_lower = search.to_lowercase();
+            records
+                .into_iter()
+                .filter(|n| {
+                    n.title.to_lowercase().contains(&search_lower)
+                        || n.content.to_lowercase().contains(&search_lower)
+                })
+                .collect()
+        } else {
+            records
+        };
+
+        Ok(records)
+    }
+
+    async fn get(
+        &self,
+        note_id: Uuid,
+    ) -> anyhow::Result<Option<distri_types::api::notes::NoteRecord>> {
+        use crate::schema::notes::dsl::*;
+        let mut conn = self.conn().await?;
+        let note_id_str = note_id.to_string();
+        let result = notes
+            .filter(id.eq(&note_id_str))
+            .select(crate::models::NoteModel::as_select())
+            .first::<crate::models::NoteModel>(&mut conn)
+            .await
+            .optional()
+            .context("failed to get note")?;
+        result.map(to_note_record).transpose()
+    }
+
+    async fn create(
+        &self,
+        req: distri_types::api::notes::CreateNoteRequest,
+    ) -> anyhow::Result<distri_types::api::notes::NoteRecord> {
+        use crate::schema::notes::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let new_id = Uuid::new_v4().to_string();
+        let nil_ws = Uuid::nil().to_string();
+        let tags_json = serde_json::to_string(&req.tags)
+            .map_err(|e| anyhow::anyhow!("serialize tags: {}", e))?;
+
+        let model = crate::models::NewNoteModel {
+            id: &new_id,
+            workspace_id: &nil_ws,
+            title: &req.title,
+            content: &req.content,
+            tags: &tags_json,
+            created_by: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(notes)
+            .values(&model)
+            .execute(&mut conn)
+            .await
+            .context("failed to insert note")?;
+
+        let result = notes
+            .filter(id.eq(&new_id))
+            .select(crate::models::NoteModel::as_select())
+            .first::<crate::models::NoteModel>(&mut conn)
+            .await
+            .context("failed to fetch inserted note")?;
+
+        to_note_record(result)
+    }
+
+    async fn update(
+        &self,
+        note_id: Uuid,
+        req: distri_types::api::notes::UpdateNoteRequest,
+    ) -> anyhow::Result<Option<distri_types::api::notes::NoteRecord>> {
+        use crate::schema::notes::dsl::*;
+        let mut conn = self.conn().await?;
+        let note_id_str = note_id.to_string();
+        let now = Utc::now().naive_utc();
+
+        // Check existence first
+        let exists = notes
+            .filter(id.eq(&note_id_str))
+            .select(id)
+            .first::<String>(&mut conn)
+            .await
+            .optional()
+            .context("failed to check note existence")?;
+
+        if exists.is_none() {
+            return Ok(None);
+        }
+
+        let tags_json = req
+            .tags
+            .as_ref()
+            .map(|t| serde_json::to_string(t))
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("serialize tags: {}", e))?;
+
+        let changeset = crate::models::NoteChangeset {
+            title: req.title.as_deref(),
+            content: req.content.as_deref(),
+            tags: tags_json.as_deref(),
+            updated_at: now,
+        };
+
+        diesel::update(notes.filter(id.eq(&note_id_str)))
+            .set(&changeset)
+            .execute(&mut conn)
+            .await
+            .context("failed to update note")?;
+
+        let result = notes
+            .filter(id.eq(&note_id_str))
+            .select(crate::models::NoteModel::as_select())
+            .first::<crate::models::NoteModel>(&mut conn)
+            .await
+            .context("failed to fetch updated note")?;
+
+        to_note_record(result).map(Some)
+    }
+
+    async fn delete(&self, note_id: Uuid) -> anyhow::Result<bool> {
+        use crate::schema::notes::dsl::*;
+        let mut conn = self.conn().await?;
+        let note_id_str = note_id.to_string();
+        let count = diesel::delete(notes.filter(id.eq(&note_id_str)))
+            .execute(&mut conn)
+            .await
+            .context("failed to delete note")?;
+        Ok(count > 0)
+    }
+
+    async fn search(
+        &self,
+        query: &str,
+    ) -> anyhow::Result<Vec<distri_types::api::notes::NoteRecord>> {
+        // Delegate to list() with the search field set.
+        self.list(&distri_types::api::notes::ListNotesQuery {
+            tag: None,
+            search: Some(query.to_string()),
+        })
+        .await
+    }
+}

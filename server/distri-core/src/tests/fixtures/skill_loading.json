@@ -1,0 +1,62 @@
+{
+  "id": "skill-loading-scenario",
+  "description": "Agent loads a skill via tool_search, uses it, then completes with final tool",
+  "agent_id": "distri",
+  "calls": [
+    {
+      "call_index": 0,
+      "model": "gpt-4.1",
+      "input": [{"role": "user", "content": "Help me set up a Slack integration for my workspace"}],
+      "output_content": "I'll search for the relevant skill to help you with Slack integration.",
+      "tool_calls": [
+        {
+          "tool_call_id": "tc-search-1",
+          "tool_name": "tool_search",
+          "input": {"query": "slack integration setup"}
+        }
+      ],
+      "finish_reason": "tool_calls",
+      "input_tokens": 150,
+      "output_tokens": 30
+    },
+    {
+      "call_index": 1,
+      "model": "gpt-4.1",
+      "input": [
+        {"role": "user", "content": "Help me set up a Slack integration"},
+        {"role": "assistant", "content": "I'll search for the relevant skill"},
+        {"role": "tool", "content": "Found skill: slack_setup (Slack workspace integration guide)"}
+      ],
+      "output_content": "I found the Slack setup skill. Let me load it to guide you through the process.",
+      "tool_calls": [
+        {
+          "tool_call_id": "tc-load-1",
+          "tool_name": "load_skill",
+          "input": {"skill_id": "slack_setup"}
+        }
+      ],
+      "finish_reason": "tool_calls",
+      "input_tokens": 250,
+      "output_tokens": 40
+    },
+    {
+      "call_index": 2,
+      "model": "gpt-4.1",
+      "input": [
+        {"role": "user", "content": "Help me set up a Slack integration"},
+        {"role": "assistant", "content": "Let me load the skill"},
+        {"role": "tool", "content": "Skill loaded: slack_setup"}
+      ],
+      "output_content": "I've loaded the Slack setup guide. Here's how to set up your Slack integration:\n\n1. Go to api.slack.com/apps and create a new app\n2. Add the necessary OAuth scopes\n3. Install the app to your workspace\n4. Copy the Bot User OAuth Token\n5. Add it as a connection in Distri\n\nWould you like me to help you with any of these steps?",
+      "tool_calls": [],
+      "finish_reason": "stop",
+      "input_tokens": 400,
+      "output_tokens": 100
+    }
+  ],
+  "metadata": {
+    "scenario_type": "skill_loading",
+    "expected_skills_loaded": ["slack_setup"],
+    "expected_tools_used": ["tool_search", "load_skill"]
+  }
+}

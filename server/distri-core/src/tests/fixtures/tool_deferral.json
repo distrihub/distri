@@ -1,0 +1,42 @@
+{
+  "id": "tool-deferral-scenario",
+  "description": "Agent defers a tool to the client, receives result, then completes",
+  "agent_id": "coder",
+  "calls": [
+    {
+      "call_index": 0,
+      "model": "claude-sonnet-4",
+      "input": [{"role": "user", "content": "Read the contents of package.json"}],
+      "output_content": "I'll read the file for you.",
+      "tool_calls": [
+        {
+          "tool_call_id": "tc-read-1",
+          "tool_name": "fs_read_file",
+          "input": {"path": "package.json"}
+        }
+      ],
+      "finish_reason": "tool_calls",
+      "input_tokens": 200,
+      "output_tokens": 25
+    },
+    {
+      "call_index": 1,
+      "model": "claude-sonnet-4",
+      "input": [
+        {"role": "user", "content": "Read the contents of package.json"},
+        {"role": "assistant", "content": "I'll read the file for you."},
+        {"role": "tool", "content": "{\"name\": \"my-app\", \"version\": \"1.0.0\", \"dependencies\": {}}"}
+      ],
+      "output_content": "Here's the contents of your package.json:\n\n- **Name:** my-app\n- **Version:** 1.0.0\n- **Dependencies:** none currently listed\n\nThe project has a minimal configuration. Would you like me to help add dependencies or modify the configuration?",
+      "tool_calls": [],
+      "finish_reason": "stop",
+      "input_tokens": 350,
+      "output_tokens": 80
+    }
+  ],
+  "metadata": {
+    "scenario_type": "tool_deferral",
+    "deferred_tools": ["fs_read_file"],
+    "expected_tool_calls": ["fs_read_file"]
+  }
+}

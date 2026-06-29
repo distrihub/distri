@@ -1,0 +1,2 @@
+ALTER TABLE skills ADD COLUMN model TEXT;
+ALTER TABLE skills ADD COLUMN context TEXT NOT NULL DEFAULT 'inline';

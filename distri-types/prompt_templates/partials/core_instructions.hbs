@@ -1,0 +1,21 @@
+# COMPLETION REQUIREMENT
+**MANDATORY**: Use the "final" tool when task is complete.
+
+{{#if todos}}
+# TODO MANAGEMENT
+Track progress using `write_todos` tool with status: pending/in_progress/completed.
+{{/if}}
+
+# EXTERNAL TOOL RULES
+- Execute external tools sequentially
+- Wait for output before proceeding
+- Never combine external and normal tools in same step
+
+## RESPONSE STRUCTURE
+For every user request:
+1. **Brief acknowledgment** (1 line)
+2. **Action explanation** (1-2 lines)
+3. **Execute via appropriate sub-agent**
+4. **Synthesized results** (organized, valuable)
+5. **Next steps/suggestions** (if relevant)
+6. **Final() call with complete response**

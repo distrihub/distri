@@ -1,0 +1,265 @@
+{
+  "providers": [
+    {
+      "kind": "rest",
+      "name": "google",
+      "display_name": "Google",
+      "group": "identity",
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "scopes_supported": [
+        "email",
+        "profile",
+        "openid",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/spreadsheets.readonly"
+      ],
+      "default_scopes": [
+        "email",
+        "profile",
+        "openid"
+      ],
+      "scope_mappings": {
+        "calendar": "https://www.googleapis.com/auth/calendar",
+        "calendar.readonly": "https://www.googleapis.com/auth/calendar.readonly",
+        "calendar.events": "https://www.googleapis.com/auth/calendar.events",
+        "gmail": "https://www.googleapis.com/auth/gmail.readonly",
+        "gmail.readonly": "https://www.googleapis.com/auth/gmail.readonly",
+        "gmail.modify": "https://www.googleapis.com/auth/gmail.modify",
+        "drive": "https://www.googleapis.com/auth/drive",
+        "drive.readonly": "https://www.googleapis.com/auth/drive.readonly",
+        "drive.file": "https://www.googleapis.com/auth/drive.file",
+        "userinfo": "https://www.googleapis.com/auth/userinfo.profile",
+        "spreadsheets": "https://www.googleapis.com/auth/spreadsheets",
+        "spreadsheets.readonly": "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "sheets": "https://www.googleapis.com/auth/spreadsheets",
+        "sheets.readonly": "https://www.googleapis.com/auth/spreadsheets.readonly"
+      },
+      "env_vars": {
+        "client_id": "GOOGLE_CLIENT_ID",
+        "client_secret": "GOOGLE_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "access_type": "offline",
+        "prompt": "consent"
+      }
+    },
+    {
+      "kind": "mcp",
+      "name": "gmail",
+      "display_name": "Gmail",
+      "group": "communication",
+      "transport_url": "https://gmailmcp.googleapis.com/mcp/v1",
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "pkce_required": true,
+      "scopes_supported": [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
+      "default_scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send"
+      ],
+      "env_vars": {
+        "client_id": "GOOGLE_CLIENT_ID",
+        "client_secret": "GOOGLE_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "access_type": "offline",
+        "prompt": "consent"
+      }
+    },
+    {
+      "kind": "mcp",
+      "name": "drive",
+      "display_name": "Drive",
+      "group": "files",
+      "transport_url": "https://drivemcp.googleapis.com/mcp/v1",
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "pkce_required": true,
+      "scopes_supported": [
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/drive"
+      ],
+      "default_scopes": [
+        "https://www.googleapis.com/auth/drive.readonly"
+      ],
+      "env_vars": {
+        "client_id": "GOOGLE_CLIENT_ID",
+        "client_secret": "GOOGLE_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "access_type": "offline",
+        "prompt": "consent"
+      }
+    },
+    {
+      "kind": "mcp",
+      "name": "calendar",
+      "display_name": "Calendar",
+      "group": "productivity",
+      "transport_url": "https://calendarmcp.googleapis.com/mcp/v1",
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "pkce_required": true,
+      "scopes_supported": [
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar"
+      ],
+      "default_scopes": [
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar.events"
+      ],
+      "env_vars": {
+        "client_id": "GOOGLE_CLIENT_ID",
+        "client_secret": "GOOGLE_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "access_type": "offline",
+        "prompt": "consent"
+      }
+    },
+    {
+      "kind": "mcp",
+      "name": "chat",
+      "display_name": "Chat",
+      "group": "communication",
+      "transport_url": "https://chatmcp.googleapis.com/mcp/v1",
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "pkce_required": true,
+      "scopes_supported": [
+        "https://www.googleapis.com/auth/chat.messages",
+        "https://www.googleapis.com/auth/chat.spaces.readonly",
+        "https://www.googleapis.com/auth/chat.spaces"
+      ],
+      "default_scopes": [
+        "https://www.googleapis.com/auth/chat.messages",
+        "https://www.googleapis.com/auth/chat.spaces.readonly"
+      ],
+      "env_vars": {
+        "client_id": "GOOGLE_CLIENT_ID",
+        "client_secret": "GOOGLE_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "access_type": "offline",
+        "prompt": "consent"
+      }
+    },
+    {
+      "kind": "rest",
+      "name": "github",
+      "display_name": "GitHub",
+      "group": "development",
+      "authorization_url": "https://github.com/login/oauth/authorize",
+      "token_url": "https://github.com/login/oauth/access_token",
+      "refresh_url": "https://github.com/login/oauth/access_token",
+      "scopes_supported": [
+        "user",
+        "user:email",
+        "repo",
+        "public_repo",
+        "gist",
+        "notifications"
+      ],
+      "default_scopes": [
+        "user:email"
+      ],
+      "scope_mappings": {
+        "user": "user",
+        "email": "user:email",
+        "repos": "repo",
+        "repo": "repo",
+        "public_repos": "public_repo",
+        "gists": "gist",
+        "notifications": "notifications"
+      },
+      "env_vars": {
+        "client_id": "GITHUB_CLIENT_ID",
+        "client_secret": "GITHUB_CLIENT_SECRET"
+      }
+    },
+    {
+      "kind": "rest",
+      "name": "twitter",
+      "display_name": "Twitter / X",
+      "group": "identity",
+      "authorization_url": "https://twitter.com/i/oauth2/authorize",
+      "token_url": "https://api.twitter.com/2/oauth2/token",
+      "refresh_url": "https://api.twitter.com/2/oauth2/token",
+      "pkce_required": true,
+      "scopes_supported": [
+        "tweet.read",
+        "tweet.write",
+        "users.read",
+        "follows.read",
+        "follows.write"
+      ],
+      "default_scopes": [
+        "users.read"
+      ],
+      "scope_mappings": {
+        "read": "tweet.read",
+        "write": "tweet.write",
+        "tweets": "tweet.read",
+        "tweets.read": "tweet.read",
+        "tweets.write": "tweet.write",
+        "users": "users.read",
+        "follows": "follows.read"
+      },
+      "env_vars": {
+        "client_id": "TWITTER_CLIENT_ID",
+        "client_secret": "TWITTER_CLIENT_SECRET"
+      },
+      "default_auth_params": {
+        "code_challenge_method": "S256"
+      }
+    },
+    {
+      "kind": "rest",
+      "name": "microsoft",
+      "display_name": "Microsoft",
+      "group": "identity",
+      "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      "refresh_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      "scopes_supported": [
+        "https://graph.microsoft.com/.default",
+        "User.Read",
+        "Mail.Read",
+        "Calendars.Read",
+        "Files.Read"
+      ],
+      "default_scopes": [
+        "User.Read"
+      ],
+      "scope_mappings": {
+        "user": "User.Read",
+        "profile": "User.Read",
+        "mail": "Mail.Read",
+        "calendar": "Calendars.Read",
+        "calendars": "Calendars.Read",
+        "files": "Files.Read",
+        "default": "https://graph.microsoft.com/.default"
+      },
+      "env_vars": {
+        "client_id": "MICROSOFT_CLIENT_ID",
+        "client_secret": "MICROSOFT_CLIENT_SECRET"
+      }
+    }
+  ]
+}
