@@ -76,6 +76,20 @@ async fn preload_forks_fork_skill_as_child_task() {
         .clone()
         .expect("skill store");
 
+    // The fork now dispatches through invoke(), which resolves the agent
+    // definition BEFORE persisting the child — so the running agent ("default",
+    // from ExecutorContext::default) must be registered for the child row to be
+    // created. (The child's loop then fails on the missing LLM, which preload
+    // swallows — we only assert the deterministic persistence side effect.)
+    orchestrator
+        .register_agent_definition(distri_types::StandardDefinition {
+            name: "default".to_string(),
+            description: "preload fork test agent".to_string(),
+            ..Default::default()
+        })
+        .await
+        .expect("register default agent");
+
     // The parent thread + task must exist for the child's parent linkage.
     orchestrator
         .stores

@@ -59,9 +59,7 @@ fn user_msg(text: &str) -> Message {
 
 fn target_named(agent_id: &str, text: &str) -> Target {
     Target {
-        agent: AgentRef::Named {
-            agent_id: agent_id.to_string(),
-        },
+        agent: AgentRef::named(agent_id),
         message: user_msg(text),
         executor: None,
     }
@@ -508,5 +506,76 @@ async fn invoke_persists_child_task_row_with_typed_invocation() {
     assert_eq!(
         row.thread_id, parent_ctx.thread_id,
         "child must live in the same thread as parent"
+    );
+}
+
+// ── Skill-fork dispatch (the unified fork path) ─────────────────────────────
+
+/// `fork_skill` routes a skill body through `invoke()` as a Single + Independent
+/// invocation targeting the SAME agent that's running. It persists a child task
+/// under the parent before the loop runs (which then fails on the missing model
+/// — caught here). Proves the fork goes through the typed dispatch, not a
+/// hand-rolled spawn. Overlay correctness is covered by the `from_target` +
+/// serde unit tests.
+#[tokio::test]
+async fn fork_skill_dispatches_child_under_parent_via_invoke() {
+    let orch = build_orch_with_agent("worker").await;
+    let parent_ctx = build_parent_ctx(&orch, "worker");
+    let parent_task_id = parent_ctx.task_id.clone();
+
+    // Drives invoke() under the hood. Errors inside the child loop (no model),
+    // but persist_child_task already ran, so the row is durable.
+    let _ = orch
+        .fork_skill(
+            &parent_ctx,
+            ("lesson_skill".to_string(), "SKILL BODY".to_string()),
+        )
+        .await;
+
+    let tasks = orch
+        .stores
+        .task_store
+        .list_tasks(Some(&parent_ctx.thread_id))
+        .await
+        .expect("list_tasks");
+    let child = tasks
+        .iter()
+        .find(|t| t.parent_task_id.as_deref() == Some(parent_task_id.as_str()))
+        .expect("fork_skill must persist a child task under the parent via invoke()");
+    assert_eq!(child.thread_id, parent_ctx.thread_id);
+    assert_ne!(child.id, parent_task_id, "child gets a fresh task_id");
+}
+
+/// The three-arg `From` (with a model) is accepted by `fork_skill` too — the
+/// model is folded into the overlay as a hint, not a hard switch. Same
+/// persistence assertion; the conversion is what's exercised here.
+#[tokio::test]
+async fn fork_skill_accepts_model_tuple() {
+    let orch = build_orch_with_agent("worker").await;
+    let parent_ctx = build_parent_ctx(&orch, "worker");
+    let parent_task_id = parent_ctx.task_id.clone();
+
+    let _ = orch
+        .fork_skill(
+            &parent_ctx,
+            (
+                "lesson_skill".to_string(),
+                "SKILL BODY".to_string(),
+                Some("gpt-4o".to_string()),
+            ),
+        )
+        .await;
+
+    let tasks = orch
+        .stores
+        .task_store
+        .list_tasks(Some(&parent_ctx.thread_id))
+        .await
+        .expect("list_tasks");
+    assert!(
+        tasks
+            .iter()
+            .any(|t| t.parent_task_id.as_deref() == Some(parent_task_id.as_str())),
+        "fork_skill with a model tuple must still dispatch a child task"
     );
 }

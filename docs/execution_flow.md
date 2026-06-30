@@ -192,17 +192,22 @@ sequenceDiagram
 
 ### S3 — `Fork` skill, LLM-triggered (`load_skill` tool, mid-loop)
 
+Both fork paths route through **one** dispatch primitive:
+`AgentOrchestrator::fork_skill` → typed `invoke()` (Single + Independent),
+targeting the SAME agent with the skill body as an `AgentRef::Named`
+instruction overlay.
+
 ```mermaid
 sequenceDiagram
     participant LLM
     participant Tool as LoadSkillTool
-    participant Ctx as ExecutorContext (task T)
+    participant Orch as Orchestrator (invoke.rs)
     participant Child as child task C
     LLM->>Tool: tool_call load_skill{ skill_id:"X" }  (context=Fork)
-    Tool->>Ctx: fork_skill("X")
-    Ctx->>Child: new_task() + execute_stream(skill body as instructions)
-    Child-->>Ctx: final result (gist)
-    Tool-->>LLM: "[Skill 'X' result] <gist>"  (single Part::Text)
+    Tool->>Orch: fork_skill(ctx, (X, body)) → invoke(Invocation::single)
+    Orch->>Child: persist child (parent_task_id=T) + run loop
+    Child-->>Orch: AgentResult (gist)
+    Tool-->>LLM: skill_gist("X", result)  (single Part::Text)
 ```
 
 ### S4 — `Fork` skill, metadata-triggered (`preload_skills`, at startup)
@@ -214,13 +219,18 @@ sequenceDiagram
     participant Ctx as ExecutorContext (task T)
     participant Child as child task C
     UI->>Orch: execute_stream(.. metadata.load_skills=["X"])  (X is Fork)
-    Orch->>Ctx: preload_skills(["X"])
-    Ctx->>Ctx: fork_skill("X")  (Box::pin — breaks preload→fork→preload recursion)
-    Ctx->>Child: new_task() + execute_stream
-    Child-->>Ctx: gist
-    Ctx->>Ctx: inject gist as SkillContext entry
+    Orch->>Ctx: preload_skills(["X"])  (context resolves the skill only)
+    Ctx->>Orch: fork_skill(ctx, (X, body)) → invoke()
+    Orch->>Child: persist child (parent_task_id=T) + run loop
+    Child-->>Ctx: AgentResult (gist)
+    Ctx->>Ctx: inject_skill_context(X, skill_gist(result))
     Note over Ctx: parent's first plan sees the child's GIST, never its steps
 ```
+
+> `fork_skill` returns an explicit `Pin<Box<dyn Future + Send>>` — that boxed
+> indirection is what breaks the `fork_skill → invoke → … → preload_skills →
+> fork_skill` async-recursion cycle (an `async fn` cycle can't have its size or
+> `Send`-ness inferred).
 
 > This is the **activity-editor path**: the frontend names a `Fork`-type skill in
 > `metadata.load_skills`; the editor's sub-task runs in isolation and the parent
@@ -320,38 +330,50 @@ event { task_id: C, parent_task_id: T, … }
 
 ---
 
-## 8. Architecture note — where `fork_skill` *should* live
+## 8. Architecture note — fork dispatch now lives in `invoke.rs` (DONE)
 
-Today `fork_skill` lives on `ExecutorContext` (`context.rs`). That's a **state
-object spawning a task** — the one thing every comparable system keeps out of
-the context object:
+Fork dispatch used to live on `ExecutorContext::fork_skill` (`context.rs`) — a
+**state object spawning a task**, the one thing every comparable system keeps out
+of the context object:
 
 - **A2A** — a sub-agent call is the agent acting as a *client*; `RequestContext`
   never spawns.
 - **OpenAI Agents SDK** — `Runner` owns spawning; `RunContextWrapper` is data.
 - **LangGraph** — subgraphs are *nodes*; `State` is data.
 
-There are also **two parallel fork mechanisms**: the typed `invoke.rs`
-(`Invocation`) and the ad-hoc `fork_skill` → `execute_stream`. They duplicate the
+There were also **two parallel fork mechanisms**: the typed `invoke.rs`
+(`Invocation`) and the ad-hoc `fork_skill` → `execute_stream`. They duplicated the
 same lineage + gist logic. And the `Invocation` model *already anticipated
-skills* — `ContextScope::Inherited` is documented as *"default for `run_skill`"*.
+skills* (`ContextScope::Inherited` is documented as *"default for `run_skill`"*).
 
-**Target state:**
+**Now unified:**
 
 ```
-  context.rs       state only (no spawning)
-  invoke.rs        the single dispatch home — Invocation → child task
-  fork (skill)     builds an Invocation { Target{ Named(self)+overlay }, Single }
-                   and calls invoke()   ← unifies the two paths
+  context.rs   STATE only — preload_skills RESOLVES a skill and records the
+               result (inject_skill_context); it no longer spawns.
+  invoke.rs    the single dispatch home:
+                 AgentOrchestrator::fork_skill(parent_ctx, impl Into<SkillFork>)
+                   → Invocation::single( Target::named_with_overlay(self, body) )
+                   → invoke()              ← ONE fork mechanism
+  AgentRef     Named { agent_id, instructions_overlay: Option<String> }
+                 overlay → DefinitionOverrides::instructions_append in from_target
 ```
 
-The one gap to close first: `Target`/`AgentRef` can't yet express *"the same
-named agent, plus this skill body as an instruction overlay"* — `AgentRef::Named`
-has no overlay and `AgentRef::AdHoc` drops the base agent's own prompt/tools.
-A small `AgentRef::Named { agent_id, instructions_overlay: Option<String> }`
-addition lets a skill-fork become a one-line `invoke()`, after which
-`fork_skill` deletes itself.
+What this bought:
+- **One** code path for skill forks (both `LoadSkillTool` and `preload_skills`
+  call `orch.fork_skill`); `skill_gist()` formats the result both surface.
+- `context.rs` shed the spawn: `preload_skills`'s Fork branch delegates to the
+  orchestrator and only injects the returned gist. `Inline` preload stays in
+  context — rendering + injecting a body genuinely mutates *this* task's state.
+- An `inject_skill_context(skill_id, content, at)` convenience removed the
+  triplicated `ScratchpadEntry { SkillContext }` block (reinject + inline preload
+  + fork-gist preload).
 
-`preload_skills` itself stays in context — resolving + injecting an `Inline`
-body genuinely mutates *this* task's state. Only its **Fork branch** should
-delegate to the dispatch layer instead of spawning directly.
+Tests: `from_target` overlay → `instructions_append`; `AgentRef::Named` serde
+round-trip + backward-compat (old wire shape → `None`); `fork_skill` persists a
+child under the parent through `invoke()`; `skill_gist` formatting; the existing
+`Join::{Single,All,Detached}` persistence/routing tests still green.
+
+Follow-up (unchanged): the richer `metadata.fork` `Invocation` directive (a fork
+targeting a *different* agent / its own tools) and splitting `AgentOrchestrator`
+into registry + runner remain separate, larger PRs.

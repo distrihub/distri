@@ -98,14 +98,12 @@ impl InvokeAgentInput {
                         .into(),
                 );
             }
-            (Some(agent_id), None) => AgentRef::Named { agent_id },
+            (Some(agent_id), None) => AgentRef::named(agent_id),
             (None, Some(system)) => AgentRef::AdHoc {
                 system_prompt: system,
                 tools: None,
             },
-            (None, None) => AgentRef::Named {
-                agent_id: resolve_code_agent(parent_runtime).to_string(),
-            },
+            (None, None) => AgentRef::named(resolve_code_agent(parent_runtime)),
         };
 
         let target = Target {

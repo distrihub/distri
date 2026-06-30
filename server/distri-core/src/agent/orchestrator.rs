@@ -762,9 +762,12 @@ impl AgentOrchestrator {
 
                 // Eagerly load any skills the client requested via
                 // `metadata.load_skills`. Inline skills get injected up-front so
-                // the run skips the `load_skill` round-trip; fork-type skills are
-                // deferred to explicit dispatch. Best-effort: individual
-                // failures are logged inside `preload_skills`, not fatal.
+                // the run skips the `load_skill` round-trip; fork-type skills
+                // dispatch as isolated child tasks (see `preload_skills`).
+                // Best-effort: individual failures are logged inside
+                // `preload_skills`, not fatal. The recursion this path can form
+                // (preload → fork_skill → invoke → create_agent → preload) is
+                // broken by `fork_skill` returning an explicit boxed future.
                 if !context.load_skills.is_empty() {
                     let to_load = context.load_skills.clone();
                     if let Err(e) = context.preload_skills(&to_load).await {

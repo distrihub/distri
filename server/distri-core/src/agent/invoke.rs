@@ -217,6 +217,79 @@ impl AgentOrchestrator {
         }
     }
 
+    /// Fork a skill body into an isolated child task and return its result.
+    ///
+    /// This is the single home for *skill forks* — what `LoadSkillTool` does for
+    /// a `context = Fork` skill, and what `preload_skills` does for a fork-type
+    /// skill named in `metadata.load_skills`. Both now route here instead of
+    /// hand-rolling `new_task` + `execute_stream`, so there is exactly ONE fork
+    /// mechanism: the typed [`Invocation`] dispatch.
+    ///
+    /// Shape: `Join::Single` + `ContextScope::Independent`, targeting the SAME
+    /// agent that's running (`parent_ctx.agent_id`) with the skill body as an
+    /// instruction overlay (`AgentRef::named_with_overlay`). The child gets a
+    /// fresh task (same thread, `parent_task_id` = caller), runs its own loop,
+    /// and only its final result comes back — "one brief in, one gist out".
+    ///
+    /// Accepts anything convertible into [`SkillFork`] so call sites stay terse:
+    /// `orch.fork_skill(&ctx, (id, body)).await` or `(id, body, model)`.
+    ///
+    /// Returns an explicit boxed future (rather than an `async fn` opaque type)
+    /// on purpose: a fork-type skill re-enters this path
+    /// (`fork_skill → invoke → … → create_agent → preload_skills → fork_skill`),
+    /// and a recursive `async fn` cycle can't have its size or `Send`-ness
+    /// inferred. A concrete `Pin<Box<dyn Future + Send>>` is the indirection that
+    /// breaks the cycle for callers, who just `.await` it normally.
+    pub fn fork_skill(
+        self: &Arc<Self>,
+        parent_ctx: &Arc<ExecutorContext>,
+        skill: impl Into<SkillFork>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<AgentResult, AgentError>> + Send>>
+    {
+        let SkillFork {
+            skill_id,
+            body,
+            model,
+        } = skill.into();
+        let this = self.clone();
+        let parent_ctx = parent_ctx.clone();
+
+        Box::pin(async move {
+            // Per-skill `model` is surfaced as a hint comment (same treatment the
+            // inline-skill path gives it) rather than hard-switching the model —
+            // so inline and fork skills handle `skill.model` identically.
+            let overlay = match model {
+                Some(m) => format!("{body}\n\n<!-- skill preferred model: {m} -->"),
+                None => body,
+            };
+
+            let message = distri_types::Message {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: None,
+                parts: vec![distri_types::Part::Text(format!(
+                    "Execute the skill '{skill_id}' according to your instructions."
+                ))],
+                role: distri_types::MessageRole::User,
+                created_at: chrono::Utc::now().timestamp_millis(),
+                agent_id: None,
+                parts_metadata: None,
+            };
+
+            let invocation = Invocation::single(Target::named_with_overlay(
+                parent_ctx.agent_id.clone(),
+                overlay,
+                message,
+            ));
+
+            match this.invoke(invocation, parent_ctx.clone()).await? {
+                InvocationResult::Scalar { result } => Ok(result),
+                other => Err(AgentError::Session(format!(
+                    "fork_skill expected a Scalar result from Join::Single, got {other:?}"
+                ))),
+            }
+        })
+    }
+
     /// Synchronous per-target dispatch. Decides Local vs Remote via
     /// `decide_dispatch`, then drives the appropriate path and waits
     /// for terminal.
@@ -673,6 +746,52 @@ impl AgentOrchestrator {
     }
 }
 
+// ── Skill-fork spec ──────────────────────────────────────────────────────
+
+/// Inputs to [`AgentOrchestrator::fork_skill`]. A thin value object so call
+/// sites can pass a tuple (`From` impls below) and avoid naming fields.
+pub struct SkillFork {
+    /// The skill's id — used only for logging and the child's first-turn brief.
+    pub skill_id: String,
+    /// The skill body, appended to the running agent's instructions for the
+    /// forked child.
+    pub body: String,
+    /// Optional per-skill preferred model (surfaced as a hint comment).
+    pub model: Option<String>,
+}
+
+impl From<(String, String)> for SkillFork {
+    fn from((skill_id, body): (String, String)) -> Self {
+        Self {
+            skill_id,
+            body,
+            model: None,
+        }
+    }
+}
+
+impl From<(String, String, Option<String>)> for SkillFork {
+    fn from((skill_id, body, model): (String, String, Option<String>)) -> Self {
+        Self {
+            skill_id,
+            body,
+            model,
+        }
+    }
+}
+
+/// Format a forked skill's [`AgentResult`] into the compact gist string both
+/// call sites surface: `[Skill 'id' result]\n<gist>`. Stringifies a structured
+/// final result; falls back to a "no output" line for a null result.
+pub fn skill_gist(skill_id: &str, result: &AgentResult) -> String {
+    let gist = match &result.content {
+        serde_json::Value::Null => format!("Skill '{skill_id}' completed without output."),
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    format!("[Skill '{skill_id}' result]\n{gist}")
+}
+
 // ── Helpers (private to this module) ─────────────────────────────────────
 
 /// What a [`Target`] resolves to at dispatch time: the agent_id to drive
@@ -697,9 +816,20 @@ impl ResolvedTarget {
     /// parent had.
     fn from_target(target: &Target, inherited_tools: Option<distri_types::ToolsConfig>) -> Self {
         match &target.agent {
-            AgentRef::Named { agent_id } => Self {
+            AgentRef::Named {
+                agent_id,
+                instructions_overlay,
+            } => Self {
                 agent_id: agent_id.clone(),
-                definition_overrides: None,
+                // A skill-fork: same agent, skill body APPENDED below its own
+                // instructions for this run only. No tool inheritance — the
+                // named agent already carries its own tools.
+                definition_overrides: instructions_overlay.as_ref().map(|overlay| {
+                    distri_types::configuration::DefinitionOverrides {
+                        instructions_append: Some(overlay.clone()),
+                        ..Default::default()
+                    }
+                }),
             },
             AgentRef::AdHoc {
                 system_prompt,
@@ -755,4 +885,64 @@ fn ensure_independent_context(invocation: &Invocation) -> Result<(), AgentError>
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use distri_types::invocation::{AgentResult, Target};
+    use distri_types::{Message, TaskStatus};
+
+    fn msg() -> Message {
+        Message::user("hi".to_string(), None)
+    }
+
+    /// A named target with an instruction overlay (the skill-fork shape)
+    /// resolves to the SAME agent_id plus `instructions_append` = overlay.
+    #[test]
+    fn from_target_named_overlay_becomes_instructions_append() {
+        let target = Target::named_with_overlay("coder", "SKILL BODY", msg());
+        let resolved = ResolvedTarget::from_target(&target, None);
+        assert_eq!(resolved.agent_id, "coder");
+        let ov = resolved
+            .definition_overrides
+            .expect("overlay must produce DefinitionOverrides");
+        assert_eq!(ov.instructions_append.as_deref(), Some("SKILL BODY"));
+        // The overlay APPENDS — it must not replace the agent's own instructions.
+        assert!(ov.instructions.is_none());
+    }
+
+    /// A plain named target (no overlay) resolves with no overrides — the agent
+    /// runs exactly as defined.
+    #[test]
+    fn from_target_named_plain_has_no_overrides() {
+        let target = Target::named("coder", msg());
+        let resolved = ResolvedTarget::from_target(&target, None);
+        assert_eq!(resolved.agent_id, "coder");
+        assert!(resolved.definition_overrides.is_none());
+    }
+
+    fn result(content: serde_json::Value) -> AgentResult {
+        AgentResult {
+            content,
+            task_id: "t".to_string(),
+            status: TaskStatus::Completed,
+        }
+    }
+
+    #[test]
+    fn skill_gist_formats_string_structured_and_null() {
+        assert_eq!(
+            skill_gist("x", &result(serde_json::json!("done"))),
+            "[Skill 'x' result]\ndone"
+        );
+        assert_eq!(
+            skill_gist("x", &result(serde_json::json!({ "ok": true }))),
+            "[Skill 'x' result]\n{\"ok\":true}"
+        );
+        assert_eq!(
+            skill_gist("x", &result(serde_json::Value::Null)),
+            "[Skill 'x' result]\nSkill 'x' completed without output."
+        );
+    }
 }

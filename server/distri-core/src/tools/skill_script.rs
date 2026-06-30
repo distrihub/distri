@@ -146,17 +146,19 @@ impl ExecutorContextTool for LoadSkillTool {
             }
 
             ContextExecutionType::Fork => {
-                // Single source of truth for fork semantics (also used by the
-                // metadata-driven `preload_skills` path): same thread, fresh
-                // task_id/run_id, parent_task_id = current task, skill body as
-                // the child's instructions; only the gist returns to the parent.
-                let summary = context
-                    .fork_skill(skill_id, &skill.content, skill.model.clone())
-                    .await
-                    .unwrap_or_else(|e| {
+                // Single source of truth for fork semantics: the orchestrator's
+                // typed invoke() dispatch (also used by the metadata-driven
+                // `preload_skills` path). Same thread, fresh task_id/run_id,
+                // parent_task_id = current task, skill body as an instruction
+                // overlay on the same agent; only the gist returns to the parent.
+                let fork = (skill_id.to_string(), skill.content.clone(), skill.model.clone());
+                let summary = match orchestrator.fork_skill(&context, fork).await {
+                    Ok(result) => crate::agent::invoke::skill_gist(skill_id, &result),
+                    Err(e) => {
                         tracing::error!(skill_id = skill_id, error = %e, "Forked skill execution failed");
                         format!("[Skill '{skill_id}' result]\nSkill '{skill_id}' failed: {e}")
-                    });
+                    }
+                };
 
                 Ok(vec![Part::Text(summary)])
             }
