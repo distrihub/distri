@@ -533,42 +533,51 @@ impl ExecutorContextTool for GetTaskResultTool {
                 AgentError::ToolExecution(format!("get_task_result: task '{}' not found", input.id))
             })?;
 
-        // Pull the task's stored messages and take the last assistant text.
+        // Pull the task's stored messages. The worker's answer usually lives
+        // in its `final` tool call (the agent contract); plain assistant text
+        // is the fallback.
         let history = orch
             .stores
             .task_store
             .get_history(&row.thread_id, None)
             .await
             .map_err(|e| AgentError::ToolExecution(format!("get_task_result history: {e}")))?;
+        let extract = |msgs: &[distri_types::TaskMessage]| -> Option<String> {
+            for m in msgs.iter().rev() {
+                let distri_types::TaskMessage::Message(msg) = m else {
+                    continue;
+                };
+                if !matches!(msg.role, distri_types::MessageRole::Assistant) {
+                    continue;
+                }
+                for p in msg.parts.iter().rev() {
+                    match p {
+                        distri_types::Part::ToolCall(tc) if tc.tool_name == "final" => {
+                            if let Ok(v) =
+                                crate::tools::builtin::FinalTool::extract_result(&tc.input)
+                            {
+                                let text = match v {
+                                    serde_json::Value::String(s) => s,
+                                    other => other.to_string(),
+                                };
+                                if !text.trim().is_empty() {
+                                    return Some(text);
+                                }
+                            }
+                        }
+                        distri_types::Part::Text(t) if !t.trim().is_empty() => {
+                            return Some(t.clone())
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            None
+        };
         let result_text = history
             .into_iter()
             .find(|(t, _)| t.id == input.id)
-            .map(|(_, msgs)| {
-                msgs.iter()
-                    .rev()
-                    .find_map(|m| match m {
-                        distri_types::TaskMessage::Message(msg)
-                            if matches!(msg.role, distri_types::MessageRole::Assistant) =>
-                        {
-                            let text = msg
-                                .parts
-                                .iter()
-                                .filter_map(|p| match p {
-                                    Part::Text(t) => Some(t.as_str()),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            if text.trim().is_empty() {
-                                None
-                            } else {
-                                Some(text)
-                            }
-                        }
-                        _ => None,
-                    })
-            })
-            .unwrap_or(None);
+            .and_then(|(_, msgs)| extract(&msgs));
 
         Ok(vec![Part::Data(json!({
             "id": row.id,
