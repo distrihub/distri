@@ -457,3 +457,123 @@ impl ExecutorContextTool for ListMyTasksTool {
         }))])
     }
 }
+
+// ── get_task_result ─────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct GetTaskResultInput {
+    id: String,
+}
+
+/// Harvest a finished child's OUTPUT — the piece `get_task`/`wait_task`
+/// don't cover (they return status/timing only). Reads the child task's
+/// stored messages and returns the last assistant text (the worker's
+/// final answer). The background workflow is: `invoke_agent
+/// {mode:"background"}` → `wait_task` → `get_task_result`.
+#[derive(Debug)]
+pub struct GetTaskResultTool;
+
+#[async_trait]
+impl Tool for GetTaskResultTool {
+    fn get_name(&self) -> String {
+        "get_task_result".to_string()
+    }
+
+    fn get_description(&self) -> String {
+        "Read a finished task's final output (its last assistant message). \
+         Use after wait_task/get_task shows a background child reached a \
+         terminal state, to collect what it produced."
+            .to_string()
+    }
+
+    fn get_parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "The task_id whose result to read."
+                }
+            },
+            "required": ["id"]
+        })
+    }
+
+    fn needs_executor_context(&self) -> bool {
+        true
+    }
+
+    async fn execute(
+        &self,
+        _tool_call: distri_types::ToolCall,
+        _context: Arc<ToolContext>,
+    ) -> Result<Vec<Part>, anyhow::Error> {
+        anyhow::bail!("GetTaskResultTool requires ExecutorContext")
+    }
+}
+
+#[async_trait]
+impl ExecutorContextTool for GetTaskResultTool {
+    async fn execute_with_executor_context(
+        &self,
+        tool_call: distri_types::ToolCall,
+        context: Arc<ExecutorContext>,
+    ) -> Result<Vec<Part>, AgentError> {
+        let input: GetTaskResultInput = serde_json::from_value(tool_call.input.clone())
+            .map_err(|e| AgentError::ToolExecution(format!("get_task_result: invalid input: {e}")))?;
+        let orch = context.get_orchestrator()?;
+
+        let row = orch
+            .stores
+            .task_store
+            .get_task(&input.id)
+            .await
+            .map_err(|e| AgentError::ToolExecution(format!("get_task_result: {e}")))?
+            .ok_or_else(|| {
+                AgentError::ToolExecution(format!("get_task_result: task '{}' not found", input.id))
+            })?;
+
+        // Pull the task's stored messages and take the last assistant text.
+        let history = orch
+            .stores
+            .task_store
+            .get_history(&row.thread_id, None)
+            .await
+            .map_err(|e| AgentError::ToolExecution(format!("get_task_result history: {e}")))?;
+        let result_text = history
+            .into_iter()
+            .find(|(t, _)| t.id == input.id)
+            .map(|(_, msgs)| {
+                msgs.iter()
+                    .rev()
+                    .find_map(|m| match m {
+                        distri_types::TaskMessage::Message(msg)
+                            if matches!(msg.role, distri_types::MessageRole::Assistant) =>
+                        {
+                            let text = msg
+                                .parts
+                                .iter()
+                                .filter_map(|p| match p {
+                                    Part::Text(t) => Some(t.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            if text.trim().is_empty() {
+                                None
+                            } else {
+                                Some(text)
+                            }
+                        }
+                        _ => None,
+                    })
+            })
+            .unwrap_or(None);
+
+        Ok(vec![Part::Data(json!({
+            "id": row.id,
+            "status": row.status,
+            "result": result_text,
+        }))])
+    }
+}

@@ -619,6 +619,7 @@ impl AgentOrchestrator {
                 Arc::new(crate::tools::supervisor::WaitTaskTool),
                 Arc::new(crate::tools::supervisor::CancelTaskTool),
                 Arc::new(crate::tools::supervisor::ListMyTasksTool),
+                Arc::new(crate::tools::supervisor::GetTaskResultTool),
             ];
             for sup in supervisors {
                 if !tools.iter().any(|t| t.get_name() == sup.get_name()) {

@@ -476,7 +476,7 @@ async fn default_agent_tools_include_supervisors_alongside_invoke_agent() {
         .expect("resolve tools");
     let names: Vec<String> = resolved.all_tools.iter().map(|t| t.get_name()).collect();
     assert!(names.iter().any(|n| n == "invoke_agent"), "tools: {names:?}");
-    for expected in ["get_task", "wait_task", "cancel_task", "list_my_tasks"] {
+    for expected in ["get_task", "wait_task", "cancel_task", "list_my_tasks", "get_task_result"] {
         assert!(
             names.iter().any(|n| n == expected),
             "`{expected}` must be bundled with invoke_agent; tools: {names:?}"
