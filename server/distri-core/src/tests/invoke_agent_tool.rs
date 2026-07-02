@@ -363,3 +363,123 @@ async fn invoke_agent_tool_rejects_agent_and_system_together() {
         "expected guidance about choosing one path; got: {msg}"
     );
 }
+
+/// `mode` is part of the LLM-facing schema (optional; "wait" | "background"),
+/// and `prompt` stays the only required field.
+#[test]
+fn invoke_agent_tool_schema_includes_mode() {
+    let t = InvokeAgentTool;
+    let params = t.get_parameters();
+    assert!(
+        params["properties"]["mode"].is_object(),
+        "`mode` must be in the schema; properties: {:?}",
+        params["properties"]
+    );
+    let required = params["required"]
+        .as_array()
+        .expect("schema has `required`")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(required, vec!["prompt"], "mode must stay optional");
+    let desc = t.get_description();
+    assert!(
+        desc.contains("background"),
+        "description should teach the background mode; got: {desc}"
+    );
+}
+
+/// `mode: "background"` detaches: the tool returns `{kind: "task_ids"}`
+/// immediately and the child task row is persisted under the parent so a
+/// monitor (or the supervisor tools) can find it.
+#[tokio::test]
+async fn invoke_agent_tool_background_returns_task_ids_and_persists_child() {
+    use distri_types::stores::TaskStore;
+
+    let orch = build_orch_with_agent("worker").await;
+    let ctx = parent_ctx(&orch, "worker");
+    let parent_task_id = ctx.task_id.clone();
+    orch.stores
+        .task_store
+        .create_task(
+            distri_types::stores::CreateTaskInput::local(ctx.thread_id.clone())
+                .with_id(parent_task_id.clone()),
+        )
+        .await
+        .expect("seed parent task");
+
+    let tool_call = ToolCall {
+        tool_call_id: "tc-bg".to_string(),
+        tool_name: "invoke_agent".to_string(),
+        input: json!({
+            "prompt": "go-detached",
+            "agent": "worker",
+            "mode": "background"
+        }),
+    };
+    let parts = InvokeAgentTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .expect("background dispatch returns Ok immediately");
+
+    // Result shape: InvocationResult::TaskIds.
+    let distri_types::Part::Data(v) = &parts[0] else {
+        panic!("expected Part::Data; got {parts:?}");
+    };
+    assert_eq!(v["kind"], "task_ids", "background join returns task_ids: {v}");
+    let ids = v["task_ids"].as_array().expect("task_ids array");
+    assert_eq!(ids.len(), 1, "one target → one task id: {v}");
+    let child_id = ids[0].as_str().unwrap().to_string();
+
+    // The child row exists under the parent (immediately, not after join).
+    let descendants = orch
+        .stores
+        .task_store
+        .list_descendant_tasks(&parent_task_id)
+        .await
+        .unwrap();
+    assert!(
+        descendants.iter().any(|t| t.id == child_id),
+        "child task must be persisted under the parent; got {descendants:?}"
+    );
+
+    // The detached child eventually reaches a terminal state on its own.
+    for _ in 0..100 {
+        let row = orch
+            .stores
+            .task_store
+            .get_task(&child_id)
+            .await
+            .unwrap()
+            .expect("child row");
+        if row.status.is_terminal() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("detached child never reached a terminal state");
+}
+
+/// Any agent with `invoke_agent` gets the supervisor tools bundled by the
+/// orchestrator (it can detach children, so it must be able to manage them).
+#[tokio::test]
+async fn default_agent_tools_include_supervisors_alongside_invoke_agent() {
+    let orch = build_orch_with_agent("worker").await;
+    let def = StandardDefinition {
+        name: "worker".to_string(),
+        description: "probe".to_string(),
+        ..Default::default()
+    };
+    let resolved = orch
+        .get_agent_tools_with_pool(&def, &[], None)
+        .await
+        .expect("resolve tools");
+    let names: Vec<String> = resolved.all_tools.iter().map(|t| t.get_name()).collect();
+    assert!(names.iter().any(|n| n == "invoke_agent"), "tools: {names:?}");
+    for expected in ["get_task", "wait_task", "cancel_task", "list_my_tasks"] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "`{expected}` must be bundled with invoke_agent; tools: {names:?}"
+        );
+    }
+}

@@ -449,7 +449,15 @@ async fn invoke_detached_returns_task_ids_addressable_immediately() {
             .expect("get_task")
             .unwrap_or_else(|| panic!("task {tid} must be addressable on return"));
         assert_eq!(row.parent_task_id.as_deref(), Some(parent_task_id.as_str()));
-        assert_eq!(row.status, TaskStatus::Running);
+        // Status: Running while the detached loop is alive. In this no-LLM
+        // test env the loop can fail instantly, in which case the settle
+        // path flips the row to Failed — either way it must never be stuck
+        // in Pending, and never unaddressable.
+        assert!(
+            row.status == TaskStatus::Running || row.status.is_terminal(),
+            "expected Running or settled-terminal; got {:?}",
+            row.status
+        );
     }
 }
 

@@ -405,6 +405,18 @@ pub trait TaskStore: Send + Sync {
         task_id: &str,
         parent_task_id: Option<&str>,
     ) -> anyhow::Result<()>;
+
+    /// "Latest update" projection for a monitor: the newest event/message
+    /// recorded for the task, as `(preview, at_millis)`. Default `None` —
+    /// stores that persist task messages (cloud Postgres) override this so
+    /// `GET /tasks` can show what each background child last did without
+    /// streaming it.
+    async fn latest_task_activity(
+        &self,
+        _task_id: &str,
+    ) -> anyhow::Result<Option<(String, i64)>> {
+        Ok(None)
+    }
 }
 
 // Thread Store trait for thread management

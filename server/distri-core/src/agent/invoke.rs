@@ -551,6 +551,7 @@ impl AgentOrchestrator {
             .workspace_id
             .as_deref()
             .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let spawned_task_id = task_id.clone();
         tokio::spawn(distri_auth::context::with_user_and_workspace(
             user_id,
             ws_uuid,
@@ -573,6 +574,7 @@ impl AgentOrchestrator {
                         "detached remote invocation loop failed",
                     );
                 }
+                orch.settle_detached_task(&spawned_task_id).await;
             },
         ));
 
@@ -613,6 +615,7 @@ impl AgentOrchestrator {
             .workspace_id
             .as_deref()
             .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let spawned_task_id = task_id.clone();
         tokio::spawn(distri_auth::context::with_user_and_workspace(
             user_id,
             ws_uuid,
@@ -627,10 +630,44 @@ impl AgentOrchestrator {
                         "detached invocation loop failed"
                     );
                 }
+                // Settle the row: a detached child whose loop died before its
+                // own RunFinished bookkeeping must not stay `running` forever
+                // — monitors and `wait_task` need a terminal state.
+                orch.settle_detached_task(&spawned_task_id).await;
             },
         ));
 
         Ok(task_id)
+    }
+
+    /// Flip a detached child's row to Failed if its loop ended without
+    /// reaching a terminal state. No-op when the row is already terminal
+    /// (the normal success path) or missing.
+    async fn settle_detached_task(self: &Arc<Self>, task_id: &str) {
+        let terminal = self
+            .stores
+            .task_store
+            .get_task(task_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|t| t.status.is_terminal())
+            .unwrap_or(true);
+        if !terminal {
+            if let Err(e) = self
+                .stores
+                .task_store
+                .update_task_status(task_id, distri_types::TaskStatus::Failed)
+                .await
+            {
+                tracing::warn!(
+                    target: "invoke.detached",
+                    error = %e,
+                    task_id,
+                    "failed to settle detached task status"
+                );
+            }
+        }
     }
 
     /// Cancel a task and every descendant task that hangs off it via

@@ -63,7 +63,21 @@ use distri_types::{Part, RuntimeMode, Tool, ToolCall, ToolContext};
 //     anything it needs from the parent is in `prompt`).
 //   - `ToolPolicy::Inherit` (worker inherits parent's external tools).
 
-/// LLM-facing input for `invoke_agent`. Three flat fields; everything
+/// How the parent waits on the dispatched sub-agent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum InvokeMode {
+    /// Block until the sub-agent finishes and return its result (default).
+    #[default]
+    Wait,
+    /// Fire-and-forget: the sub-agent runs as a background child task and
+    /// this call returns `{ task_ids }` immediately. Manage it with the
+    /// supervisor tools (`get_task` / `wait_task` / `cancel_task` /
+    /// `list_my_tasks`).
+    Background,
+}
+
+/// LLM-facing input for `invoke_agent`. Four flat fields; everything
 /// else is filled by the orchestrator.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -83,6 +97,12 @@ struct InvokeAgentInput {
     /// exclusive with `agent`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     system: Option<String>,
+
+    /// "wait" (default) blocks and returns the sub-agent's result.
+    /// "background" detaches: returns `{ task_ids }` immediately so the
+    /// parent can keep working and check in with the supervisor tools.
+    #[serde(default)]
+    mode: InvokeMode,
 }
 
 impl InvokeAgentInput {
@@ -112,10 +132,15 @@ impl InvokeAgentInput {
             executor: None,
         };
 
+        let join = match self.mode {
+            InvokeMode::Wait => Join::Single,
+            InvokeMode::Background => Join::Detached,
+        };
+
         Ok(Invocation {
             targets: vec![target],
             context: ContextScope::Independent,
-            join: Join::Single,
+            join,
             executor: ExecutorHint::Auto,
             tools: ToolPolicy::default(),
         })
@@ -206,13 +231,16 @@ impl Tool for InvokeAgentTool {
     }
 
     fn get_description(&self) -> String {
-        "Dispatch one sub-agent to do a focused piece of work and wait \
-         for its result. Pass `prompt` (required) plus optionally \
-         `agent` (a registered agent name) OR `system` (an ad-hoc \
-         system prompt for a one-off worker). To run several sub-tasks \
-         in parallel, emit multiple `invoke_agent` tool calls in a \
-         single assistant turn — they are executed concurrently and \
-         each returns its own result."
+        "Dispatch one sub-agent to do a focused piece of work. Pass \
+         `prompt` (required) plus optionally `agent` (a registered \
+         agent name) OR `system` (an ad-hoc system prompt for a \
+         one-off worker). By default this waits and returns the \
+         sub-agent's result; pass `mode: \"background\"` to detach — \
+         it returns `{ task_ids }` immediately and you manage the \
+         child with get_task / wait_task / cancel_task / \
+         list_my_tasks. To run several sub-tasks in parallel, emit \
+         multiple `invoke_agent` tool calls in a single assistant \
+         turn — they are executed concurrently."
             .to_string()
     }
 

@@ -609,6 +609,24 @@ impl AgentOrchestrator {
             tools.push(Arc::new(crate::tools::InvokeAgentTool));
         }
 
+        // Any agent that can dispatch sub-agents can also detach them
+        // (`invoke_agent { mode: "background" }`), so bundle the supervisor
+        // tools it needs to manage those children. No-op for agents that
+        // already declare them or that lack invoke_agent entirely.
+        if tools.iter().any(|t| t.get_name() == "invoke_agent") {
+            let supervisors: Vec<Arc<dyn Tool>> = vec![
+                Arc::new(crate::tools::supervisor::GetTaskTool),
+                Arc::new(crate::tools::supervisor::WaitTaskTool),
+                Arc::new(crate::tools::supervisor::CancelTaskTool),
+                Arc::new(crate::tools::supervisor::ListMyTasksTool),
+            ];
+            for sup in supervisors {
+                if !tools.iter().any(|t| t.get_name() == sup.get_name()) {
+                    tools.push(sup);
+                }
+            }
+        }
+
         let is_browser_agent =
             definition.name == "browser_agent" || definition.name.ends_with("/browser_agent");
         if definition.should_use_browser() && !is_browser_agent {
