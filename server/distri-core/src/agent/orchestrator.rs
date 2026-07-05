@@ -783,15 +783,14 @@ impl AgentOrchestrator {
                 // `metadata.load_skills`. Inline skills get injected up-front so
                 // the run skips the `load_skill` round-trip; fork-type skills
                 // dispatch as isolated child tasks (see `preload_skills`).
-                // Best-effort: individual failures are logged inside
-                // `preload_skills`, not fatal. The recursion this path can form
+                // PROPER ERROR: if a requested skill can't be preloaded, fail the
+                // run — the recipe would be missing and the agent would produce
+                // wrong output silently. The recursion this path can form
                 // (preload → fork_skill → invoke → create_agent → preload) is
                 // broken by `fork_skill` returning an explicit boxed future.
                 if !context.load_skills.is_empty() {
                     let to_load = context.load_skills.clone();
-                    if let Err(e) = context.preload_skills(&to_load).await {
-                        tracing::warn!("metadata.load_skills preload failed: {e}");
-                    }
+                    context.preload_skills(&to_load).await?;
                 }
 
                 // Resolve declared connections. Agents must declare connections

@@ -1962,6 +1962,27 @@ impl ExecutorContext {
             }
         }
 
+        // PROPER ERROR — not best-effort. If the caller explicitly asked to
+        // preload a skill and it did NOT end up in context (not found, render
+        // failure, inject failure, fork dispatch failure), fail LOUDLY. The
+        // silent-skip version caused the "generate lesson wrote prose into the
+        // chat" bug: the recipe never loaded, the agent had no instructions, and
+        // it produced wrong output with no signal that anything was missing.
+        if injected.len() != skill_ids.len() {
+            let missing: Vec<String> = skill_ids
+                .iter()
+                .filter(|s| !injected.contains(s))
+                .cloned()
+                .collect();
+            return Err(AgentError::Execution(format!(
+                "preload_skills: failed to preload {}/{} requested skill(s): {missing:?}. \
+                 The run would proceed WITHOUT these recipes — failing instead of \
+                 silently producing wrong output. (See warnings above for the per-skill cause.)",
+                missing.len(),
+                skill_ids.len(),
+            )));
+        }
+
         Ok(injected)
     }
 

@@ -124,18 +124,18 @@ async fn preload_forks_fork_skill_as_child_task() {
         .await
         .expect("create fork skill");
 
-    // Best-effort: with no LLM configured the child run errors out, which
-    // preload swallows (logged, not fatal) and returns no injected ids.
-    let injected = ctx
+    // With no LLM configured the child run errors out, so the fork can't
+    // complete → preload_skills now fails LOUDLY (proper error, not silent skip).
+    let err = ctx
         .preload_skills(&[created.id.clone()])
         .await
-        .expect("preload_skills");
+        .expect_err("a fork that can't complete must surface a proper error");
     assert!(
-        injected.is_empty(),
-        "fork skill body is never injected inline into the parent"
+        format!("{err}").contains(&created.id),
+        "the error must name the skill that failed to preload: {err}"
     );
 
-    // The fork DID dispatch: a child task exists in the same thread with
+    // The fork DID dispatch before it failed: a child task exists in the same thread with
     // parent_task_id == the parent task (persisted before the LLM is called).
     let tasks = orchestrator
         .stores
@@ -168,17 +168,22 @@ async fn preload_forks_fork_skill_as_child_task() {
     );
 }
 
-/// Unknown skill ids and an empty list are no-ops, not errors.
+/// An empty list is a no-op; an UNKNOWN requested skill is a PROPER ERROR
+/// (the caller asked to preload something that doesn't exist — that must not be
+/// swallowed, or the agent runs without the recipe it was promised).
 #[tokio::test]
-async fn preload_skips_unknown_and_empty() {
+async fn preload_empty_ok_but_unknown_is_a_proper_error() {
     let ctx = make_test_context().await;
 
     let empty = ctx.preload_skills(&[]).await.expect("empty ok");
     assert!(empty.is_empty());
 
-    let unknown = ctx
+    let err = ctx
         .preload_skills(&["does-not-exist".to_string()])
         .await
-        .expect("unknown id is skipped, not fatal");
-    assert!(unknown.is_empty());
+        .expect_err("an unknown requested skill must be a proper error, not a silent skip");
+    assert!(
+        format!("{err}").contains("does-not-exist"),
+        "the error must name the missing skill: {err}"
+    );
 }
