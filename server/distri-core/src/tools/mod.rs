@@ -39,7 +39,7 @@ pub use builtin::{get_builtin_tools, ConsoleLogTool, DistriExecuteCodeTool, Fina
 pub use inject_env::InjectConnectionEnvTool;
 pub use invoke_agent::InvokeAgentTool;
 pub use send_message::SendMessageTool;
-pub use supervisor::{CancelTaskTool, GetTaskTool, ListMyTasksTool, WaitTaskTool};
+pub use supervisor::{CancelTaskTool, GetTaskResultTool, GetTaskTool, ListMyTasksTool, WaitTaskTool};
 pub use tool_search::ToolSearchTool;
 
 #[derive(Debug, Clone)]
@@ -148,6 +148,7 @@ pub fn cast_to_executor_context_tool(
         "wait_task" => Ok(Box::new(WaitTaskTool)),
         "cancel_task" => Ok(Box::new(CancelTaskTool)),
         "list_my_tasks" => Ok(Box::new(ListMyTasksTool)),
+        "get_task_result" => Ok(Box::new(GetTaskResultTool)),
         // Inter-agent communication
         "send_message" => Ok(Box::new(SendMessageTool)),
         _ => Err(AgentError::ToolExecution(format!(

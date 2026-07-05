@@ -102,6 +102,9 @@ define_routes! {
     EventHooks        => "/event/hooks" { POST: Execute },
     Tasks             => "/tasks" { GET: Execute },
     TaskCompact       => "/tasks/{task_id}/compact" { POST: Execute },
+    /// Live event stream (SSE) for one task — a monitor's per-child feed.
+    TaskEvents        => "/tasks/{task_id}/events" { GET: Execute },
+    TaskGet           => "/tasks/{task_id}" { GET: Execute },
     Tools             => "/tools" { GET: Execute },
 
     // ── Threads + messages (run surface) ────────────────────────────────────

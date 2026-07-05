@@ -906,6 +906,16 @@ pub struct ExecutorContextMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dynamic_values: Option<HashMap<String, serde_json::Value>>,
 
+    /// Skills to auto-load at task start, by id, WITHOUT the agent having to
+    /// call `load_skill` first. Inline skills have their rendered body injected
+    /// into the context up-front so the run reaches the actual task without a
+    /// wasted round-trip (the main driver behind "loading a skill takes a long
+    /// time to get to the task"). Fork-type skills are left for explicit
+    /// dispatch (see `load_skill` / a fork directive) since forking at startup
+    /// is handled separately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_skills: Option<Vec<String>>,
+
     /// Browser session ID for browser tool integration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_session_id: Option<String>,

@@ -96,6 +96,11 @@ pub struct GenAiAgentSpan {
     pub distri_thread_id: Option<String>,
     pub distri_workspace_id: Option<String>,
     pub distri_task_id: Option<String>,
+    /// Parent task in the dispatch tree — set for forked/sub-agent runs
+    /// (invoke_agent wait/background, llm-execute sub-tasks). Recorded as
+    /// `distri.parent_task_id` so UIs can stitch child traces to the
+    /// spawning run.
+    pub distri_parent_task_id: Option<String>,
     pub distri_run_id: Option<String>,
     pub distri_user_id: Option<String>,
     pub distri_channel_id: Option<String>,

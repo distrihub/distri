@@ -82,6 +82,9 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
         .service(
             web::resource(Route::TaskCompact.path()).route(web::post().to(compact_task_handler)),
         )
+        // Specific /tasks/{id}/events before the bare /tasks/{id} resource.
+        .service(web::resource(Route::TaskEvents.path()).route(web::get().to(task_events_handler)))
+        .service(web::resource(Route::TaskGet.path()).route(web::get().to(get_task_handler)))
         .service(web::resource(Route::Tools.path()).route(web::get().to(list_tools)))
         // Webhook endpoint for triggering agents
         // Thread endpoints
@@ -1477,27 +1480,59 @@ async fn get_message_votes_handler(
 #[derive(Deserialize)]
 struct ListTasksQuery {
     thread_id: Option<String>,
+    /// Scope to the sub-tree rooted at this task (root + all descendants) —
+    /// how a monitor asks "what are the children of task X doing?".
+    parent_task_id: Option<String>,
+    /// Filter by schema status (`pending`/`running`/`completed`/`failed`/`canceled`).
+    status: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
+}
+
+use distri_types::stores::TaskWithActivity;
+
+/// A task row + its monitor projection (typed; serde flattens both).
+fn task_with_activity(
+    task: &distri_types::Task,
+    activity: Option<distri_types::stores::TaskActivity>,
+) -> TaskWithActivity {
+    TaskWithActivity {
+        task: task.clone(),
+        activity: activity.unwrap_or_default(),
+    }
 }
 
 #[utoipa::path(
     get,
     path = "/v1/tasks",
     tag = "Agents",
-    responses((status = 200, description = "List tasks"))
+    responses((status = 200, description = "List tasks (optionally scoped to a parent task's sub-tree), newest first, with a latest-update preview per task"))
 )]
 async fn list_tasks(
     query: web::Query<ListTasksQuery>,
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
-    match executor
-        .stores
-        .task_store
-        .list_tasks(query.thread_id.as_deref())
-        .await
-    {
+    let store = &executor.stores.task_store;
+    let fetched = if let Some(root) = query.parent_task_id.as_deref() {
+        // Sub-tree scope: root + descendants; drop the root itself so the
+        // response is "the children of X" (the caller already has X).
+        store
+            .list_descendant_tasks(root)
+            .await
+            .map(|tasks| tasks.into_iter().filter(|t| t.id != root).collect::<Vec<_>>())
+    } else {
+        store.list_tasks(query.thread_id.as_deref()).await
+    };
+    match fetched {
         Ok(mut tasks) => {
+            if let Some(status) = query.status.as_deref() {
+                tasks.retain(|t| {
+                    serde_json::to_value(&t.status)
+                        .ok()
+                        .and_then(|v| v.as_str().map(|s| s == status))
+                        .unwrap_or(false)
+                });
+            }
             // Apply pagination
             let offset = query.offset.unwrap_or(0) as usize;
             let limit = query.limit.unwrap_or(50) as usize;
@@ -1506,15 +1541,78 @@ async fn list_tasks(
             tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
             let end = std::cmp::min(offset + limit, tasks.len());
-            if offset >= tasks.len() {
-                HttpResponse::Ok().json(Vec::<distri_a2a::Task>::new())
-            } else {
-                HttpResponse::Ok().json(&tasks[offset..end])
+            let page = if offset >= tasks.len() { &[] as &[_] } else { &tasks[offset..end] };
+
+            // Enrich the page with each task's latest activity (preview +
+            // last_event_at). Page-sized, so the N+1 stays bounded.
+            let mut enriched = Vec::with_capacity(page.len());
+            for t in page {
+                let activity = store.task_activity(&t.id).await.unwrap_or(None);
+                enriched.push(task_with_activity(t, activity));
             }
+            HttpResponse::Ok().json(enriched)
         }
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to list tasks: {}", e)
         })),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/tasks/{task_id}",
+    tag = "Agents",
+    params(("task_id" = String, Path, description = "Task ID")),
+    responses((status = 200, description = "Get one task with its latest-update preview"), (status = 404, description = "Unknown task"))
+)]
+async fn get_task_handler(
+    path: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let task_id = path.into_inner();
+    match executor.stores.task_store.get_task(&task_id).await {
+        Ok(Some(task)) => {
+            let activity = executor
+                .stores
+                .task_store
+                .task_activity(&task.id)
+                .await
+                .unwrap_or(None);
+            HttpResponse::Ok().json(task_with_activity(&task, activity))
+        }
+        Ok(None) => HttpResponse::NotFound().json(json!({ "error": format!("task '{task_id}' not found") })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get task: {}", e)
+        })),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/tasks/{task_id}/events",
+    tag = "Agents",
+    params(("task_id" = String, Path, description = "Task ID")),
+    responses((status = 200, description = "SSE stream of the task's agent events; closes when the task reaches a terminal state"))
+)]
+async fn task_events_handler(
+    path: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> Either<
+    Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
+    HttpResponse,
+> {
+    let task_id = path.into_inner();
+    // follow_stream ends on the task's own terminal event, so monitors don't
+    // hold connections open after a child finishes. Cloud's Redis broadcaster
+    // replays buffered events first; the in-process one is live-only.
+    match executor.broadcaster().follow_stream(&task_id).await {
+        Ok(stream) => actix_web::Either::Left(Sse::from_stream(stream.map(|event| {
+            let payload = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
+            Ok(sse::Event::Data(sse::Data::new(payload)))
+        }))),
+        Err(e) => actix_web::Either::Right(HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to subscribe to task events: {}", e)
+        }))),
     }
 }
 

@@ -81,6 +81,18 @@ pub trait Tool: Send + Sync + std::fmt::Debug + std::any::Any {
         false // Default to false for built-in tools
     }
 
+    /// Whether this tool is safe to execute concurrently with other tool
+    /// calls emitted in the same LLM turn.
+    ///
+    /// When the model returns several tool calls at once they are grouped into
+    /// a single execution step and run in parallel. Tools that mutate shared
+    /// state (write a file, save content, edit a document) should override this
+    /// to `false` so the batch is serialized and writes cannot race. Read-only
+    /// tools (search, fetch, list) can keep the default and run in parallel.
+    fn concurrency_safe(&self) -> bool {
+        true // Default: most tools are read-only / independent
+    }
+
     /// Check if this tool needs ExecutorContext instead of ToolContext
     fn needs_executor_context(&self) -> bool {
         false // Default to false - most tools use ToolContext

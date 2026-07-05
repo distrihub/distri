@@ -113,6 +113,7 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
         "gen_ai.agent.name" = attrs.agent_name.as_str(),
         "gen_ai.conversation.id" = tracing::field::Empty,
         "gen_ai.agent.parent_id" = tracing::field::Empty,
+        "distri.parent_task_id" = tracing::field::Empty,
         "distri.agent.execution_type" = tracing::field::Empty,
         "gen_ai.usage.input_tokens" = tracing::field::Empty,
         "gen_ai.usage.output_tokens" = tracing::field::Empty,
@@ -168,6 +169,9 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
     }
     if let Some(v) = &attrs.distri_task_id {
         span.record("distri.task_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_parent_task_id {
+        span.record("distri.parent_task_id", v.as_str());
     }
     if let Some(v) = &attrs.distri_run_id {
         span.record("distri.run_id", v.as_str());

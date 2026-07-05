@@ -68,9 +68,15 @@ impl LlmExecuteService {
         context.orchestrator = Some(self.orchestrator.clone());
         let context = Arc::new(context);
 
-        // Only create thread/task for non-sub-tasks
+        // Task persistence: non-sub-tasks always create a thread + task row.
+        // Sub-tasks WITH a parent_task_id also persist a task row (linked to
+        // the parent) so background children are visible + monitorable —
+        // previously they were invisible (no row, no linkage, nothing to
+        // poll). They still skip the agent span / RunFinished / thread-title
+        // bookkeeping below.
+        let persist_task = !is_sub_task || context.parent_task_id.is_some();
         // Wrap ONCE at service boundary - stores will read from task-local
-        if !is_sub_task {
+        if persist_task {
             // Step 1: Ensure thread exists (like orchestrator.execute_stream line 1230-1241)
             self.ensure_thread_exists(
                 &thread_id,
@@ -141,23 +147,54 @@ impl LlmExecuteService {
             tool_delivery_mode: Default::default(),
         };
 
-        let llm = crate::llm::create_llm_executor(
+        let llm = match crate::llm::create_llm_executor(
             llm_def,
             tools,
             context.clone(),
             headers,
             Some("llm_execute".to_string()),
-        )?;
+        ) {
+            Ok(llm) => llm,
+            Err(e) => {
+                // Settle the sub-task row before bailing — see Step 6 below.
+                if is_sub_task && persist_task {
+                    let _ = self
+                        .orchestrator
+                        .stores
+                        .task_store
+                        .update_task_status(&task_id, distri_types::TaskStatus::Failed)
+                        .await;
+                }
+                return Err(e);
+            }
+        };
 
         // Step 6: Execute LLM (messages are already saved, assistant response will be saved by executor).
         // Instrument under the agent span so the inference (and any tool) child spans nest correctly.
-        let resp = match agent_span {
+        let resp_result = match agent_span {
             Some(span) => {
                 use tracing::Instrument as _;
-                llm.execute(&messages).instrument(span).await?
+                llm.execute(&messages).instrument(span).await
             }
-            None => llm.execute(&messages).await?,
+            None => llm.execute(&messages).await,
         };
+
+        // Sub-task rows are one-shot: nothing else drives their lifecycle, so
+        // settle the status here (visible children must reach a terminal state).
+        if is_sub_task && persist_task {
+            let status = if resp_result.is_ok() {
+                distri_types::TaskStatus::Completed
+            } else {
+                distri_types::TaskStatus::Failed
+            };
+            let _ = self
+                .orchestrator
+                .stores
+                .task_store
+                .update_task_status(&task_id, status)
+                .await;
+        }
+        let resp = resp_result?;
 
         // Step 7: Emit RunFinished event for usage tracking (non-sub-tasks only)
         if !is_sub_task {
