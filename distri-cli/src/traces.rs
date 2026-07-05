@@ -533,8 +533,11 @@ pub async fn print_trace_list(
                 println!("No traces found.");
                 return;
             }
-            // Sort oldest first so most recent appears at the bottom
-            traces.sort_by_key(|t| t.start_time_ns);
+            // Sort least-recently-active first so the most recently active
+            // trace appears at the bottom. Resumed threads can have a root
+            // span that started days before their latest activity, so
+            // start_time_ns would scatter them through the list.
+            traces.sort_by_key(|t| t.last_activity_ns);
 
             let width = term_width().min(90);
             println!();
@@ -582,7 +585,9 @@ fn print_trace_summary(trace: &TraceSummary, _width: usize) {
     // Line 1: name + stats
     let trace_id_short = &trace.trace_id;
 
-    let relative_time = format_relative_time(trace.start_time_ns);
+    // Show recency of activity, matching the list's sort key — a resumed
+    // thread's root span can be days older than its last span.
+    let relative_time = format_relative_time(trace.last_activity_ns);
 
     let spans_text = format!("{}{} spans{}", COLOR_GRAY, trace.span_count, COLOR_RESET);
     println!(
