@@ -24,13 +24,10 @@ use crate::{
 ///    ["*"]` — all entries here are added to that agent's session.
 ///
 /// Supervisor tools (`get_task`, `wait_task`, `cancel_task`,
-/// `list_my_tasks`) live here so opt-in by name works, but they are
-/// **NOT** auto-included for default-config agents: an agent without a
-/// `tools` block, or with `builtin = []`, gets only `final` (plus
-/// `invoke_agent` injected by the orchestrator). `invoke_agent` is
-/// synchronous, so a leaf agent never has children to wait on. The
-/// CLI / TUI / SDK call the supervisor primitives through the API for
-/// `distri tasks watch <id>` and similar workflows.
+/// `list_my_tasks`) live here so opt-in by name works. They are also
+/// auto-bundled by the orchestrator alongside `invoke_agent`: since
+/// `invoke_agent` supports `mode: "background"` (Join::Detached), any
+/// agent that can dispatch children needs the tools to manage them.
 ///
 /// Filesystem tools are not included — they should be provided as
 /// external tools by the client or accessed via shell commands.
@@ -55,6 +52,7 @@ pub fn get_builtin_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(crate::tools::supervisor::WaitTaskTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::supervisor::CancelTaskTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::supervisor::ListMyTasksTool) as Arc<dyn Tool>,
+        Arc::new(crate::tools::supervisor::GetTaskResultTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::invoke_agent::InvokeAgentTool) as Arc<dyn Tool>,
         // load_skill is castable in `cast_to_executor_context_tool` but was
         // missing from this registry — agents that declared

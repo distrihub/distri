@@ -457,3 +457,132 @@ impl ExecutorContextTool for ListMyTasksTool {
         }))])
     }
 }
+
+// ── get_task_result ─────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct GetTaskResultInput {
+    id: String,
+}
+
+/// Harvest a finished child's OUTPUT — the piece `get_task`/`wait_task`
+/// don't cover (they return status/timing only). Reads the child task's
+/// stored messages and returns the last assistant text (the worker's
+/// final answer). The background workflow is: `invoke_agent
+/// {mode:"background"}` → `wait_task` → `get_task_result`.
+#[derive(Debug)]
+pub struct GetTaskResultTool;
+
+#[async_trait]
+impl Tool for GetTaskResultTool {
+    fn get_name(&self) -> String {
+        "get_task_result".to_string()
+    }
+
+    fn get_description(&self) -> String {
+        "Read a finished task's final output (its last assistant message). \
+         Use after wait_task/get_task shows a background child reached a \
+         terminal state, to collect what it produced."
+            .to_string()
+    }
+
+    fn get_parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "The task_id whose result to read."
+                }
+            },
+            "required": ["id"]
+        })
+    }
+
+    fn needs_executor_context(&self) -> bool {
+        true
+    }
+
+    async fn execute(
+        &self,
+        _tool_call: distri_types::ToolCall,
+        _context: Arc<ToolContext>,
+    ) -> Result<Vec<Part>, anyhow::Error> {
+        anyhow::bail!("GetTaskResultTool requires ExecutorContext")
+    }
+}
+
+#[async_trait]
+impl ExecutorContextTool for GetTaskResultTool {
+    async fn execute_with_executor_context(
+        &self,
+        tool_call: distri_types::ToolCall,
+        context: Arc<ExecutorContext>,
+    ) -> Result<Vec<Part>, AgentError> {
+        let input: GetTaskResultInput = serde_json::from_value(tool_call.input.clone())
+            .map_err(|e| AgentError::ToolExecution(format!("get_task_result: invalid input: {e}")))?;
+        let orch = context.get_orchestrator()?;
+
+        let row = orch
+            .stores
+            .task_store
+            .get_task(&input.id)
+            .await
+            .map_err(|e| AgentError::ToolExecution(format!("get_task_result: {e}")))?
+            .ok_or_else(|| {
+                AgentError::ToolExecution(format!("get_task_result: task '{}' not found", input.id))
+            })?;
+
+        // Pull the task's stored messages. The worker's answer usually lives
+        // in its `final` tool call (the agent contract); plain assistant text
+        // is the fallback.
+        let history = orch
+            .stores
+            .task_store
+            .get_history(&row.thread_id, None)
+            .await
+            .map_err(|e| AgentError::ToolExecution(format!("get_task_result history: {e}")))?;
+        let extract = |msgs: &[distri_types::TaskMessage]| -> Option<String> {
+            for m in msgs.iter().rev() {
+                let distri_types::TaskMessage::Message(msg) = m else {
+                    continue;
+                };
+                if !matches!(msg.role, distri_types::MessageRole::Assistant) {
+                    continue;
+                }
+                for p in msg.parts.iter().rev() {
+                    match p {
+                        distri_types::Part::ToolCall(tc) if tc.tool_name == "final" => {
+                            if let Ok(v) =
+                                crate::tools::builtin::FinalTool::extract_result(&tc.input)
+                            {
+                                let text = match v {
+                                    serde_json::Value::String(s) => s,
+                                    other => other.to_string(),
+                                };
+                                if !text.trim().is_empty() {
+                                    return Some(text);
+                                }
+                            }
+                        }
+                        distri_types::Part::Text(t) if !t.trim().is_empty() => {
+                            return Some(t.clone())
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            None
+        };
+        let result_text = history
+            .into_iter()
+            .find(|(t, _)| t.id == input.id)
+            .and_then(|(_, msgs)| extract(&msgs));
+
+        Ok(vec![Part::Data(json!({
+            "id": row.id,
+            "status": row.status,
+            "result": result_text,
+        }))])
+    }
+}

@@ -196,6 +196,12 @@ pub struct ExecutorContext {
     /// `compact_task` HTTP endpoint), in which case `run_compaction` falls
     /// back to mechanical trim for Summarize-tier hits.
     pub summary_executor: Arc<RwLock<Option<Arc<dyn crate::llm::LLMExecutorTrait>>>>,
+
+    /// Skill ids to eagerly load at task start (from
+    /// `ExecutorContextMetadata.load_skills`). Inline skills are injected
+    /// up-front by `preload_skills` so the run skips the `load_skill`
+    /// round-trip. Empty by default.
+    pub load_skills: Vec<String>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -273,6 +279,7 @@ impl Default for ExecutorContext {
             trace_context: None,
             span_name: None,
             summary_executor: Arc::new(RwLock::new(None)),
+            load_skills: Vec::new(),
         }
     }
 }
@@ -1326,6 +1333,9 @@ impl ExecutorContext {
             trace_context: self.trace_context.clone(),
             span_name: self.span_name.clone(),
             summary_executor: self.summary_executor.clone(),
+            // A forked child already had its skills handled at dispatch time;
+            // don't re-trigger metadata preload in the inner context.
+            load_skills: Vec::new(),
         };
 
         (inner_context, inner_rx)
@@ -1782,6 +1792,40 @@ impl ExecutorContext {
     /// Re-inject tracked skill content as SkillContext scratchpad entries.
     /// Called after compaction to ensure skill content survives.
     /// Returns the list of skill IDs that were re-injected.
+    /// Inject a skill body (an `Inline` skill's rendered body, a reinjection
+    /// candidate, or a forked skill's gist) into THIS task's scratchpad as a
+    /// `SkillContext` entry. The single place that entry shape is built — keeps
+    /// `reinject_skills` and the two `preload_skills` branches terse.
+    async fn inject_skill_context(
+        &self,
+        skill_id: impl Into<String>,
+        content: impl Into<String>,
+        at: i64,
+    ) -> Result<(), AgentError> {
+        let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
+            "Orchestrator not initialized".to_string(),
+        ))?;
+        let entry = distri_types::ScratchpadEntry {
+            timestamp: at,
+            entry_type: distri_types::ScratchpadEntryType::SkillContext(
+                distri_types::SkillContextEntry {
+                    skill_id: skill_id.into(),
+                    content: content.into(),
+                    reinjected_at: at,
+                },
+            ),
+            task_id: self.task_id.clone(),
+            parent_task_id: self.parent_task_id.clone(),
+            entry_kind: Some("skill_context".to_string()),
+        };
+        orchestrator
+            .stores
+            .scratchpad_store
+            .add_entry(&self.thread_id, entry)
+            .await?;
+        Ok(())
+    }
+
     pub async fn reinject_skills(&self) -> Result<Vec<String>, AgentError> {
         let tracker = self.skill_tracker.read().await;
         let candidates = tracker.get_reinjection_candidates();
@@ -1790,35 +1834,156 @@ impl ExecutorContext {
             return Ok(vec![]);
         }
 
-        let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
-            "Orchestrator not initialized".to_string(),
-        ))?;
-        let scratchpad_store = orchestrator.stores.scratchpad_store.clone();
-
         let mut reinjected_ids = vec![];
         let now = chrono::Utc::now().timestamp_millis();
 
         for candidate in &candidates {
-            let entry = distri_types::ScratchpadEntry {
-                timestamp: now,
-                entry_type: distri_types::ScratchpadEntryType::SkillContext(
-                    distri_types::SkillContextEntry {
-                        skill_id: candidate.skill_id.clone(),
-                        content: candidate.content.clone(),
-                        reinjected_at: now,
-                    },
-                ),
-                task_id: self.task_id.clone(),
-                parent_task_id: self.parent_task_id.clone(),
-                entry_kind: Some("skill_context".to_string()),
-            };
-
-            scratchpad_store.add_entry(&self.thread_id, entry).await?;
-
+            self.inject_skill_context(&candidate.skill_id, &candidate.content, now)
+                .await?;
             reinjected_ids.push(candidate.skill_id.clone());
         }
 
         Ok(reinjected_ids)
+    }
+
+    /// Eagerly load the skills named in `ExecutorContextMetadata.load_skills`
+    /// at task start so the run reaches the actual task without spending a
+    /// `load_skill` round-trip (the main driver behind "loading a skill takes
+    /// a long time to get to the task").
+    ///
+    /// Inline skills have their rendered body injected as a `SkillContext`
+    /// scratchpad entry and tracked for post-compaction reinjection — exactly
+    /// what `LoadSkillTool` + `reinject_skills` do, just up-front instead of on
+    /// demand. Fork-type skills are left for explicit dispatch (forking at
+    /// startup is handled separately) and only logged here. Failures to resolve
+    /// an individual skill are logged and skipped rather than aborting the run.
+    /// Returns the ids that were injected inline.
+    pub async fn preload_skills(
+        self: &Arc<Self>,
+        skill_ids: &[String],
+    ) -> Result<Vec<String>, AgentError> {
+        if skill_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
+            "Orchestrator not initialized".to_string(),
+        ))?;
+        let skill_store = match orchestrator.stores.skill_store.as_ref() {
+            Some(s) => s.clone(),
+            None => {
+                tracing::warn!("preload_skills: no skill store configured; skipping {skill_ids:?}");
+                return Ok(vec![]);
+            }
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut injected = vec![];
+
+        for skill_id in skill_ids {
+            let skill = match skill_store.get(skill_id).await {
+                Ok(Some(s)) => s,
+                Ok(None) => {
+                    tracing::warn!(skill_id = %skill_id, "preload_skills: skill not found; skipping");
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(skill_id = %skill_id, "preload_skills: failed to load skill: {e}");
+                    continue;
+                }
+            };
+
+            match skill.context {
+                distri_types::stores::ContextExecutionType::Inline => {
+                    let template_data = distri_types::prompt::TemplateData {
+                        runtime_mode: self.runtime_mode.as_template_name(),
+                        ..Default::default()
+                    };
+                    let rendered = match crate::agent::strategy::planning::formatter::render_prompt(
+                        self,
+                        &skill.content,
+                        &template_data,
+                    )
+                    .await
+                    {
+                        Ok(body) => body,
+                        Err(e) => {
+                            tracing::warn!(
+                                skill_id = %skill_id,
+                                "preload_skills: template render failed ({e}); skipping"
+                            );
+                            continue;
+                        }
+                    };
+                    let content = if let Some(ref model) = skill.model {
+                        format!("{rendered}\n\n<!-- skill preferred model: {model} -->")
+                    } else {
+                        rendered
+                    };
+
+                    // Track for post-compaction reinjection (same path as
+                    // LoadSkillTool), then inject now as a SkillContext entry.
+                    {
+                        let mut tracker = self.skill_tracker.write().await;
+                        tracker.track(skill_id.to_string(), content.clone(), now);
+                    }
+                    if let Err(e) = self.inject_skill_context(skill_id, content, now).await {
+                        tracing::warn!(skill_id = %skill_id, "preload_skills: failed to inject: {e}");
+                        continue;
+                    }
+                    tracing::info!(skill_id = %skill_id, "preload_skills: injected inline skill at startup");
+                    injected.push(skill_id.clone());
+                }
+                distri_types::stores::ContextExecutionType::Fork => {
+                    // Metadata-driven fork-as-subtask: a fork-type skill named in
+                    // `load_skills` spawns an isolated child task up-front (no
+                    // `load_skill` round-trip) and folds the child's *gist* back
+                    // into the parent context. Dispatch lives in the orchestrator
+                    // (`fork_skill` → typed `invoke()`), NOT here — context only
+                    // resolves the skill and records the result. `fork_skill`
+                    // returns an already-boxed future, which is what breaks the
+                    // fork_skill → invoke → … → preload_skills recursion cycle.
+                    // Best-effort — a child failure is logged, not fatal.
+                    let fork = (skill_id.clone(), skill.content.clone(), skill.model.clone());
+                    match orchestrator.fork_skill(self, fork).await {
+                        Ok(agent_result) => {
+                            let gist = crate::agent::invoke::skill_gist(skill_id, &agent_result);
+                            if let Err(e) = self.inject_skill_context(skill_id, gist, now).await {
+                                tracing::warn!(skill_id = %skill_id, "preload_skills: failed to inject fork gist: {e}");
+                                continue;
+                            }
+                            tracing::info!(skill_id = %skill_id, "preload_skills: forked skill and injected gist at startup");
+                            injected.push(skill_id.clone());
+                        }
+                        Err(e) => {
+                            tracing::warn!(skill_id = %skill_id, "preload_skills: fork dispatch failed: {e}");
+                        }
+                    }
+                }
+            }
+        }
+
+        // PROPER ERROR — not best-effort. If the caller explicitly asked to
+        // preload a skill and it did NOT end up in context (not found, render
+        // failure, inject failure, fork dispatch failure), fail LOUDLY. The
+        // silent-skip version caused the "generate lesson wrote prose into the
+        // chat" bug: the recipe never loaded, the agent had no instructions, and
+        // it produced wrong output with no signal that anything was missing.
+        if injected.len() != skill_ids.len() {
+            let missing: Vec<String> = skill_ids
+                .iter()
+                .filter(|s| !injected.contains(s))
+                .cloned()
+                .collect();
+            return Err(AgentError::Execution(format!(
+                "preload_skills: failed to preload {}/{} requested skill(s): {missing:?}. \
+                 The run would proceed WITHOUT these recipes — failing instead of \
+                 silently producing wrong output. (See warnings above for the per-skill cause.)",
+                missing.len(),
+                skill_ids.len(),
+            )));
+        }
+
+        Ok(injected)
     }
 
     /// Store a CompactionSummary as a scratchpad entry

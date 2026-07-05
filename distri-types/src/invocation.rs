@@ -74,7 +74,19 @@ pub struct Target {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentRef {
     /// Named agent looked up by `agent_id` in the agent store.
-    Named { agent_id: String },
+    ///
+    /// `instructions_overlay`, when `Some`, is **appended** to the named
+    /// agent's own instructions for this invocation only (via
+    /// `DefinitionOverrides::instructions_append`). This is how a *skill-fork*
+    /// is expressed: "the same agent that's running, plus this skill body as
+    /// task-specific direction." The agent keeps its identity, tools and
+    /// scaffolding; the overlay adds the brief. `None` = the agent runs exactly
+    /// as defined.
+    Named {
+        agent_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instructions_overlay: Option<String>,
+    },
     /// Ad-hoc agent built on the fly. The `system_prompt` is appended to
     /// `_adhoc_base.md`'s body; tools (if `Some`) replace the seeded
     /// ToolsConfig. Mirrors today's `call_agent({system_prompt, tools})`.
@@ -83,6 +95,25 @@ pub enum AgentRef {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tools: Option<ToolsConfig>,
     },
+}
+
+impl AgentRef {
+    /// A plain named-agent reference (no overlay).
+    pub fn named(agent_id: impl Into<String>) -> Self {
+        AgentRef::Named {
+            agent_id: agent_id.into(),
+            instructions_overlay: None,
+        }
+    }
+
+    /// A named-agent reference with an instruction overlay appended for this
+    /// invocation (the skill-fork shape).
+    pub fn named_with_overlay(agent_id: impl Into<String>, overlay: impl Into<String>) -> Self {
+        AgentRef::Named {
+            agent_id: agent_id.into(),
+            instructions_overlay: Some(overlay.into()),
+        }
+    }
 }
 
 // ── Axis 1: ContextScope ──────────────────────────────────────────────────
@@ -320,7 +351,7 @@ impl Invocation {
         }
         for target in &self.targets {
             match &target.agent {
-                AgentRef::Named { agent_id } if agent_id.is_empty() => {
+                AgentRef::Named { agent_id, .. } if agent_id.is_empty() => {
                     return Err(InvocationValidationError::NamedEmptyAgentId);
                 }
                 AgentRef::AdHoc { system_prompt, .. } if system_prompt.is_empty() => {
@@ -338,9 +369,22 @@ impl Invocation {
 impl Target {
     pub fn named(agent_id: impl Into<String>, message: Message) -> Self {
         Self {
-            agent: AgentRef::Named {
-                agent_id: agent_id.into(),
-            },
+            agent: AgentRef::named(agent_id),
+            message,
+            executor: None,
+        }
+    }
+
+    /// A named-agent target with a per-invocation instruction overlay appended
+    /// (the skill-fork shape). The agent keeps its own definition; `overlay` is
+    /// added below it for this run only.
+    pub fn named_with_overlay(
+        agent_id: impl Into<String>,
+        overlay: impl Into<String>,
+        message: Message,
+    ) -> Self {
+        Self {
+            agent: AgentRef::named_with_overlay(agent_id, overlay),
             message,
             executor: None,
         }
@@ -538,6 +582,50 @@ mod tests {
         let v = serde_json::to_value(&inv).unwrap();
         let back: Invocation = serde_json::from_value(v).unwrap();
         assert_eq!(back.targets.len(), 1);
+    }
+
+    #[test]
+    fn named_overlay_round_trips_and_omits_when_absent() {
+        // A plain named ref serializes WITHOUT the overlay key (skip_if None).
+        let plain = serde_json::to_value(AgentRef::named("w")).unwrap();
+        assert_eq!(plain["type"], "named");
+        assert!(
+            plain.get("instructions_overlay").is_none(),
+            "absent overlay must not serialize: {plain}"
+        );
+
+        // With an overlay it round-trips intact.
+        let overlaid = AgentRef::named_with_overlay("w", "do the skill");
+        let v = serde_json::to_value(&overlaid).unwrap();
+        assert_eq!(v["instructions_overlay"], "do the skill");
+        let back: AgentRef = serde_json::from_value(v).unwrap();
+        match back {
+            AgentRef::Named {
+                agent_id,
+                instructions_overlay,
+            } => {
+                assert_eq!(agent_id, "w");
+                assert_eq!(instructions_overlay.as_deref(), Some("do the skill"));
+            }
+            _ => panic!("expected Named"),
+        }
+    }
+
+    #[test]
+    fn named_overlay_is_backward_compatible() {
+        // Old wire shape (no overlay field) must still deserialize → None.
+        let old = serde_json::json!({ "type": "named", "agent_id": "legacy" });
+        let back: AgentRef = serde_json::from_value(old).unwrap();
+        match back {
+            AgentRef::Named {
+                agent_id,
+                instructions_overlay,
+            } => {
+                assert_eq!(agent_id, "legacy");
+                assert!(instructions_overlay.is_none());
+            }
+            _ => panic!("expected Named"),
+        }
     }
 
     #[test]

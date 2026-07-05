@@ -609,6 +609,25 @@ impl AgentOrchestrator {
             tools.push(Arc::new(crate::tools::InvokeAgentTool));
         }
 
+        // Any agent that can dispatch sub-agents can also detach them
+        // (`invoke_agent { mode: "background" }`), so bundle the supervisor
+        // tools it needs to manage those children. No-op for agents that
+        // already declare them or that lack invoke_agent entirely.
+        if tools.iter().any(|t| t.get_name() == "invoke_agent") {
+            let supervisors: Vec<Arc<dyn Tool>> = vec![
+                Arc::new(crate::tools::supervisor::GetTaskTool),
+                Arc::new(crate::tools::supervisor::WaitTaskTool),
+                Arc::new(crate::tools::supervisor::CancelTaskTool),
+                Arc::new(crate::tools::supervisor::ListMyTasksTool),
+                Arc::new(crate::tools::supervisor::GetTaskResultTool),
+            ];
+            for sup in supervisors {
+                if !tools.iter().any(|t| t.get_name() == sup.get_name()) {
+                    tools.push(sup);
+                }
+            }
+        }
+
         let is_browser_agent =
             definition.name == "browser_agent" || definition.name.ends_with("/browser_agent");
         if definition.should_use_browser() && !is_browser_agent {
@@ -758,6 +777,20 @@ impl AgentOrchestrator {
                                 as Arc<dyn Tool>])
                             .await;
                     }
+                }
+
+                // Eagerly load any skills the client requested via
+                // `metadata.load_skills`. Inline skills get injected up-front so
+                // the run skips the `load_skill` round-trip; fork-type skills
+                // dispatch as isolated child tasks (see `preload_skills`).
+                // PROPER ERROR: if a requested skill can't be preloaded, fail the
+                // run — the recipe would be missing and the agent would produce
+                // wrong output silently. The recursion this path can form
+                // (preload → fork_skill → invoke → create_agent → preload) is
+                // broken by `fork_skill` returning an explicit boxed future.
+                if !context.load_skills.is_empty() {
+                    let to_load = context.load_skills.clone();
+                    context.preload_skills(&to_load).await?;
                 }
 
                 // Resolve declared connections. Agents must declare connections

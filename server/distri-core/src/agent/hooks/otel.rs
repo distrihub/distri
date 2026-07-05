@@ -179,6 +179,9 @@ impl AgentHooks for OtelHooks {
 
         let mut attrs = GenAiAgentSpan::from_context_fields(&context.agent_id, &ctx_fields, None);
         attrs.input_value = input_value;
+        // Fork linkage: lets trace UIs stitch a child run (invoke_agent
+        // wait/background, llm-execute sub-task) to the run that spawned it.
+        attrs.distri_parent_task_id = context.parent_task_id.clone();
         // Span display name: explicit context.span_name wins; else derive a
         // snippet from the first non-empty line of the message text (≤80 chars).
         attrs.span_name_override = context

@@ -724,6 +724,7 @@ impl A2AService {
             tags,
             agent_version,
             trace_context,
+            load_skills: metadata.load_skills.unwrap_or_default(),
             ..Default::default()
         };
 

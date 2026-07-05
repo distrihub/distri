@@ -34,6 +34,96 @@ async fn build_service() -> Arc<A2AService> {
     Arc::new(A2AService::new(orchestrator))
 }
 
+// ── ExecutorContextMetadata serialization contract ──────────────────────────
+//
+// Regression guard for the "generate lesson wrote prose into the chat" bug:
+// the frontend sends `metadata.load_skills = ["zippy_lesson"]`, distri-core
+// deserializes it into `ExecutorContextMetadata`, and `preload_skills` injects
+// the skill body up-front. If `load_skills` is silently dropped anywhere in
+// that chain (a serde rename, `deny_unknown_fields` choking on the FE's extra
+// `task_id`/`parts` keys, a nesting change), the body never loads and the agent
+// has no recipe. These tests lock the wire contract so it can't regress unseen.
+
+use crate::agent::types::ExecutorContextMetadata;
+
+/// The EXACT metadata shape the FE puts on the request (load_skills alongside
+/// task_id / parts / tags / tool_metadata) must deserialize with load_skills
+/// intact. This is the single most important assertion — it's the exact thing
+/// that broke generation.
+#[test]
+fn executor_context_metadata_deserializes_load_skills_from_fe_shaped_json() {
+    let fe_metadata = json!({
+        "load_skills": ["zippy_lesson"],
+        "task_id": "task-123",
+        "parts": { "0": { "developer": true, "save": false } },
+        "tags": { "source": "generate" },
+        "tool_metadata": {},
+    });
+    let meta: ExecutorContextMetadata =
+        serde_json::from_value(fe_metadata).expect("FE-shaped metadata must deserialize");
+    assert_eq!(
+        meta.load_skills,
+        Some(vec!["zippy_lesson".to_string()]),
+        "metadata.load_skills must survive deserialization of the FE payload — \
+         it drives preload_skills; dropping it silently reproduces the prose bug"
+    );
+}
+
+/// load_skills round-trips through serialize → deserialize unchanged.
+#[test]
+fn executor_context_metadata_load_skills_round_trips() {
+    let meta = ExecutorContextMetadata {
+        load_skills: Some(vec!["zippy_lesson".to_string(), "zippy_quiz".to_string()]),
+        ..Default::default()
+    };
+    let v = serde_json::to_value(&meta).expect("serialize");
+    assert_eq!(v["load_skills"], json!(["zippy_lesson", "zippy_quiz"]));
+    let back: ExecutorContextMetadata = serde_json::from_value(v).expect("deserialize");
+    assert_eq!(back.load_skills, meta.load_skills);
+}
+
+/// Absent load_skills → None (so `preload_skills` no-ops), never an error.
+#[test]
+fn executor_context_metadata_absent_load_skills_is_none() {
+    let meta: ExecutorContextMetadata =
+        serde_json::from_value(json!({ "task_id": "t" })).expect("deserialize without load_skills");
+    assert!(meta.load_skills.is_none());
+}
+
+/// Service-level: the full path a `message/stream` request takes —
+/// `build_executor_context` must land `metadata.load_skills` on
+/// `ExecutorContext.load_skills`, which is what `preload_skills` reads.
+#[tokio::test]
+async fn build_executor_context_populates_load_skills_from_metadata() {
+    let service = build_service().await;
+
+    let params = json!({
+        "message": {
+            "kind": "message",
+            "messageId": "m1",
+            "role": "user",
+            "parts": [{ "kind": "text", "text": "Create a lesson about tennis" }],
+        },
+        "metadata": {
+            "load_skills": ["zippy_lesson"],
+            "task_id": "task-1",
+            "parts": { "0": { "developer": true, "save": false } },
+        },
+    });
+    let req = make_request("message/stream", params);
+
+    let ctx = service
+        .build_executor_context(&req, "zippy_browser".to_string(), "u-1".to_string(), None, false)
+        .await
+        .expect("build_executor_context should succeed for a valid request");
+
+    assert_eq!(
+        ctx.load_skills,
+        vec!["zippy_lesson".to_string()],
+        "FE metadata.load_skills must flow all the way into ExecutorContext.load_skills"
+    );
+}
+
 // ── 7c.7 cancel_task_idempotent ─────────────────────────────────────────────
 
 #[tokio::test]
