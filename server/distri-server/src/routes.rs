@@ -1489,15 +1489,17 @@ struct ListTasksQuery {
     offset: Option<u32>,
 }
 
-/// A task row + its "latest update" projection for monitors.
-fn task_with_activity(task: &distri_types::Task, activity: Option<(String, i64)>) -> serde_json::Value {
-    let mut v = serde_json::to_value(task).unwrap_or_else(|_| json!({}));
-    if let Some(obj) = v.as_object_mut() {
-        let (preview, at) = activity.map(|(p, a)| (Some(p), Some(a))).unwrap_or((None, None));
-        obj.insert("preview".into(), json!(preview));
-        obj.insert("last_event_at".into(), json!(at));
+use distri_types::stores::TaskWithActivity;
+
+/// A task row + its monitor projection (typed; serde flattens both).
+fn task_with_activity(
+    task: &distri_types::Task,
+    activity: Option<distri_types::stores::TaskActivity>,
+) -> TaskWithActivity {
+    TaskWithActivity {
+        task: task.clone(),
+        activity: activity.unwrap_or_default(),
     }
-    v
 }
 
 #[utoipa::path(
@@ -1545,7 +1547,7 @@ async fn list_tasks(
             // last_event_at). Page-sized, so the N+1 stays bounded.
             let mut enriched = Vec::with_capacity(page.len());
             for t in page {
-                let activity = store.latest_task_activity(&t.id).await.unwrap_or(None);
+                let activity = store.task_activity(&t.id).await.unwrap_or(None);
                 enriched.push(task_with_activity(t, activity));
             }
             HttpResponse::Ok().json(enriched)
@@ -1573,7 +1575,7 @@ async fn get_task_handler(
             let activity = executor
                 .stores
                 .task_store
-                .latest_task_activity(&task.id)
+                .task_activity(&task.id)
                 .await
                 .unwrap_or(None);
             HttpResponse::Ok().json(task_with_activity(&task, activity))

@@ -417,6 +417,35 @@ pub trait TaskStore: Send + Sync {
     ) -> anyhow::Result<Option<(String, i64)>> {
         Ok(None)
     }
+
+    /// Monitor projection for one task: what it was ASKED to do (`intent` =
+    /// first user message), what it last did (`preview`), and its latest
+    /// context usage (from persisted `context_budget_update` events). All
+    /// best-effort; default `None` for stores without task messages.
+    async fn task_activity(&self, _task_id: &str) -> anyhow::Result<Option<TaskActivity>> {
+        Ok(None)
+    }
+}
+
+/// Wire shape for `GET /v1/tasks*`: the task row flattened together with its
+/// monitor projection ([`TaskActivity`]).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TaskWithActivity {
+    #[serde(flatten)]
+    pub task: Task,
+    #[serde(flatten)]
+    pub activity: TaskActivity,
+}
+
+/// See [`TaskStore::task_activity`].
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct TaskActivity {
+    pub preview: Option<String>,
+    pub last_event_at: Option<i64>,
+    /// The task's first user message — its intent/prompt, for human labels.
+    pub intent: Option<String>,
+    pub context_used_tokens: Option<i64>,
+    pub context_window_tokens: Option<i64>,
 }
 
 // Thread Store trait for thread management
