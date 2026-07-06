@@ -387,15 +387,98 @@ impl ExecutionStrategy for AgentExecutor {
         // the human's next message (or a "continue" action) starts a fresh turn.
         let history = context.get_execution_history().await;
         if let Some(last) = history.last() {
-            for part in &last.parts {
-                if let Part::Data(v) = part {
-                    if v.get("should_continue").and_then(|b| b.as_bool()) == Some(false) {
-                        return false;
-                    }
-                }
+            if parts_request_turn_end(&last.parts) {
+                return false;
             }
         }
         true
+    }
+}
+
+/// True when the last step's parts request the agent's turn to END — i.e. a
+/// checkpoint tool returned `should_continue: false` in a `Part::Data`.
+///
+/// Since #119 tool results are wrapped as `Part::ToolResult(tool_response)`
+/// rather than flattened to top-level `Part::Data`, so we must inspect BOTH the
+/// top-level parts AND each tool result's own nested parts. Missing the nested
+/// case silently broke the human-in-the-loop `confirm_plan` / `ask_questions`
+/// checkpoints (the turn never ended, so the flow ran past the checkpoint).
+pub(crate) fn parts_request_turn_end(parts: &[Part]) -> bool {
+    fn says_stop(v: &serde_json::Value) -> bool {
+        v.get("should_continue").and_then(|b| b.as_bool()) == Some(false)
+    }
+    for part in parts {
+        match part {
+            Part::Data(v) if says_stop(v) => return true,
+            Part::ToolResult(tr) => {
+                for inner in &tr.parts {
+                    if let Part::Data(v) = inner {
+                        if says_stop(v) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod should_continue_tests {
+    use super::parts_request_turn_end;
+    use crate::types::ToolResponse;
+    use distri_types::Part;
+    use serde_json::json;
+
+    fn tool_result(data: serde_json::Value) -> Part {
+        Part::ToolResult(ToolResponse::from_parts(
+            "call_1".to_string(),
+            "confirm_plan".to_string(),
+            vec![Part::Data(data)],
+        ))
+    }
+
+    #[test]
+    fn stop_when_nested_in_tool_result() {
+        // The #119 regression case: `should_continue: false` lives inside a
+        // wrapped Part::ToolResult (a checkpoint tool's answer). Must stop.
+        let parts = vec![
+            Part::ToolCall(crate::types::ToolCall {
+                tool_call_id: "call_1".into(),
+                tool_name: "confirm_plan".into(),
+                input: json!({}),
+            }),
+            tool_result(json!({ "approved": true, "ai_decide": true, "should_continue": false })),
+        ];
+        assert!(parts_request_turn_end(&parts));
+    }
+
+    #[test]
+    fn stop_when_top_level_data() {
+        // Legacy flat shape still honored.
+        let parts = vec![Part::Data(json!({ "should_continue": false }))];
+        assert!(parts_request_turn_end(&parts));
+    }
+
+    #[test]
+    fn continue_when_no_flag() {
+        let parts = vec![tool_result(json!({ "approved": true }))];
+        assert!(!parts_request_turn_end(&parts));
+    }
+
+    #[test]
+    fn continue_when_flag_true() {
+        let parts = vec![tool_result(json!({ "should_continue": true }))];
+        assert!(!parts_request_turn_end(&parts));
+    }
+
+    #[test]
+    fn continue_on_plain_tool_result() {
+        // A normal tool result (no checkpoint) must never end the turn.
+        let parts = vec![tool_result(json!({ "ok": true, "id": "lesson_1" }))];
+        assert!(!parts_request_turn_end(&parts));
     }
 }
 

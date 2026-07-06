@@ -183,8 +183,24 @@ impl ExecutionResult {
                     Part::ToolCall(compacted_call)
                 }
                 Part::ToolResult(tool_result) => {
-                    let filtered = tool_result.filter_for_save();
-                    let compacted_tool_parts = filtered
+                    // Do NOT `filter_for_save()` here. This history is the agent's
+                    // OWN working memory — it's re-read in the SAME turn (via
+                    // `get_execution_history`) so the agent can act on a tool's
+                    // result, e.g. a human-in-the-loop checkpoint's approval
+                    // (`{ approved: true, ... }`). Stripping `save: false` parts
+                    // here blinds the agent to that data the instant it's
+                    // produced (it `final`s instead of continuing). The
+                    // `save: false` flag is a PERSISTENCE / chat-transcript
+                    // concern and is honored where it belongs — `filter_for_save`
+                    // in `add_message_to_task` (the chat DB) and
+                    // `complete_external_tool_call` (the stored tool-call row).
+                    // We still compact for SIZE (truncate long text/JSON, strip
+                    // inline images). `parts_metadata` is dropped (`None`): the
+                    // agent's working history doesn't need the save flags, and
+                    // persistence filters off the ORIGINAL message's metadata
+                    // (add_message_to_task), not this compacted copy. Keeping the
+                    // usize-keyed map here also broke scratchpad de/serialization.
+                    let compacted_tool_parts = tool_result
                         .parts
                         .iter()
                         .map(|tool_part| match tool_part {
@@ -200,8 +216,8 @@ impl ExecutionResult {
                         .collect();
 
                     Part::ToolResult(ToolResponse {
-                        tool_call_id: filtered.tool_call_id,
-                        tool_name: filtered.tool_name,
+                        tool_call_id: tool_result.tool_call_id.clone(),
+                        tool_name: tool_result.tool_name.clone(),
                         parts: compacted_tool_parts,
                         parts_metadata: None,
                     })
@@ -644,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compact_for_history_filters_save_false_and_truncates_large_parts() {
+    fn test_compact_for_history_keeps_save_false_but_truncates_large_parts() {
         let mut parts_metadata = std::collections::HashMap::new();
         parts_metadata.insert(
             1,
@@ -696,8 +712,12 @@ mod tests {
             Part::ToolResult(value) => value,
             other => panic!("unexpected part: {:?}", other),
         };
-        // save:false part should be removed.
-        assert_eq!(tool.parts.len(), 1);
+        // save:false parts are KEPT in the agent's history (it's the agent's own
+        // working memory; save:false is a persistence-only concern filtered off
+        // the original message elsewhere). parts_metadata is dropped from the
+        // compacted copy (not needed here; keeping the usize-keyed map broke
+        // scratchpad serialization).
+        assert_eq!(tool.parts.len(), 2);
         assert!(tool.parts_metadata.is_none());
     }
 
