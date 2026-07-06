@@ -573,7 +573,7 @@ impl ClaudeLLMExecutor {
 
         // Validate context size
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
-        context_manager.validate_context_size(messages, ms.inner.context_size)?;
+        context_manager.validate_context_size(messages, ms.effective_context_size())?;
 
         let (system, mut claude_messages) = self.map_messages(messages);
         Self::apply_conversation_cache(&mut claude_messages);
@@ -788,7 +788,7 @@ impl ClaudeLLMExecutor {
                 record_inference_response,
             };
             record_inference_output(&span, &content, &tool_calls);
-            record_context_window(&span, ms.inner.context_size, input_tokens);
+            record_context_window(&span, ms.effective_context_size(), input_tokens);
             record_inference_response(
                 &span,
                 Some(ms.model.as_str()),
@@ -848,7 +848,7 @@ impl ClaudeLLMExecutor {
 
         // Validate context size
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
-        context_manager.validate_context_size(messages, ms.inner.context_size)?;
+        context_manager.validate_context_size(messages, ms.effective_context_size())?;
 
         let step_id = context.get_current_step_id().await.unwrap_or_default();
         let (system, mut claude_messages) = self.map_messages(messages);
@@ -1173,7 +1173,7 @@ impl ClaudeLLMExecutor {
                 record_inference_response,
             };
             record_inference_output(&span, &content, &tool_calls);
-            record_context_window(&span, ms.inner.context_size, stream_input_tokens);
+            record_context_window(&span, ms.effective_context_size(), stream_input_tokens);
             record_inference_response(
                 &span,
                 Some(ms.model.as_str()),
