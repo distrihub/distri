@@ -748,16 +748,15 @@ impl StandardDefinition {
         self.model_settings.as_mut()
     }
 
-    /// Get the effective context size (agent-level override or model settings)
+    /// Get the effective context size: agent-level override → model
+    /// settings override → the model catalog's advertised window for the
+    /// resolved (provider, model) → the conservative 20k fallback.
     pub fn get_effective_context_size(&self) -> u32 {
-        self.context_size
-            .filter(|&s| s > 0)
-            .or_else(|| {
-                self.model_settings()
-                    .map(|ms| ms.inner.context_size)
-                    .filter(|&s| s > 0)
-            })
-            .unwrap_or_else(default_context_size)
+        self.context_size.filter(|&s| s > 0).unwrap_or_else(|| {
+            self.model_settings()
+                .map(|ms| ms.effective_context_size())
+                .unwrap_or_else(default_context_size)
+        })
     }
 
     /// Model settings to use for lightweight browser analysis helpers (e.g., observe_summary commands)
@@ -1267,6 +1266,37 @@ fn merged_providers() -> Vec<DefaultProviderEntry> {
     merge_provider_layers(load_default_providers(), extensions)
 }
 
+/// The layered provider registry viewed as a [`crate::models::ModelLookup`].
+struct RegistryModelLookup;
+
+impl crate::models::ModelLookup for RegistryModelLookup {
+    fn model(&self, provider_id: &str, model_id: &str) -> Option<crate::models::Model> {
+        merged_providers()
+            .into_iter()
+            .find(|p| p.id == provider_id)?
+            .models
+            .into_iter()
+            .find(|m| m.id == model_id)
+    }
+
+    fn find_model(&self, model_id: &str) -> Option<crate::models::Model> {
+        merged_providers()
+            .into_iter()
+            .flat_map(|p| p.models)
+            .find(|m| m.id == model_id)
+    }
+}
+
+/// The process-wide model catalog: built-in `default_models.json` layered
+/// with the extensions a deployment registered at startup. This is how any
+/// component that knows a `(provider, model)` pair asks for the model's
+/// metadata — context window, pricing, capability — instead of hardcoding
+/// per-model constants.
+pub fn model_lookup() -> &'static dyn crate::models::ModelLookup {
+    static LOOKUP: RegistryModelLookup = RegistryModelLookup;
+    &LOOKUP
+}
+
 /// Models grouped by provider, with configuration status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderModels {
@@ -1653,8 +1683,15 @@ pub struct ModelSettingsInner {
     pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
-    #[serde(default = "default_context_size")]
-    pub context_size: u32,
+    /// Explicit context-window override in tokens. Leave unset to use the
+    /// model catalog's advertised window for the resolved (provider, model)
+    /// — see [`ModelSettings::effective_context_size`].
+    #[serde(
+        default,
+        deserialize_with = "de_context_size",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub context_size: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1682,6 +1719,23 @@ impl ModelSettings {
             model: model.into(),
             inner: ModelSettingsInner::default(),
         }
+    }
+
+    /// The context window to use for this model, resolved in order:
+    /// explicit `context_size` override → the model catalog's advertised
+    /// `context_window` for (provider, model) → the conservative 20k
+    /// fallback. LLM clients and the context budget MUST go through this
+    /// (or [`StandardDefinition::get_effective_context_size`]) rather than
+    /// reading `inner.context_size` directly.
+    pub fn effective_context_size(&self) -> u32 {
+        self.inner
+            .context_size
+            .filter(|&s| s > 0)
+            .or_else(|| {
+                crate::model_lookup()
+                    .context_window(self.inner.provider.provider_id(), &self.model)
+            })
+            .unwrap_or_else(default_context_size)
     }
 
     /// Fill empty `api_key` and `base_url` fields on this provider by
@@ -1895,7 +1949,6 @@ impl ModelSettings {
             return None;
         }
 
-        let default_context_size = 20000u32;
         Some(ModelSettings {
             model,
             inner: ModelSettingsInner {
@@ -1904,11 +1957,10 @@ impl ModelSettings {
                     .temperature
                     .or(self.inner.temperature),
                 max_tokens: override_settings.inner.max_tokens.or(self.inner.max_tokens),
-                context_size: if override_settings.inner.context_size != default_context_size {
-                    override_settings.inner.context_size
-                } else {
-                    self.inner.context_size
-                },
+                context_size: override_settings
+                    .inner
+                    .context_size
+                    .or(self.inner.context_size),
                 top_p: override_settings.inner.top_p.or(self.inner.top_p),
                 frequency_penalty: override_settings
                     .inner
@@ -1948,8 +2000,24 @@ fn default_model_provider() -> ModelProvider {
     ModelProvider::OpenAI {}
 }
 
+/// Last-resort context window when neither an explicit override nor a
+/// catalog entry for the model exists.
 fn default_context_size() -> u32 {
-    20000 // Default limit for general use - agents can override with higher values as needed
+    20000
+}
+
+/// `context_size` was a plain `u32` with a serde default of 20000 for years,
+/// so every stored config has `"context_size": 20000` baked in whether or
+/// not anyone chose it — the value never carried intent. Deserialize that
+/// legacy default (and 0) as "unset" so the model catalog's real window can
+/// take over; a deliberate cap goes in the agent-level `context_size` field
+/// or any value other than 20000.
+fn de_context_size<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<u32>::deserialize(deserializer)?;
+    Ok(v.filter(|&s| s > 0 && s != 20000))
 }
 
 fn is_default_api_format(f: &OpenAiApiFormat) -> bool {
@@ -2006,7 +2074,7 @@ impl From<StandardDefinition> for LlmDefinition {
     fn from(definition: StandardDefinition) -> Self {
         let model_settings = match (definition.model_settings, definition.context_size) {
             (Some(mut ms), Some(ctx)) => {
-                ms.inner.context_size = ctx;
+                ms.inner.context_size = Some(ctx);
                 Some(ms)
             }
             (ms, _) => ms,
@@ -2726,20 +2794,20 @@ tool_format = "json_l"
         let base = ModelSettings {
             model: "gpt-5.1".into(),
             inner: ModelSettingsInner {
-                context_size: 20000, // default
+                context_size: None, // unset
                 ..Default::default()
             },
         };
         let agent = ModelSettings {
             model: "gpt-4.1-mini".into(),
             inner: ModelSettingsInner {
-                context_size: 100000, // explicitly set
+                context_size: Some(100000), // explicitly set
                 ..Default::default()
             },
         };
 
         let result = base.merge(&agent).unwrap();
-        assert_eq!(result.inner.context_size, 100000);
+        assert_eq!(result.inner.context_size, Some(100000));
     }
 
     #[test]
@@ -2747,20 +2815,53 @@ tool_format = "json_l"
         let base = ModelSettings {
             model: "gpt-5.1".into(),
             inner: ModelSettingsInner {
-                context_size: 128000,
+                context_size: Some(128000),
                 ..Default::default()
             },
         };
         let agent = ModelSettings {
             model: "gpt-4.1-mini".into(),
             inner: ModelSettingsInner {
-                context_size: 20000, // default — should use base
+                context_size: None, // unset — should use base
                 ..Default::default()
             },
         };
 
         let result = base.merge(&agent).unwrap();
-        assert_eq!(result.inner.context_size, 128000);
+        assert_eq!(result.inner.context_size, Some(128000));
+    }
+
+    #[test]
+    fn context_size_legacy_default_deserializes_as_unset() {
+        // Stored configs carry the old serde default (20000) whether or not
+        // anyone chose it — it must not mask the catalog's real window.
+        let ms: ModelSettings =
+            serde_json::from_str(r#"{"model":"gpt-5.1","context_size":20000}"#).unwrap();
+        assert_eq!(ms.inner.context_size, None);
+
+        let ms: ModelSettings =
+            serde_json::from_str(r#"{"model":"gpt-5.1","context_size":50000}"#).unwrap();
+        assert_eq!(ms.inner.context_size, Some(50000));
+    }
+
+    #[test]
+    fn effective_context_size_prefers_catalog_over_fallback() {
+        // gpt-4.1 ships in the built-in default_models.json with a real
+        // context_window — an unset override must resolve to it.
+        let ms = ModelSettings::new("gpt-4.1");
+        let catalog = crate::model_lookup()
+            .context_window("openai", "gpt-4.1")
+            .expect("gpt-4.1 in built-in catalog");
+        assert_eq!(ms.effective_context_size(), catalog);
+
+        // Explicit override still wins over the catalog.
+        let mut pinned = ModelSettings::new("gpt-4.1");
+        pinned.inner.context_size = Some(64000);
+        assert_eq!(pinned.effective_context_size(), 64000);
+
+        // Unknown model → conservative fallback.
+        let unknown = ModelSettings::new("model-nobody-registered");
+        assert_eq!(unknown.effective_context_size(), 20000);
     }
 
     #[test]

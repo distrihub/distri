@@ -204,7 +204,7 @@ impl PlanningStrategy for UnifiedPlanner {
                 plan_config.model_settings = self.agent_def.model_settings().cloned();
                 // Ensure we use the agent's effective context size, not the default
                 if let Some(ref mut ms) = plan_config.model_settings {
-                    ms.inner.context_size = self.agent_def.get_effective_context_size();
+                    ms.inner.context_size = Some(self.agent_def.get_effective_context_size());
                 }
 
                 let response = {

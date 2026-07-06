@@ -138,6 +138,32 @@ pub struct Model {
     pub formats: Vec<String>,
 }
 
+// ── Model lookup ────────────────────────────────────────────────────────
+
+/// Read access to the model catalog — "what does the deployment know about
+/// this model?". The canonical implementation is the layered provider
+/// registry (built-in `default_models.json` + extensions registered at
+/// startup via `register_provider_extensions`), exposed as
+/// [`crate::model_lookup()`]. Tests can supply their own.
+pub trait ModelLookup: Send + Sync {
+    /// Look up a model by `(provider_id, model_id)` — e.g.
+    /// `("azure_ai_foundry", "gpt-5.4")`.
+    fn model(&self, provider_id: &str, model_id: &str) -> Option<Model>;
+
+    /// Look up a model by id across every provider — first match wins.
+    /// Used as a fallback when the runtime provider id doesn't match the
+    /// catalog's canonical id (Azure deployments, OpenAI-compatible
+    /// gateways, etc.).
+    fn find_model(&self, model_id: &str) -> Option<Model>;
+
+    /// A model's advertised context window, when the catalog knows it.
+    fn context_window(&self, provider_id: &str, model_id: &str) -> Option<u32> {
+        self.model(provider_id, model_id)
+            .or_else(|| self.find_model(model_id))
+            .and_then(|m| m.context_window)
+    }
+}
+
 /// A model with denormalized provider info — returned by GET /v1/models.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelWithProvider {

@@ -420,7 +420,7 @@ impl OpenAIResponsesLLMExecutor {
         );
 
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
-        context_manager.validate_context_size(messages, ms.inner.context_size)?;
+        context_manager.validate_context_size(messages, ms.effective_context_size())?;
 
         let (instructions, input_items) = self.map_messages(messages);
 
@@ -661,7 +661,7 @@ impl OpenAIResponsesLLMExecutor {
         );
 
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
-        context_manager.validate_context_size(messages, ms.inner.context_size)?;
+        context_manager.validate_context_size(messages, ms.effective_context_size())?;
 
         let step_id = context.get_current_step_id().await.unwrap_or_default();
         let (instructions, input_items) = self.map_messages(messages);

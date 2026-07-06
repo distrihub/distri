@@ -284,7 +284,7 @@ impl LLMExecutor {
         // Validate context size using the context manager
         tracing::debug!("📏 Validating context size for completion...");
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
-        context_manager.validate_context_size(&sanitized_messages, ms.inner.context_size)?;
+        context_manager.validate_context_size(&sanitized_messages, ms.effective_context_size())?;
         tracing::debug!("✅ Context size validation passed for completion");
 
         let llm_messages = self.map_messages(&sanitized_messages)?;
@@ -456,7 +456,7 @@ impl LLMExecutor {
                 record_inference_response,
             };
             record_inference_output(&span, &content, &tool_calls);
-            record_context_window(&span, ms.inner.context_size, inp);
+            record_context_window(&span, ms.effective_context_size(), inp);
             record_inference_response(
                 &span,
                 Some(ms.model.as_str()),
@@ -530,7 +530,7 @@ impl LLMExecutor {
         // Validate context size using the context manager
         tracing::debug!("📏 Validating context size for streaming...");
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
-        context_manager.validate_context_size(&sanitized_messages, ms.inner.context_size)?;
+        context_manager.validate_context_size(&sanitized_messages, ms.effective_context_size())?;
         tracing::debug!("✅ Context size validation passed for streaming");
 
         let step_id = context.get_current_step_id().await.unwrap_or_default();
@@ -857,7 +857,7 @@ impl LLMExecutor {
             use llm_gateway::observability::recorder::{
                 nonzero_tokens, record_context_window, record_inference_response,
             };
-            record_context_window(&span, ms.inner.context_size, stream_input_tokens);
+            record_context_window(&span, ms.effective_context_size(), stream_input_tokens);
             record_inference_response(
                 &span,
                 Some(ms.model.as_str()),
