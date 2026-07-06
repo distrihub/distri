@@ -55,7 +55,13 @@ fn compact_for_history_strips_images() {
 }
 
 #[test]
-fn compact_for_history_filters_save_false_parts() {
+fn compact_for_history_keeps_save_false_parts() {
+    // The agent's working history (scratchpad) must KEEP `save: false` tool
+    // parts: it's re-read in the SAME turn so the agent can act on a
+    // human-in-the-loop checkpoint's answer (`{ approved: true, … }`). Stripping
+    // it here blinds the agent to the answer the instant it's produced. The
+    // `save: false` flag is a persistence/transcript concern, filtered in
+    // `add_message_to_task` / `complete_external_tool_call`, not here.
     let mut metadata = std::collections::HashMap::new();
     metadata.insert(
         0,
@@ -84,11 +90,18 @@ fn compact_for_history_filters_save_false_parts() {
     let compacted = result.compact_for_history();
     match &compacted.parts[0] {
         Part::ToolResult(tr) => {
-            assert_eq!(tr.parts.len(), 1);
-            match &tr.parts[0] {
-                Part::Text(t) => assert_eq!(t, "persistent"),
-                _ => panic!("expected text"),
+            // BOTH parts kept — save:false is not stripped from the agent context.
+            assert_eq!(tr.parts.len(), 2);
+            match (&tr.parts[0], &tr.parts[1]) {
+                (Part::Text(a), Part::Text(b)) => {
+                    assert_eq!(a, "ephemeral");
+                    assert_eq!(b, "persistent");
+                }
+                _ => panic!("expected two text parts"),
             }
+            // parts_metadata dropped from the compacted copy (not needed in the
+            // agent's working history; persistence filters the original message).
+            assert!(tr.parts_metadata.is_none());
         }
         _ => panic!("expected tool result"),
     }
