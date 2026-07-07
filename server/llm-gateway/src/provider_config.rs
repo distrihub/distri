@@ -48,6 +48,17 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 query_params: vec![],
                 send_api_key_header: false,
             },
+            // Z.ai coding plan: Anthropic wire format at a custom base_url,
+            // authenticated with the ZAI_API_KEY token.
+            ModelProvider::ZAi { base_url, api_key } => Self {
+                base_url: base_url.clone(),
+                api_key_secret,
+                inline_api_key: api_key.clone(),
+                project_id: None,
+                extra_headers: HashMap::new(),
+                query_params: vec![],
+                send_api_key_header: false,
+            },
             ModelProvider::AzureOpenAI {
                 base_url,
                 api_key,
@@ -290,6 +301,21 @@ mod tests {
         assert_eq!(config.base_url, "https://api.custom.com/v1");
         assert_eq!(config.inline_api_key, Some("key123".to_string()));
         assert!(config.send_api_key_header);
+    }
+
+    #[test]
+    fn test_zai_config() {
+        // Z.ai coding plan uses the Anthropic wire format via its own base_url
+        // + ZAI_API_KEY secret (spec 2026-07-07).
+        let provider = ModelProvider::ZAi {
+            base_url: "https://api.z.ai/api/anthropic".to_string(),
+            api_key: Some("zai-token".to_string()),
+        };
+        let config = ProviderClientConfig::from(&provider);
+        assert_eq!(config.base_url, "https://api.z.ai/api/anthropic");
+        assert_eq!(config.api_key_secret, "ZAI_API_KEY");
+        assert_eq!(config.inline_api_key, Some("zai-token".to_string()));
+        assert!(!config.send_api_key_header);
     }
 
     #[test]

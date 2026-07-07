@@ -39,6 +39,7 @@ pub fn build_provider_definitions() -> Vec<ModelProviderDefinition> {
                 // `/v1/providers/test` handler via `lookup_provider_test_config`.
                 // The UI doesn't need to render it, so leave it None here.
                 test: None,
+                category: comp.category.clone(),
             }
         })
         .collect()
