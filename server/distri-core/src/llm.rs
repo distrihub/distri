@@ -18,6 +18,7 @@ pub fn provider_label(ms: &distri_types::ModelSettings) -> String {
     let name = match &ms.inner.provider {
         distri_types::ModelProvider::OpenAI {} => "OpenAI",
         distri_types::ModelProvider::Anthropic { .. } => "Anthropic",
+        distri_types::ModelProvider::ZAi { .. } => "ZAi",
         distri_types::ModelProvider::AzureOpenAI { .. } => "AzureOpenAI",
         distri_types::ModelProvider::Gemini { .. } => "Gemini",
         distri_types::ModelProvider::AzureAiFoundry { .. } => "AzureAiFoundry",
@@ -1729,13 +1730,17 @@ pub fn create_llm_executor(
     let provider = &ms.inner.provider;
 
     match provider {
-        ModelProvider::Anthropic { .. } => Ok(Box::new(crate::claude_llm::ClaudeLLMExecutor::new(
-            llm_def,
-            tools,
-            context,
-            additional_headers,
-            label,
-        ))),
+        // Anthropic and Z.ai (Anthropic-compatible coding plan) both speak the
+        // Messages wire format → ClaudeLLMExecutor.
+        ModelProvider::Anthropic { .. } | ModelProvider::ZAi { .. } => {
+            Ok(Box::new(crate::claude_llm::ClaudeLLMExecutor::new(
+                llm_def,
+                tools,
+                context,
+                additional_headers,
+                label,
+            )))
+        }
         // OpenAI-family providers: check api_format to decide Completions vs Responses
         ModelProvider::OpenAI {}
         | ModelProvider::OpenAICompatible { .. }

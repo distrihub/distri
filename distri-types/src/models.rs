@@ -204,6 +204,11 @@ pub struct ModelProviderDefinition {
     pub models: Vec<Model>,
     #[serde(default)]
     pub is_custom: bool,
+    /// Coarse grouping for the UI provider list, e.g. `"coding_plan"` for
+    /// subscription-backed Anthropic-compatible endpoints (Z.ai). `None` for
+    /// ordinary API-key providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
     /// Per-provider override of how `/v1/providers/test` validates the API
     /// key. When omitted, the test endpoint probes `GET {base_url}/models`.
     /// fal.ai sets this because it has no `/models` listing endpoint.

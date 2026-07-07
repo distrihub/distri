@@ -95,6 +95,10 @@ pub struct ProviderCatalogEntry {
     /// [`ProviderTestConfig`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<ProviderTestConfig>,
+    /// Coarse UI grouping, e.g. `"coding_plan"` for subscription-backed
+    /// Anthropic-compatible endpoints (Z.ai). `None` for ordinary providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 impl ProviderCatalogEntry {
@@ -129,6 +133,7 @@ impl ProviderCatalogEntry {
             models,
             is_custom: false,
             test: self.test,
+            category: self.category,
         }
     }
 
@@ -152,6 +157,7 @@ impl ProviderCatalogEntry {
             stt: section(ModelCapability::Stt),
             image: section(ModelCapability::Image),
             test: def.test.clone(),
+            category: def.category.clone(),
         }
     }
 }
