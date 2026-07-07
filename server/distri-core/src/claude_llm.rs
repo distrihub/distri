@@ -105,19 +105,21 @@ impl ClaudeLLMExecutor {
             .validate_provider(&ms.inner.provider)
             .await?;
 
-        let (base_url, config_api_key) = match &self
-            .llm_def
-            .ms()
-            .map_err(AgentError::InvalidConfiguration)?
-            .inner
-            .provider
-        {
+        let provider = &ms.inner.provider;
+        // Secret name is owned by the provider (ANTHROPIC_API_KEY for Anthropic,
+        // ZAI_API_KEY for the Z.ai coding plan) — never hardcoded here.
+        let api_key_secret = provider.api_key_secret();
+        let (base_url, config_api_key) = match provider {
             distri_types::ModelProvider::Anthropic { base_url, api_key } => {
                 (base_url.clone(), api_key.clone())
             }
+            // Z.ai coding plan — Anthropic wire format at a custom base_url.
+            distri_types::ModelProvider::ZAi { base_url, api_key } => {
+                (Some(base_url.clone()), api_key.clone())
+            }
             other => {
                 return Err(AgentError::InvalidConfiguration(format!(
-                    "ClaudeLLMExecutor requires Anthropic provider, got {:?}",
+                    "ClaudeLLMExecutor requires an Anthropic-compatible provider, got {:?}",
                     other
                 )));
             }
@@ -126,7 +128,7 @@ impl ClaudeLLMExecutor {
         let api_key = if let Some(key) = config_api_key {
             key
         } else {
-            secret_resolver.resolve_or_empty("ANTHROPIC_API_KEY").await
+            secret_resolver.resolve_or_empty(api_key_secret).await
         };
 
         let mut headers = self.additional_headers.clone().unwrap_or_default();

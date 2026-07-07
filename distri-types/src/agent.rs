@@ -1049,6 +1049,16 @@ pub enum ModelProvider {
         base_url: Option<String>,
         api_key: Option<String>,
     },
+    /// Z.ai GLM coding plan — an Anthropic-compatible Messages API behind a
+    /// subscription token (a "coding plan"). Same wire format as `Anthropic`
+    /// (routed through `ClaudeLLMExecutor`), but a distinct identity + secret
+    /// (`ZAI_API_KEY`) so it never collides with a real Anthropic key.
+    #[serde(rename = "zai")]
+    ZAi {
+        #[serde(default = "ModelProvider::zai_base_url")]
+        base_url: String,
+        api_key: Option<String>,
+    },
     #[serde(rename = "gemini")]
     Gemini {
         #[serde(default = "ModelProvider::gemini_base_url")]
@@ -1095,6 +1105,10 @@ pub struct ProviderSecretDefinition {
     pub label: String,
     /// List of required secret keys with metadata
     pub keys: Vec<SecretKeyDefinition>,
+    /// Coarse UI grouping, e.g. `"coding_plan"` for Z.ai. `None` for ordinary
+    /// API-key providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 /// Defines a single secret key requirement
@@ -1150,6 +1164,9 @@ struct DefaultProviderEntry {
     /// Optional per-provider override of `/v1/providers/test`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     test: Option<crate::models::ProviderTestConfig>,
+    /// Coarse grouping for the UI, e.g. `"coding_plan"` for Z.ai.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1201,6 +1218,7 @@ impl From<crate::models::ModelProviderDefinition> for DefaultProviderEntry {
             keys: d.keys.into_iter().map(SecretKeyDefinition::from).collect(),
             models,
             test: d.test,
+            category: d.category,
         }
     }
 }
@@ -1340,6 +1358,11 @@ impl ModelProvider {
         "https://generativelanguage.googleapis.com/v1beta/openai".to_string()
     }
 
+    /// Z.ai's Anthropic-compatible Messages API root (the coding-plan endpoint).
+    pub fn zai_base_url() -> String {
+        "https://api.z.ai/api/anthropic".to_string()
+    }
+
     pub fn azure_api_version() -> String {
         "2024-06-01".to_string()
     }
@@ -1362,6 +1385,7 @@ impl ModelProvider {
             Self::OpenAICompatible { api_key, .. }
             | Self::AzureOpenAI { api_key, .. }
             | Self::Anthropic { api_key, .. }
+            | Self::ZAi { api_key, .. }
             | Self::Gemini { api_key, .. }
             | Self::AzureAiFoundry { api_key, .. }
             | Self::AwsBedrock { api_key, .. }
@@ -1387,7 +1411,11 @@ impl ModelProvider {
             | Self::Gemini { base_url, .. }
             | Self::OpenAICompatible { base_url, .. }
             | Self::AlibabaCloud { base_url, .. } => Some(base_url),
-            Self::OpenAI {} | Self::Anthropic { .. } | Self::FalAi { .. } => None,
+            // ZAi's base_url has a default and is not a hydrated secret —
+            // excluded like Anthropic.
+            Self::OpenAI {} | Self::Anthropic { .. } | Self::ZAi { .. } | Self::FalAi { .. } => {
+                None
+            }
         }
     }
 
@@ -1400,6 +1428,8 @@ impl ModelProvider {
             }
             ModelProvider::AzureOpenAI { .. } => crate::models::ProviderType::Azure,
             ModelProvider::Anthropic { .. } => crate::models::ProviderType::Anthropic,
+            // Z.ai speaks the Anthropic wire format.
+            ModelProvider::ZAi { .. } => crate::models::ProviderType::Anthropic,
             ModelProvider::Gemini { .. } => crate::models::ProviderType::Gemini,
             ModelProvider::AzureAiFoundry { .. } => crate::models::ProviderType::AzureAiFoundry,
             ModelProvider::AwsBedrock { .. } => crate::models::ProviderType::AwsBedrock,
@@ -1416,6 +1446,7 @@ impl ModelProvider {
             ModelProvider::OpenAICompatible { .. } => "openai_compat",
             ModelProvider::AzureOpenAI { .. } => "azure_openai",
             ModelProvider::Anthropic { .. } => "anthropic",
+            ModelProvider::ZAi { .. } => "zai",
             ModelProvider::Gemini { .. } => "gemini",
             ModelProvider::AzureAiFoundry { .. } => "azure_ai_foundry",
             ModelProvider::AwsBedrock { .. } => "aws_bedrock",
@@ -1443,6 +1474,7 @@ impl ModelProvider {
             ModelProvider::OpenAICompatible { .. } => "OPENAI_API_KEY",
             ModelProvider::AzureOpenAI { .. } => "AZURE_OPENAI_API_KEY",
             ModelProvider::Anthropic { .. } => "ANTHROPIC_API_KEY",
+            ModelProvider::ZAi { .. } => "ZAI_API_KEY",
             ModelProvider::Gemini { .. } => "GEMINI_API_KEY",
             ModelProvider::AzureAiFoundry { .. } => "AZURE_AI_FOUNDRY_API_KEY",
             // AWS Bedrock authenticates with sigv4 — AWS_ACCESS_KEY_ID is the
@@ -1470,6 +1502,7 @@ impl ModelProvider {
             ModelProvider::OpenAI {}
             | ModelProvider::OpenAICompatible { .. }
             | ModelProvider::Anthropic { .. }
+            | ModelProvider::ZAi { .. }
             | ModelProvider::Gemini { .. }
             | ModelProvider::AlibabaCloud { .. }
             | ModelProvider::FalAi { .. } => None,
@@ -1555,6 +1588,7 @@ impl ModelProvider {
                 ),
                 api_key.clone(),
             ),
+            ModelProvider::ZAi { base_url, api_key } => (Some(base_url.clone()), api_key.clone()),
             ModelProvider::Gemini { base_url, api_key } => {
                 (Some(base_url.clone()), api_key.clone())
             }
@@ -1594,7 +1628,9 @@ impl ModelProvider {
             | ModelProvider::GoogleVertex { api_key, .. }
             | ModelProvider::AlibabaCloud { api_key, .. }
             | ModelProvider::FalAi { api_key } => api_key.is_some(),
-            ModelProvider::Anthropic { api_key, .. } => api_key.is_some(),
+            ModelProvider::Anthropic { api_key, .. } | ModelProvider::ZAi { api_key, .. } => {
+                api_key.is_some()
+            }
         };
         if api_key_present {
             vec![]
@@ -1612,6 +1648,7 @@ impl ModelProvider {
                 id: p.id,
                 label: p.label,
                 keys: p.keys,
+                category: p.category,
             })
             .collect()
     }
@@ -1637,6 +1674,7 @@ impl ModelProvider {
             ModelProvider::OpenAICompatible { .. } => "OpenAI Compatible",
             ModelProvider::AzureOpenAI { .. } => "Azure",
             ModelProvider::Anthropic { .. } => "Anthropic",
+            ModelProvider::ZAi { .. } => "Z.ai",
             ModelProvider::Gemini { .. } => "Google Gemini",
             ModelProvider::AzureAiFoundry { .. } => "Azure AI Foundry",
             ModelProvider::AwsBedrock { .. } => "AWS Bedrock",
@@ -1654,6 +1692,7 @@ impl ModelProvider {
             ModelProvider::OpenAICompatible { .. } => "openai",
             ModelProvider::AzureOpenAI { .. } => "azure.ai.openai",
             ModelProvider::Anthropic { .. } => "anthropic",
+            ModelProvider::ZAi { .. } => "zai",
             ModelProvider::Gemini { .. } => "google.gemini",
             ModelProvider::AzureAiFoundry { .. } => "azure.ai.inference",
             ModelProvider::AwsBedrock { .. } => "aws.bedrock",
@@ -1732,8 +1771,7 @@ impl ModelSettings {
             .context_size
             .filter(|&s| s > 0)
             .or_else(|| {
-                crate::model_lookup()
-                    .context_window(self.inner.provider.provider_id(), &self.model)
+                crate::model_lookup().context_window(self.inner.provider.provider_id(), &self.model)
             })
             .unwrap_or_else(default_context_size)
     }
@@ -1834,6 +1872,10 @@ impl ModelSettings {
                 base_url: None,
                 api_key: None,
             },
+            "zai" => ModelProvider::ZAi {
+                base_url: ModelProvider::zai_base_url(),
+                api_key: None,
+            },
             "azure_openai" | "azure" => ModelProvider::AzureOpenAI {
                 base_url: String::new(),
                 api_key: None,
@@ -1878,7 +1920,7 @@ impl ModelSettings {
             _ => {
                 return Err(format!(
                     "unknown model provider prefix '{provider_str}' in '{s}'. \
-                     Recognised prefixes: openai, anthropic, azure_openai, \
+                     Recognised prefixes: openai, anthropic, zai, azure_openai, \
                      azure (alias for azure_openai), gemini, azure_ai_foundry, \
                      aws_bedrock, google_vertex, alibaba_cloud, fal_ai, custom_*. \
                      Pass just the model name with no slash to use the \
@@ -3151,6 +3193,7 @@ tool_format = "json_l"
             keys: vec![],
             models: vec![],
             test: None,
+            category: None,
         }
     }
 
@@ -3201,8 +3244,51 @@ tool_format = "json_l"
             }],
             is_custom: false,
             test: None,
+            category: None,
         };
         let converted = DefaultProviderEntry::from(def);
         assert_eq!(converted.models[0].name, "acme-large");
+    }
+
+    // ── Z.ai coding-plan provider (spec 2026-07-07) ──────────────────────
+
+    #[test]
+    fn zai_provider_parses_with_default_base_url() {
+        let ms = ModelSettings::from_provider_model_str("zai/glm-4.6")
+            .unwrap()
+            .expect("zai/glm-4.6 should parse");
+        assert_eq!(ms.model, "glm-4.6");
+        match ms.inner.provider {
+            ModelProvider::ZAi { base_url, api_key } => {
+                assert_eq!(base_url, "https://api.z.ai/api/anthropic");
+                assert!(api_key.is_none());
+            }
+            other => panic!("expected ModelProvider::ZAi, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zai_provider_metadata() {
+        let p = ModelProvider::ZAi {
+            base_url: ModelProvider::zai_base_url(),
+            api_key: None,
+        };
+        assert_eq!(p.api_key_secret(), "ZAI_API_KEY");
+        assert_eq!(p.provider_id(), "zai");
+        assert_eq!(p.display_name(), "Z.ai");
+        let (base_url, _key) = p.resolved_endpoint();
+        assert_eq!(base_url.as_deref(), Some("https://api.z.ai/api/anthropic"));
+    }
+
+    #[test]
+    fn zai_provider_hydrates_key_not_base_url() {
+        // base_url has a default and is NOT a hydrated secret (like Anthropic);
+        // api_key IS hydrated from ZAI_API_KEY.
+        let mut p = ModelProvider::ZAi {
+            base_url: ModelProvider::zai_base_url(),
+            api_key: None,
+        };
+        assert!(p.base_url_slot_mut().is_none());
+        assert!(p.api_key_slot_mut().is_some());
     }
 }
