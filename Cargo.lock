@@ -1628,7 +1628,7 @@ dependencies = [
 
 [[package]]
 name = "distri"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -1656,7 +1656,7 @@ dependencies = [
 
 [[package]]
 name = "distri-a2a"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "schemars",
  "serde",
@@ -1666,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "distri-auth"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -1694,7 +1694,7 @@ dependencies = [
 
 [[package]]
 name = "distri-cli"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1736,7 +1736,7 @@ dependencies = [
 
 [[package]]
 name = "distri-core"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -1799,7 +1799,7 @@ dependencies = [
 
 [[package]]
 name = "distri-filesystem"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1825,7 +1825,7 @@ dependencies = [
 
 [[package]]
 name = "distri-formatter"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1837,7 +1837,7 @@ dependencies = [
 
 [[package]]
 name = "distri-parsers"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -1916,7 +1916,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server-cli"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "distri-stores"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1970,7 +1970,7 @@ dependencies = [
 
 [[package]]
 name = "distri-types"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -2008,7 +2008,7 @@ dependencies = [
 
 [[package]]
 name = "distri-workflow"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3468,7 +3468,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "llm-gateway"
-version = "0.4.2"
+version = "0.4.4"
 dependencies = [
  "async-openai",
  "async-stream",

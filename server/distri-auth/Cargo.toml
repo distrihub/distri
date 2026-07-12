@@ -1,6 +1,6 @@
 [package]
 name = "distri-auth"
-version = "0.4.2"
+version = "0.4.4"
 edition = "2021"
 
 [features]
@@ -27,7 +27,7 @@ dirs = "5.0"
 oauth2 = { version = "5", features = ["reqwest"], default-features = false }
 
 # Internal dependencies
-distri-types = { path = "../../distri-types", version = "0.4.2" }
+distri-types = { path = "../../distri-types", version = "0.4.4" }
 
 [dev-dependencies]
 tokio-test = "0.4"
