@@ -1,6 +1,6 @@
 [package]
 name = "distri-cli"
-version = "0.4.2"
+version = "0.4.4"
 edition = "2021"
 description = "CLI for the Distri A2A agent platform"
 license = "MIT"
@@ -29,9 +29,9 @@ serde = { workspace = true }
 urlencoding = "2.1"
 
 glob = "0.3"
-distri = { path = "../distri", version = "0.4.2" }
-distri-a2a = { path = "../distri-a2a", version = "0.4.2" }
-distri-types = { path = "../distri-types", version = "0.4.2" }
+distri = { path = "../distri", version = "0.4.4" }
+distri-a2a = { path = "../distri-a2a", version = "0.4.4" }
+distri-types = { path = "../distri-types", version = "0.4.4" }
 async-trait = { workspace = true }
 uuid = { version = "1.13.1", features = ["v4"] }
 tracing-subscriber = { workspace = true }
@@ -47,7 +47,7 @@ base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
-distri-formatter = { path = "../distri-formatter", version = "0.4.2" }
+distri-formatter = { path = "../distri-formatter", version = "0.4.4" }
 
 [dependencies.openssl]
 version = "0.10"

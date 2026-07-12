@@ -1,13 +1,13 @@
 [package]
 name = "distri-formatter"
-version = "0.4.2"
+version = "0.4.4"
 edition = "2024"
 description = "Shared event formatting logic for Distri (plain text, HTML, etc.)"
 license = "MIT"
 repository = "https://github.com/distrihub/distri"
 
 [dependencies]
-distri-types = { path = "../distri-types", version = "0.4.2" }
+distri-types = { path = "../distri-types", version = "0.4.4" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
