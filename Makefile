@@ -99,25 +99,29 @@ package-releases: build-linux build-linux-arm build-mac build-mac-intel release-
 release-tarballs: release-dir
 	@echo "Packaging release tarballs..."
 	@# macOS ARM
-	mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG}
-	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/LICENSE
-	cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri ${RELEASE_TMP}/${MAC_ARM_SLUG}/distri
-	@if [ -f "${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri-server" ]; then \
-		mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG}/server && \
-		cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/LICENSE && \
-		cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/distri-server; \
+	@if [ -f "${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri" ]; then \
+		mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG} && \
+		cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/LICENSE && \
+		cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri ${RELEASE_TMP}/${MAC_ARM_SLUG}/distri; \
+		if [ -f "${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri-server" ]; then \
+			mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG}/server && \
+			cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/LICENSE && \
+			cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/distri-server; \
+		fi && \
+		tar -czf ${RELEASES_DIR}/distri-${MAC_ARM_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_ARM_SLUG}; \
 	fi
-	tar -czf ${RELEASES_DIR}/distri-${MAC_ARM_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_ARM_SLUG}
 	@# macOS Intel
-	mkdir -p ${RELEASE_TMP}/${MAC_INTEL_SLUG}
-	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/LICENSE
-	cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri ${RELEASE_TMP}/${MAC_INTEL_SLUG}/distri
-	@if [ -f "${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri-server" ]; then \
-		mkdir -p ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server && \
-		cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/LICENSE && \
-		cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/distri-server; \
+	@if [ -f "${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri" ]; then \
+		mkdir -p ${RELEASE_TMP}/${MAC_INTEL_SLUG} && \
+		cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/LICENSE && \
+		cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri ${RELEASE_TMP}/${MAC_INTEL_SLUG}/distri; \
+		if [ -f "${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri-server" ]; then \
+			mkdir -p ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server && \
+			cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/LICENSE && \
+			cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/distri-server; \
+		fi && \
+		tar -czf ${RELEASES_DIR}/distri-${MAC_INTEL_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_INTEL_SLUG}; \
 	fi
-	tar -czf ${RELEASES_DIR}/distri-${MAC_INTEL_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_INTEL_SLUG}
 	@# Linux x86_64
 	mkdir -p ${RELEASE_TMP}/${LINUX_X86_SLUG}
 	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${LINUX_X86_SLUG}/LICENSE
