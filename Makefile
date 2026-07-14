@@ -55,25 +55,37 @@ ${TARGETDIR}/distri-server: ${TMPDIR} FORCE
 build-all: build-linux build-linux-arm build-mac build-mac-intel
 
 build-linux: frontend-dist ${TMPDIR} FORCE
-	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri 
-	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"
+	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri
+	@if [ -d "${FRONTEND_DIR}" ]; then \
+		cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"; \
+	fi
 
 build-linux-arm: frontend-dist ${TMPDIR} FORCE
-	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri 
-	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"
+	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri
+	@if [ -d "${FRONTEND_DIR}" ]; then \
+		cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"; \
+	fi
 
 build-mac: frontend-dist ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-cli --bin distri
-	cargo build --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-server-cli --bin distri-server --features "ui sqlite"
+	@if [ -d "${FRONTEND_DIR}" ]; then \
+		cargo build --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-server-cli --bin distri-server --features "ui sqlite"; \
+	fi
 
 build-mac-intel: frontend-dist ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-cli --bin distri
-	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-server-cli --bin distri-server --features "ui sqlite"
+	@if [ -d "${FRONTEND_DIR}" ]; then \
+		cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-server-cli --bin distri-server --features "ui sqlite"; \
+	fi
 
 build-ui: frontend-dist
 
 frontend-dist:
-	VITE_PREFIX=${UI_PREFIX} pnpm run build
+	@if [ -d "${FRONTEND_DIR}" ]; then \
+		VITE_PREFIX=${UI_PREFIX} pnpm run build; \
+	else \
+		echo "No frontend directory (${FRONTEND_DIR}) - skipping UI build"; \
+	fi
 
 
 ${TMPDIR}:
@@ -85,26 +97,46 @@ release-dir:
 package-releases: build-linux build-linux-arm build-mac build-mac-intel release-tarballs
 
 release-tarballs: release-dir
-	mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG}/server ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server ${RELEASE_TMP}/${LINUX_X86_SLUG}/server ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server
+	@echo "Packaging release tarballs..."
+	@# macOS ARM
+	mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG}
 	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/LICENSE
-	cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/LICENSE
 	cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri ${RELEASE_TMP}/${MAC_ARM_SLUG}/distri
-	cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/distri-server
+	@if [ -f "${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri-server" ]; then \
+		mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG}/server && \
+		cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/LICENSE && \
+		cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/distri-server; \
+	fi
 	tar -czf ${RELEASES_DIR}/distri-${MAC_ARM_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_ARM_SLUG}
+	@# macOS Intel
+	mkdir -p ${RELEASE_TMP}/${MAC_INTEL_SLUG}
 	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/LICENSE
-	cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/LICENSE
 	cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri ${RELEASE_TMP}/${MAC_INTEL_SLUG}/distri
-	cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/distri-server
+	@if [ -f "${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri-server" ]; then \
+		mkdir -p ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server && \
+		cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/LICENSE && \
+		cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/distri-server; \
+	fi
 	tar -czf ${RELEASES_DIR}/distri-${MAC_INTEL_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_INTEL_SLUG}
+	@# Linux x86_64
+	mkdir -p ${RELEASE_TMP}/${LINUX_X86_SLUG}
 	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${LINUX_X86_SLUG}/LICENSE
-	cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${LINUX_X86_SLUG}/server/LICENSE
 	cp -p ${ROOT_DIR}/target/${DEFAULT_CONTAINER_TARGET}/release/distri ${RELEASE_TMP}/${LINUX_X86_SLUG}/distri
-	cp -p ${ROOT_DIR}/target/${DEFAULT_CONTAINER_TARGET}/release/distri-server ${RELEASE_TMP}/${LINUX_X86_SLUG}/server/distri-server
+	@if [ -f "${ROOT_DIR}/target/${DEFAULT_CONTAINER_TARGET}/release/distri-server" ]; then \
+		mkdir -p ${RELEASE_TMP}/${LINUX_X86_SLUG}/server && \
+		cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${LINUX_X86_SLUG}/server/LICENSE && \
+		cp -p ${ROOT_DIR}/target/${DEFAULT_CONTAINER_TARGET}/release/distri-server ${RELEASE_TMP}/${LINUX_X86_SLUG}/server/distri-server; \
+	fi
 	tar -czf ${RELEASES_DIR}/distri-${LINUX_X86_SLUG}.tar.gz -C ${RELEASE_TMP} ${LINUX_X86_SLUG}
+	@# Linux ARM
+	mkdir -p ${RELEASE_TMP}/${LINUX_ARM_SLUG}
 	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${LINUX_ARM_SLUG}/LICENSE
-	cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server/LICENSE
 	cp -p ${ROOT_DIR}/target/${LINUX_ARM_TARGET}/release/distri ${RELEASE_TMP}/${LINUX_ARM_SLUG}/distri
-	cp -p ${ROOT_DIR}/target/${LINUX_ARM_TARGET}/release/distri-server ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server/distri-server
+	@if [ -f "${ROOT_DIR}/target/${LINUX_ARM_TARGET}/release/distri-server" ]; then \
+		mkdir -p ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server && \
+		cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server/LICENSE && \
+		cp -p ${ROOT_DIR}/target/${LINUX_ARM_TARGET}/release/distri-server ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server/distri-server; \
+	fi
 	tar -czf ${RELEASES_DIR}/distri-${LINUX_ARM_SLUG}.tar.gz -C ${RELEASE_TMP} ${LINUX_ARM_SLUG}
 
 FORCE: ;
