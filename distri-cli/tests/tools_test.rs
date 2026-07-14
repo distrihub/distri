@@ -14,6 +14,7 @@ fn make_event() -> AgentEvent {
         thread_id: "test-thread".to_string(),
         run_id: "test-run".to_string(),
         task_id: "test-task".to_string(),
+        parent_task_id: None,
         agent_id: "test-agent".to_string(),
         user_id: None,
         identifier_id: None,
