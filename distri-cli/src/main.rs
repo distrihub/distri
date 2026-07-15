@@ -89,10 +89,7 @@ enum Commands {
         /// Falls back to DISTRI_THREAD_ID env var.
         #[clap(long)]
         thread_id: Option<String>,
-        /// Run the agent in a remote browsr sandbox (shorthand for --overrides '{"remote":true}').
-        #[clap(long)]
-        remote: bool,
-        /// W3C traceparent header for distributed tracing (passed by SandboxLauncher).
+        /// W3C traceparent header for distributed tracing.
         #[clap(long)]
         traceparent: Option<String>,
         /// Search tag to attach to this run's traces and thread, as key=value.
@@ -689,7 +686,6 @@ async fn main() -> Result<()> {
             overrides,
             task_id,
             thread_id,
-            remote,
             traceparent,
             tags,
             headers,
@@ -728,7 +724,6 @@ async fn main() -> Result<()> {
                 task,
                 task_id,
                 thread_id: resolved_thread_id,
-                remote,
                 model: None,
                 env_vars,
                 skip_connections_context: false,
@@ -756,18 +751,14 @@ async fn main() -> Result<()> {
                 ));
             }
             // Register local CLI tool handlers + ship their schemas to the
-            // server ONLY when running locally. With `--remote`, the agent
-            // forks into a sandbox that has its own distri-cli with its own
-            // tools — the outer CLI is just a passthrough for events. Shipping
-            // schemas in remote mode causes the server to delegate tool calls
-            // back to the outer CLI, which never bound a registry → 120s hang.
-            if !remote {
-                let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
-                app.add_tool_definitions(tool_defs);
-            }
+            // server. The CLI is always the execution environment for any
+            // external tool calls the server delegates back — there is no
+            // remote/sandbox mode where a container owns tool execution
+            // instead.
+            let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
+            app.add_tool_definitions(tool_defs);
 
-            // Build params via the shared entry point — same code path the
-            // server-side LocalProcessRemoteRunner uses. We split build +
+            // Build params via the shared entry point. We split build +
             // stream (vs. calling run_agent directly) so we can inject
             // external tool schemas in between.
             let distri_client = Distri::from_config(config.clone());
@@ -779,21 +770,13 @@ async fn main() -> Result<()> {
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
-            if !remote {
-                register_approval_handler(&registry);
-            }
+            register_approval_handler(&registry);
             let mut stream_config = config.clone().with_timeout(600);
             stream_config.traceparent = traceparent;
             let http_client = stream_config.build_http_client()?;
-            // For remote runs the container handles all tool execution — don't bind
-            // the registry on the client side or the CLI will try to execute them too.
-            let mut client = if remote {
-                AgentStreamClient::from_config(config.clone()).with_http_client(http_client)
-            } else {
-                AgentStreamClient::from_config(config.clone())
-                    .with_http_client(http_client)
-                    .with_tool_registry(registry)
-            };
+            let mut client = AgentStreamClient::from_config(config.clone())
+                .with_http_client(http_client)
+                .with_tool_registry(registry);
             for tool in extra_tools {
                 client.register_dynamic_tool(tool);
             }

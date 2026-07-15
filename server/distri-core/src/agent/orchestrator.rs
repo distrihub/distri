@@ -49,8 +49,6 @@ pub struct AgentOrchestrator {
     pub hook_registry: HookRegistry,
     pub system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
 
-    /// Optional background runner for async agent execution (deepagent containers).
-    pub remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     /// Unified runtime for event broadcasting + task coordination.
     /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
     pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
@@ -118,7 +116,6 @@ pub struct AgentOrchestratorBuilder {
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
-    remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
     workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
@@ -212,14 +209,6 @@ impl AgentOrchestratorBuilder {
     }
     pub fn with_runtime(mut self, runtime: Arc<dyn crate::broadcast::AgentRuntime>) -> Self {
         self.runtime = Some(runtime);
-        self
-    }
-
-    pub fn with_remote_task_runner(
-        mut self,
-        runner: Arc<dyn crate::runner::RemoteTaskRunner>,
-    ) -> Self {
-        self.remote_task_runner = Some(runner);
         self
     }
 
@@ -338,7 +327,6 @@ impl AgentOrchestratorBuilder {
             inline_hooks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
             runtime,
-            remote_task_runner: self.remote_task_runner,
             oauth_handler: self.oauth_handler,
             mcp_pool_provider: self.mcp_pool_provider,
             workflow_store: self.workflow_store,
@@ -1087,41 +1075,21 @@ impl AgentOrchestrator {
         );
         self.hydrate_agent_model_settings(&mut agent_config).await?;
 
-        // Runtime-constraint dispatch decision. Single source of truth
-        // lives in `crate::agent::invoke::decide_dispatch` — both this
-        // legacy entry and the typed `invoke()` entry route through it,
-        // so the local-vs-remote logic stays consistent.
-        //
-        // **Order matters.** This must run BEFORE the wildcard
-        // external-tools check below: remote-dispatched agents have
-        // their tools satisfied by the inner distri-cli inside the
-        // sandbox, so the outer orchestrator must NOT validate the
-        // wildcard locally — it would wrongly reject `_adhoc_base`-style
-        // agents (declared with `external = ["*"]` and `runtime =
-        // ["cli"]`) just because the cloud client doesn't ship any
-        // tools. Same reasoning as the `validate_agent_model` skip:
-        // the model and the tools both live inside the sandbox.
+        // Runtime-constraint check. Single source of truth lives in
+        // `crate::agent::invoke::decide_dispatch` — both this legacy entry
+        // and the typed `invoke()` entry route through it. Every agent runs
+        // in-process against the caller's own runtime (Cli / Browser / Cloud)
+        // — there is no remote/sandbox execution path. An agent whose
+        // `runtime` constraint doesn't match the caller fails fast here with
+        // a clear error rather than hanging on a nonexistent remote runner.
         if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
             agent_config
         {
-            let plan = crate::agent::invoke::decide_dispatch(
+            crate::agent::invoke::decide_dispatch(
                 definition,
                 &context.runtime_mode,
                 &distri_types::invocation::ExecutorHint::Auto,
-                self.remote_task_runner.as_ref(),
             )?;
-            if let crate::agent::invoke::DispatchPlan::Remote { runner } = plan {
-                let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
-                    crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
-                );
-                let agent = crate::agent::remote::RemoteAgent {
-                    definition: definition.clone(),
-                    runner,
-                    broadcaster: self.runtime.broadcaster_arc(),
-                    hooks,
-                };
-                return agent.invoke_stream(message, context).await;
-            }
         }
 
         // Wildcard external-tools sanity check (in-process path only): an
@@ -1435,7 +1403,7 @@ impl AgentOrchestrator {
                 .await;
         }
 
-        // Look up parent run for OTel span nesting (set by RemoteAgent before spawning inner task).
+        // Look up parent run for OTel span nesting (set for forked/detached child tasks).
         let context = if context.parent_run_id.is_none() {
             if let Ok(Some(parent_run_id)) =
                 self.broadcaster().get_parent_run(&context.task_id).await
@@ -1605,7 +1573,7 @@ impl AgentOrchestrator {
                 .await;
         }
 
-        // Look up parent run for OTel span nesting (set by RemoteAgent before spawning inner task).
+        // Look up parent run for OTel span nesting (set for forked/detached child tasks).
         let context = if context.parent_run_id.is_none() {
             if let Ok(Some(parent_run_id)) =
                 self.broadcaster().get_parent_run(&context.task_id).await

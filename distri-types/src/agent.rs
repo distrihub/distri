@@ -590,12 +590,15 @@ pub struct StandardDefinition {
     ///
     /// - empty / omitted → runs in any runtime (default).
     /// - `["cli"]` → only runs when `ExecutorContext.runtime_mode == Cli`,
-    ///   OR via a `RemoteTaskRunner` providing `Cli` (e.g. `SandboxLauncher`
-    ///   spawning `distri-cli` inside a browsr container).
+    ///   i.e. driven by the distri CLI, which executes tool calls locally
+    ///   on the user's own machine.
     /// - `["cli", "cloud"]` → runs in either Cli or Cloud, but not Browser.
     ///
-    /// When the current runtime doesn't match any allowed value and no
-    /// compatible runner exists, the orchestrator fails fast at request entry.
+    /// Every agent executes in-process against the caller's own runtime —
+    /// there is no remote/sandbox fallback. When the current runtime doesn't
+    /// match any allowed value, the orchestrator fails fast at request entry
+    /// with a clear error instead of trying to spin up a substitute
+    /// environment.
     ///
     /// Accepts both scalar (`runtime = "cli"`) and array (`runtime = ["cli"]`)
     /// syntax in TOML/JSON for ergonomics.
@@ -666,31 +669,13 @@ impl StandardDefinition {
         self.runtime.clone()
     }
 
-    /// Whether this agent can execute given the caller's `current` runtime,
-    /// optionally with a `RemoteTaskRunner` providing an alternative runtime
-    /// via remote dispatch.
-    ///
-    /// Returns true when:
-    /// - the agent has no runtime constraint, OR
-    /// - the current runtime matches one of the allowed runtimes, OR
-    /// - a runner is available whose `provided_runtime` matches one of the
-    ///   allowed runtimes.
-    pub fn is_runnable_in(
-        &self,
-        current: &RuntimeMode,
-        runner_provides: Option<&RuntimeMode>,
-    ) -> bool {
+    /// Whether this agent can execute given the caller's `current` runtime.
+    /// Every dispatch is in-process now — there is no remote/sandbox
+    /// execution path, so this is satisfied only when the agent has no
+    /// runtime constraint or `current` is directly in its allowed list.
+    pub fn is_runnable_in(&self, current: &RuntimeMode) -> bool {
         let allowed = self.allowed_runtimes();
-        if allowed.is_empty() {
-            return true;
-        }
-        if allowed.iter().any(|rt| rt == current) {
-            return true;
-        }
-        match runner_provides {
-            Some(p) => allowed.iter().any(|rt| rt == p),
-            None => false,
-        }
+        allowed.is_empty() || allowed.iter().any(|rt| rt == current)
     }
 
     /// Check if browser should be initialized automatically in orchestrator (default: false)

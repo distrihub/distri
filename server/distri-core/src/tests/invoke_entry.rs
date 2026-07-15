@@ -23,16 +23,9 @@
 //! once the InvokeAgentTool replaces the legacy call_agent path
 //! (Commit G).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use tokio::sync::Mutex;
-
-use crate::agent::types::AgentEvent;
 use crate::agent::ExecutorContext;
-use crate::broadcast::{in_process::InProcessBroadcaster, AgentEventBroadcaster};
-use crate::runner::RemoteTaskRunner;
 use crate::tests::helpers::test_store_config;
 use crate::AgentOrchestratorBuilder;
 use distri_types::invocation::{
@@ -41,9 +34,7 @@ use distri_types::invocation::{
 };
 #[allow(unused_imports)]
 use distri_types::stores::TaskStore;
-use distri_types::{
-    AgentEventType, Message, MessageRole, Part, RuntimeMode, StandardDefinition, TaskStatus,
-};
+use distri_types::{Message, MessageRole, Part, RuntimeMode, StandardDefinition, TaskStatus};
 
 fn user_msg(text: &str) -> Message {
     Message {
@@ -143,191 +134,12 @@ async fn invoke_rejects_single_with_two_targets() {
 
 // ── Not-yet-wired axes return NotImplemented ────────────────────────────
 
-// ── Force(Remote) dispatch ────────────────────────────────────────────
+// ── Remote execution has been removed — both axes must error clearly ──
 
-/// `RemoteTaskRunner` that records its `spawn` calls and synthesizes a
-/// terminal `RunFinished` event back onto the broadcaster so the
-/// `RemoteAgent` follow_stream loop in `invoke_remote_independent`
-/// returns. Mirrors the `RecordingRunner` pattern from
-/// `tests/orchestrator/mock/runtime_dispatch.rs`.
-#[derive(Clone)]
-struct RecordingRemoteRunner {
-    counter: Arc<AtomicUsize>,
-    last_inner_task_id: Arc<Mutex<Option<String>>>,
-    broadcaster: Arc<InProcessBroadcaster>,
-    provided: RuntimeMode,
-}
-
-impl RecordingRemoteRunner {
-    fn new(broadcaster: Arc<InProcessBroadcaster>, provided: RuntimeMode) -> Self {
-        Self {
-            counter: Arc::new(AtomicUsize::new(0)),
-            last_inner_task_id: Arc::new(Mutex::new(None)),
-            broadcaster,
-            provided,
-        }
-    }
-}
-
-#[async_trait]
-impl RemoteTaskRunner for RecordingRemoteRunner {
-    async fn spawn(
-        &self,
-        task_id: String,
-        agent_name: String,
-        _task: String,
-        _user_id: String,
-        _workspace_id: Option<String>,
-        _environment_id: Option<String>,
-        _thread_id: Option<String>,
-    ) -> anyhow::Result<()> {
-        self.counter.fetch_add(1, Ordering::SeqCst);
-        *self.last_inner_task_id.lock().await = Some(task_id.clone());
-
-        // Synthesize the terminal event so RemoteAgent's follow_stream
-        // loop terminates promptly. Real runners get this from the
-        // inner orchestrator's RunFinished publish.
-        let bc = self.broadcaster.clone();
-        tokio::spawn(async move {
-            let event = AgentEvent {
-                timestamp: chrono::Utc::now(),
-                thread_id: "test".to_string(),
-                run_id: "test".to_string(),
-                event: AgentEventType::RunFinished {
-                    success: true,
-                    total_steps: 0,
-                    failed_steps: 0,
-                    usage: None,
-                    context_budget: None,
-                },
-                task_id: task_id.clone(),
-                parent_task_id: None,
-                agent_id: agent_name,
-                user_id: None,
-                identifier_id: None,
-                workspace_id: None,
-                channel_id: None,
-            };
-            let _ = bc.publish(&task_id, event).await;
-        });
-        Ok(())
-    }
-
-    fn provided_runtime(&self) -> RuntimeMode {
-        self.provided.clone()
-    }
-}
-
-async fn build_orch_with_remote_runner(
-    agent_id: &str,
-    runtime: Vec<RuntimeMode>,
-) -> (Arc<crate::AgentOrchestrator>, RecordingRemoteRunner) {
-    use crate::broadcast::in_process::InProcessRuntime;
-    let bc = InProcessBroadcaster::new_shared();
-    let runner = RecordingRemoteRunner::new(bc.clone(), RuntimeMode::Cli);
-
-    let base = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_store_config(test_store_config())
-            .build()
-            .await
-            .unwrap(),
-    );
-    let task_store = base.stores.task_store.clone();
-    let rt = Arc::new(InProcessRuntime::from_broadcaster(bc.clone(), task_store));
-    let orch = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_stores(base.stores.clone())
-            .with_runtime(rt)
-            .with_remote_task_runner(Arc::new(runner.clone()))
-            .build()
-            .await
-            .unwrap(),
-    );
-
-    let def = StandardDefinition {
-        name: agent_id.to_string(),
-        description: "remote test".to_string(),
-        runtime,
-        ..Default::default()
-    };
-    orch.register_agent_definition(def).await.unwrap();
-    (orch, runner)
-}
-
-/// Force(Remote) routes through the configured RemoteTaskRunner.
-/// `spawn` fires exactly once, the row gets `remote=true`, and the
-/// orchestrator returns a Scalar AgentResult.
+/// `Force(Remote)` always errors now: remote/sandbox execution no longer
+/// exists, so every agent runs in-process against the caller's own runtime.
 #[tokio::test]
-async fn invoke_force_remote_calls_runner_spawn() {
-    let (orch, runner) = build_orch_with_remote_runner("remote_worker", vec![]).await;
-    let parent_ctx = build_parent_ctx(&orch, "remote_worker");
-
-    let inv = Invocation::single(target_named("remote_worker", "go")).with_executor(
-        ExecutorHint::Force(Executor::Remote {
-            runner: RunnerConfig::new("default"),
-        }),
-    );
-    let result = orch
-        .invoke(inv, parent_ctx.clone())
-        .await
-        .expect("Force(Remote) must dispatch successfully");
-
-    assert!(matches!(result, InvocationResult::Scalar { .. }));
-    assert_eq!(
-        runner.counter.load(Ordering::SeqCst),
-        1,
-        "RemoteTaskRunner::spawn must fire exactly once"
-    );
-
-    // Row written with remote=true.
-    let task_id = match result {
-        InvocationResult::Scalar { result } => result.task_id,
-        _ => unreachable!(),
-    };
-    let stored = orch
-        .stores
-        .task_store
-        .get_task(&task_id)
-        .await
-        .unwrap()
-        .expect("row must exist");
-    assert_eq!(
-        stored.parent_task_id.as_deref(),
-        Some(parent_ctx.task_id.as_str())
-    );
-}
-
-/// `Auto` + an agent declaring `runtime = ["cli"]` from a Cloud parent
-/// also routes Remote (the runtime-constraint dispatch path), gating
-/// that the shared `decide_dispatch` logic works for both Force and
-/// Auto entries.
-#[tokio::test]
-async fn invoke_auto_routes_remote_when_runtime_unsatisfiable_locally() {
-    let (orch, runner) = build_orch_with_remote_runner("cli_worker", vec![RuntimeMode::Cli]).await;
-    // Parent context is in Cloud runtime; agent requires Cli; runner
-    // provides Cli → must dispatch remote even with ExecutorHint::Auto.
-    let mut ctx = ExecutorContext::default();
-    ctx.agent_id = "cli_worker".to_string();
-    ctx.thread_id = uuid::Uuid::new_v4().to_string();
-    ctx.task_id = uuid::Uuid::new_v4().to_string();
-    ctx.user_id = "u".to_string();
-    ctx.runtime_mode = RuntimeMode::Cloud;
-    ctx.orchestrator = Some(orch.clone());
-    let parent_ctx = Arc::new(ctx);
-
-    let inv = Invocation::single(target_named("cli_worker", "go")); // ExecutorHint::Auto
-    let _ = orch
-        .invoke(inv, parent_ctx.clone())
-        .await
-        .expect("Auto + runtime-constraint must dispatch remote");
-    assert_eq!(runner.counter.load(Ordering::SeqCst), 1);
-}
-
-/// Force(Remote) without a configured RemoteTaskRunner errors clearly.
-#[tokio::test]
-async fn invoke_force_remote_without_runner_errors() {
-    // Orchestrator with NO remote_task_runner.
+async fn invoke_force_remote_errors_now_unsupported() {
     let orch = build_orch_with_agent("worker").await;
     let ctx = build_parent_ctx(&orch, "worker");
     let inv = Invocation::single(target_named("worker", "go")).with_executor(ExecutorHint::Force(
@@ -338,11 +150,47 @@ async fn invoke_force_remote_without_runner_errors() {
     let err = orch
         .invoke(inv, ctx)
         .await
-        .expect_err("Force(Remote) without runner must error");
+        .expect_err("Force(Remote) must error — remote execution was removed");
     let msg = format!("{err}");
     assert!(
-        msg.contains("Remote") && msg.contains("RemoteTaskRunner"),
-        "expected runner-missing error; got: {msg}"
+        msg.contains("remote"),
+        "expected a message explaining remote execution is unsupported; got: {msg}"
+    );
+}
+
+/// `Auto` + an agent declaring `runtime = ["cli"]` called from a Cloud
+/// parent errors clearly instead of silently spinning up a substitute
+/// environment — there is no remote fallback for an unsatisfiable runtime
+/// constraint.
+#[tokio::test]
+async fn invoke_auto_errors_when_runtime_unsatisfiable_locally() {
+    let orch = build_orch_with_agent("cli_worker").await;
+    let def = StandardDefinition {
+        name: "cli_worker".to_string(),
+        description: "cli-only test agent".to_string(),
+        runtime: vec![RuntimeMode::Cli],
+        ..Default::default()
+    };
+    orch.register_agent_definition(def).await.unwrap();
+
+    let mut ctx = ExecutorContext::default();
+    ctx.agent_id = "cli_worker".to_string();
+    ctx.thread_id = uuid::Uuid::new_v4().to_string();
+    ctx.task_id = uuid::Uuid::new_v4().to_string();
+    ctx.user_id = "u".to_string();
+    ctx.runtime_mode = RuntimeMode::Cloud;
+    ctx.orchestrator = Some(orch.clone());
+    let parent_ctx = Arc::new(ctx);
+
+    let inv = Invocation::single(target_named("cli_worker", "go")); // ExecutorHint::Auto
+    let err = orch
+        .invoke(inv, parent_ctx.clone())
+        .await
+        .expect_err("Auto + unsatisfiable runtime constraint must error, not dispatch remote");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("Cli") || msg.contains("runtime"),
+        "expected a runtime-constraint error; got: {msg}"
     );
 }
 
