@@ -19,7 +19,10 @@ MAKEFLAGS += -j${NPROCS}
 UI_PREFIX ?= ui
 
 ROOT_DIR=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
-DISTRI_VERSION=$(shell awk -F\" '/^version =/ {print $$2; exit}' ${ROOT_DIR}/distri/Cargo.toml)
+# Release version tracks the CLI crate (produces the `distri` binary and is what
+# scripts/publish.env bumps). Must match VERSION_CRATE in scripts/publish.env,
+# else release-tarballs writes to the wrong releases/<version>/ dir.
+DISTRI_VERSION=$(shell awk -F\" '/^version =/ {print $$2; exit}' ${ROOT_DIR}/distri-cli/Cargo.toml)
 RELEASES_DIR=${ROOT_DIR}/releases/${DISTRI_VERSION}
 MAC_ARM_TARGET=aarch64-apple-darwin
 MAC_INTEL_TARGET=x86_64-apple-darwin
@@ -54,29 +57,25 @@ ${TARGETDIR}/distri-server: ${TMPDIR} FORCE
 
 build-all: build-linux build-linux-arm build-mac build-mac-intel
 
+# macOS-only build (used when publishing: Linux targets build on the VM, macOS
+# targets build locally since they can't cross-compile from Linux).
+build-all-mac: build-mac build-mac-intel
+
 build-linux: frontend-dist ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri
-	@if [ -d "${FRONTEND_DIR}" ]; then \
-		cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"; \
-	fi
+	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored"
 
 build-linux-arm: frontend-dist ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri
-	@if [ -d "${FRONTEND_DIR}" ]; then \
-		cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"; \
-	fi
+	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored"
 
 build-mac: frontend-dist ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-cli --bin distri
-	@if [ -d "${FRONTEND_DIR}" ]; then \
-		cargo build --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-server-cli --bin distri-server --features "ui sqlite"; \
-	fi
+	cargo build --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-server-cli --bin distri-server --features "sqlite"
 
 build-mac-intel: frontend-dist ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-cli --bin distri
-	@if [ -d "${FRONTEND_DIR}" ]; then \
-		cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-server-cli --bin distri-server --features "ui sqlite"; \
-	fi
+	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-server-cli --bin distri-server --features "sqlite"
 
 build-ui: frontend-dist
 
@@ -142,5 +141,32 @@ release-tarballs: release-dir
 		cp -p ${ROOT_DIR}/target/${LINUX_ARM_TARGET}/release/distri-server ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server/distri-server; \
 	fi
 	tar -czf ${RELEASES_DIR}/distri-${LINUX_ARM_SLUG}.tar.gz -C ${RELEASE_TMP} ${LINUX_ARM_SLUG}
+
+release-tarballs-mac: release-dir
+	@echo "Packaging macOS release tarballs..."
+	@# macOS ARM
+	@if [ -f "${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri" ]; then \
+		mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG} && \
+		cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/LICENSE && \
+		cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri ${RELEASE_TMP}/${MAC_ARM_SLUG}/distri; \
+		if [ -f "${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri-server" ]; then \
+			mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG}/server && \
+			cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/LICENSE && \
+			cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/distri-server; \
+		fi && \
+		tar -czf ${RELEASES_DIR}/distri-${MAC_ARM_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_ARM_SLUG}; \
+	fi
+	@# macOS Intel
+	@if [ -f "${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri" ]; then \
+		mkdir -p ${RELEASE_TMP}/${MAC_INTEL_SLUG} && \
+		cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/LICENSE && \
+		cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri ${RELEASE_TMP}/${MAC_INTEL_SLUG}/distri; \
+		if [ -f "${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri-server" ]; then \
+			mkdir -p ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server && \
+			cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/LICENSE && \
+			cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/distri-server; \
+		fi && \
+		tar -czf ${RELEASES_DIR}/distri-${MAC_INTEL_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_INTEL_SLUG}; \
+	fi
 
 FORCE: ;
