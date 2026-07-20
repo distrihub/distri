@@ -215,6 +215,10 @@ async fn list_agents(
         .await
         .unwrap_or_default();
 
+    let runner_provides = executor
+        .remote_task_runner
+        .as_ref()
+        .map(|r| r.provided_runtime());
     let caller_runtime = query.runtime.clone();
 
     let agents_with_stats: Vec<AgentWithStats> = agents_with_metadata
@@ -226,7 +230,7 @@ async fn list_agents(
             let runnable = caller_runtime.as_ref().map(|current| {
                 match &config {
                     distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                        def.is_runnable_in(current)
+                        def.is_runnable_in(current, runner_provides.as_ref())
                     }
                     // Non-standard agents (workflows etc.) have no runtime constraint;
                     // they run wherever they're called.

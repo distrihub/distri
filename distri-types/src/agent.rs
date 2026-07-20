@@ -594,11 +594,13 @@ pub struct StandardDefinition {
     ///   on the user's own machine.
     /// - `["cli", "cloud"]` → runs in either Cli or Cloud, but not Browser.
     ///
-    /// Every agent executes in-process against the caller's own runtime —
-    /// there is no remote/sandbox fallback. When the current runtime doesn't
-    /// match any allowed value, the orchestrator fails fast at request entry
-    /// with a clear error instead of trying to spin up a substitute
-    /// environment.
+    /// Every agent executes in-process against the caller's own runtime by
+    /// default — there is no automatic remote/sandbox fallback. When the
+    /// current runtime doesn't match any allowed value, the orchestrator
+    /// fails fast at request entry with a clear error, UNLESS the caller
+    /// explicitly requested remote dispatch (`ExecutorHint::Force(Remote)`)
+    /// and a `RemoteTaskRunner` providing one of the allowed runtimes is
+    /// configured (see [`is_runnable_in`](StandardDefinition::is_runnable_in)).
     ///
     /// Accepts both scalar (`runtime = "cli"`) and array (`runtime = ["cli"]`)
     /// syntax in TOML/JSON for ergonomics.
@@ -669,13 +671,34 @@ impl StandardDefinition {
         self.runtime.clone()
     }
 
-    /// Whether this agent can execute given the caller's `current` runtime.
-    /// Every dispatch is in-process now — there is no remote/sandbox
-    /// execution path, so this is satisfied only when the agent has no
-    /// runtime constraint or `current` is directly in its allowed list.
-    pub fn is_runnable_in(&self, current: &RuntimeMode) -> bool {
+    /// Whether this agent can execute given the caller's `current` runtime,
+    /// optionally with a `RemoteTaskRunner` providing an alternative runtime
+    /// via explicit remote dispatch.
+    ///
+    /// Returns true when:
+    /// - the agent has no runtime constraint, OR
+    /// - the current runtime matches one of the allowed runtimes, OR
+    /// - a runner is available whose `provided_runtime` matches one of the
+    ///   allowed runtimes (i.e. remote dispatch could satisfy it, even
+    ///   though nothing here forces that dispatch to happen automatically —
+    ///   see `decide_dispatch` in distri-core, which still requires an
+    ///   explicit `ExecutorHint::Force(Remote)` to actually use it).
+    pub fn is_runnable_in(
+        &self,
+        current: &RuntimeMode,
+        runner_provides: Option<&RuntimeMode>,
+    ) -> bool {
         let allowed = self.allowed_runtimes();
-        allowed.is_empty() || allowed.iter().any(|rt| rt == current)
+        if allowed.is_empty() {
+            return true;
+        }
+        if allowed.iter().any(|rt| rt == current) {
+            return true;
+        }
+        match runner_provides {
+            Some(p) => allowed.iter().any(|rt| rt == p),
+            None => false,
+        }
     }
 
     /// Check if browser should be initialized automatically in orchestrator (default: false)
