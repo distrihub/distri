@@ -23,9 +23,16 @@
 //! once the InvokeAgentTool replaces the legacy call_agent path
 //! (Commit G).
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use tokio::sync::Mutex;
+
+use crate::agent::types::AgentEvent;
 use crate::agent::ExecutorContext;
+use crate::broadcast::{in_process::InProcessBroadcaster, AgentEventBroadcaster};
+use crate::runner::RemoteTaskRunner;
 use crate::tests::helpers::test_store_config;
 use crate::AgentOrchestratorBuilder;
 use distri_types::invocation::{
@@ -34,7 +41,9 @@ use distri_types::invocation::{
 };
 #[allow(unused_imports)]
 use distri_types::stores::TaskStore;
-use distri_types::{Message, MessageRole, Part, RuntimeMode, StandardDefinition, TaskStatus};
+use distri_types::{
+    AgentEventType, Message, MessageRole, Part, RuntimeMode, StandardDefinition, TaskStatus,
+};
 
 fn user_msg(text: &str) -> Message {
     Message {
@@ -138,8 +147,167 @@ async fn invoke_rejects_single_with_two_targets() {
 
 /// `Force(Remote)` always errors now: remote/sandbox execution no longer
 /// exists, so every agent runs in-process against the caller's own runtime.
+/// `RemoteTaskRunner` that records its `spawn` calls and synthesizes a
+/// terminal `RunFinished` event back onto the broadcaster so the
+/// `RemoteAgent` follow_stream loop in `invoke_remote_independent`
+/// returns.
+#[derive(Clone)]
+struct RecordingRemoteRunner {
+    counter: Arc<AtomicUsize>,
+    last_inner_task_id: Arc<Mutex<Option<String>>>,
+    broadcaster: Arc<InProcessBroadcaster>,
+    provided: RuntimeMode,
+}
+
+impl RecordingRemoteRunner {
+    fn new(broadcaster: Arc<InProcessBroadcaster>, provided: RuntimeMode) -> Self {
+        Self {
+            counter: Arc::new(AtomicUsize::new(0)),
+            last_inner_task_id: Arc::new(Mutex::new(None)),
+            broadcaster,
+            provided,
+        }
+    }
+}
+
+#[async_trait]
+impl RemoteTaskRunner for RecordingRemoteRunner {
+    async fn spawn(
+        &self,
+        task_id: String,
+        agent_name: String,
+        _task: String,
+        _user_id: String,
+        _workspace_id: Option<String>,
+        _environment_id: Option<String>,
+        _thread_id: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.counter.fetch_add(1, Ordering::SeqCst);
+        *self.last_inner_task_id.lock().await = Some(task_id.clone());
+
+        // Synthesize the terminal event so RemoteAgent's follow_stream
+        // loop terminates promptly. A real runner (e.g. a sandboxed
+        // container running distri-cli) gets this from the inner
+        // orchestrator's own RunFinished publish over HTTP+SSE.
+        let bc = self.broadcaster.clone();
+        tokio::spawn(async move {
+            let event = AgentEvent {
+                timestamp: chrono::Utc::now(),
+                thread_id: "test".to_string(),
+                run_id: "test".to_string(),
+                event: AgentEventType::RunFinished {
+                    success: true,
+                    total_steps: 0,
+                    failed_steps: 0,
+                    usage: None,
+                    context_budget: None,
+                },
+                task_id: task_id.clone(),
+                parent_task_id: None,
+                agent_id: agent_name,
+                user_id: None,
+                identifier_id: None,
+                workspace_id: None,
+                channel_id: None,
+            };
+            let _ = bc.publish(&task_id, event).await;
+        });
+        Ok(())
+    }
+
+    fn provided_runtime(&self) -> RuntimeMode {
+        self.provided.clone()
+    }
+}
+
+async fn build_orch_with_remote_runner(
+    agent_id: &str,
+    runtime: Vec<RuntimeMode>,
+) -> (Arc<crate::AgentOrchestrator>, RecordingRemoteRunner) {
+    use crate::broadcast::in_process::InProcessRuntime;
+    let bc = InProcessBroadcaster::new_shared();
+    let runner = RecordingRemoteRunner::new(bc.clone(), RuntimeMode::Cli);
+
+    let base = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .build()
+            .await
+            .unwrap(),
+    );
+    let task_store = base.stores.task_store.clone();
+    let rt = Arc::new(InProcessRuntime::from_broadcaster(bc.clone(), task_store));
+    let orch = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_stores(base.stores.clone())
+            .with_runtime(rt)
+            .with_remote_task_runner(Arc::new(runner.clone()))
+            .build()
+            .await
+            .unwrap(),
+    );
+
+    let def = StandardDefinition {
+        name: agent_id.to_string(),
+        description: "remote test".to_string(),
+        runtime,
+        ..Default::default()
+    };
+    orch.register_agent_definition(def).await.unwrap();
+    (orch, runner)
+}
+
+/// `Force(Remote)` with a configured `RemoteTaskRunner` dispatches
+/// through it: `spawn` fires exactly once, the row gets `remote=true`,
+/// and the orchestrator returns a Scalar `AgentResult`. This is the
+/// mechanism a caller (e.g. a cloud-side channel tool) uses to explicitly
+/// opt in to remote/sandboxed execution — never an automatic fallback.
 #[tokio::test]
-async fn invoke_force_remote_errors_now_unsupported() {
+async fn invoke_force_remote_calls_runner_spawn() {
+    let (orch, runner) = build_orch_with_remote_runner("remote_worker", vec![]).await;
+    let parent_ctx = build_parent_ctx(&orch, "remote_worker");
+
+    let inv = Invocation::single(target_named("remote_worker", "go")).with_executor(
+        ExecutorHint::Force(Executor::Remote {
+            runner: RunnerConfig::new("default"),
+        }),
+    );
+    let result = orch
+        .invoke(inv, parent_ctx.clone())
+        .await
+        .expect("Force(Remote) must dispatch successfully");
+
+    assert!(matches!(result, InvocationResult::Scalar { .. }));
+    assert_eq!(
+        runner.counter.load(Ordering::SeqCst),
+        1,
+        "RemoteTaskRunner::spawn must fire exactly once"
+    );
+
+    // Row written with remote=true.
+    let task_id = match result {
+        InvocationResult::Scalar { result } => result.task_id,
+        _ => unreachable!(),
+    };
+    let stored = orch
+        .stores
+        .task_store
+        .get_task(&task_id)
+        .await
+        .unwrap()
+        .expect("row must exist");
+    assert_eq!(
+        stored.parent_task_id.as_deref(),
+        Some(parent_ctx.task_id.as_str())
+    );
+}
+
+/// `Force(Remote)` with no `RemoteTaskRunner` configured errors clearly
+/// instead of panicking or hanging — this is the state of every agent
+/// today unless a hosting application explicitly wires one up (e.g.
+/// distri-cloud's SandboxLauncher, scoped to a specific tool).
+#[tokio::test]
+async fn invoke_force_remote_errors_without_configured_runner() {
     let orch = build_orch_with_agent("worker").await;
     let ctx = build_parent_ctx(&orch, "worker");
     let inv = Invocation::single(target_named("worker", "go")).with_executor(ExecutorHint::Force(
@@ -150,11 +318,11 @@ async fn invoke_force_remote_errors_now_unsupported() {
     let err = orch
         .invoke(inv, ctx)
         .await
-        .expect_err("Force(Remote) must error — remote execution was removed");
+        .expect_err("Force(Remote) without a configured runner must error");
     let msg = format!("{err}");
     assert!(
-        msg.contains("remote"),
-        "expected a message explaining remote execution is unsupported; got: {msg}"
+        msg.contains("RemoteTaskRunner"),
+        "expected a message explaining no runner is configured; got: {msg}"
     );
 }
 

@@ -49,6 +49,13 @@ pub struct AgentOrchestrator {
     pub hook_registry: HookRegistry,
     pub system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
 
+    /// Optional out-of-process runner for `ExecutorHint::Force(Remote)`
+    /// dispatch (see `agent::invoke::decide_dispatch`). `None` unless a
+    /// hosting application explicitly wires one up (e.g. distri-cloud's
+    /// `SandboxLauncher`, scoped to a specific channel-only tool) — there
+    /// is no automatic fallback that uses this for a plain runtime
+    /// mismatch.
+    pub remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     /// Unified runtime for event broadcasting + task coordination.
     /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
     pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
@@ -116,6 +123,7 @@ pub struct AgentOrchestratorBuilder {
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
+    remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
     workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
@@ -209,6 +217,19 @@ impl AgentOrchestratorBuilder {
     }
     pub fn with_runtime(mut self, runtime: Arc<dyn crate::broadcast::AgentRuntime>) -> Self {
         self.runtime = Some(runtime);
+        self
+    }
+
+    /// Attach an out-of-process runner for `ExecutorHint::Force(Remote)`
+    /// dispatch. Scope this narrowly to whatever tool actually needs it
+    /// (e.g. a channel-only "run in the background" tool) — setting this
+    /// does not change dispatch for any agent that doesn't explicitly ask
+    /// for `Force(Remote)`; `Auto` dispatch never falls back to it.
+    pub fn with_remote_task_runner(
+        mut self,
+        runner: Arc<dyn crate::runner::RemoteTaskRunner>,
+    ) -> Self {
+        self.remote_task_runner = Some(runner);
         self
     }
 
@@ -327,6 +348,7 @@ impl AgentOrchestratorBuilder {
             inline_hooks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
             runtime,
+            remote_task_runner: self.remote_task_runner,
             oauth_handler: self.oauth_handler,
             mcp_pool_provider: self.mcp_pool_provider,
             workflow_store: self.workflow_store,
@@ -1077,11 +1099,14 @@ impl AgentOrchestrator {
 
         // Runtime-constraint check. Single source of truth lives in
         // `crate::agent::invoke::decide_dispatch` — both this legacy entry
-        // and the typed `invoke()` entry route through it. Every agent runs
-        // in-process against the caller's own runtime (Cli / Browser / Cloud)
-        // — there is no remote/sandbox execution path. An agent whose
-        // `runtime` constraint doesn't match the caller fails fast here with
-        // a clear error rather than hanging on a nonexistent remote runner.
+        // and the typed `invoke()` entry route through it. This legacy
+        // entry always dispatches with `ExecutorHint::Auto`, which never
+        // resolves to `DispatchPlan::Remote` — remote/sandboxed execution
+        // is only reachable via the typed `invoke()` path with an explicit
+        // `Force(Remote)` hint (e.g. a channel-only tool). So an agent
+        // whose `runtime` constraint doesn't match the caller fails fast
+        // here with a clear error rather than hanging on a remote runner
+        // this entry point can't use.
         if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
             agent_config
         {
@@ -1089,6 +1114,7 @@ impl AgentOrchestrator {
                 definition,
                 &context.runtime_mode,
                 &distri_types::invocation::ExecutorHint::Auto,
+                self.remote_task_runner.as_ref(),
             )?;
         }
 
