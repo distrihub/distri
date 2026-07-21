@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use distri_types::{configuration::AgentConfig, AgentEventType, Tool};
+use distri_types::{configuration::AgentConfig, AgentEventType, RemoteTaskRunner, Tool};
 use futures_util::StreamExt;
 
 use crate::{
@@ -11,14 +11,14 @@ use crate::{
         InvokeResult,
     },
     broadcast::AgentEventBroadcaster,
-    runner::RemoteTaskRunner,
     tools::FinalTool,
     types::{Message, StandardDefinition},
     AgentError,
 };
 
-/// RemoteAgent dispatches execution to a browsr sandbox container and forwards
-/// all events to the outer SSE stream so the CLI output is identical to a local run.
+/// RemoteAgent dispatches execution to an out-of-process runner (e.g. a
+/// sandboxed container) and forwards all events to the outer SSE stream so
+/// the caller's output is identical to a local run.
 ///
 /// # Echo-loop safety
 ///
@@ -26,7 +26,7 @@ use crate::{
 /// outer `completion_task`. The completion_task re-publishes every received event
 /// to the broadcaster under `outer_task_id`. This is safe because:
 ///
-/// - The container is spawned with a distinct `inner_task_id` (a fresh UUID).
+/// - The remote runner is spawned with a distinct `inner_task_id` (a fresh UUID).
 /// - `follow_stream` subscribes to `inner_task_id`.
 /// - Re-published events land under `outer_task_id`, which `follow_stream` does
 ///   not subscribe to → no echo loop.
@@ -34,7 +34,7 @@ use crate::{
 /// # Final content
 ///
 /// The `final` tool call's input text is captured and returned as `InvokeResult.content`
-/// so the CLI prints the agent's final answer exactly as it does for local runs.
+/// so the caller sees the agent's final answer exactly as it does for local runs.
 #[derive(Clone)]
 pub struct RemoteAgent {
     pub definition: StandardDefinition,
@@ -123,8 +123,9 @@ impl RemoteAgent {
         let outer_task_id = context.task_id.clone();
         let task_text = message.as_text().unwrap_or_default();
 
-        // Use a distinct task_id for the container so that events it publishes to the
-        // broadcaster don't echo back through the outer completion_task.
+        // Use a distinct task_id for the remote runner so that events it
+        // publishes to the broadcaster don't echo back through the outer
+        // completion_task.
         //
         // Echo-loop mechanism (why separate IDs are required):
         //   inner event → broadcaster[inner_id]
@@ -133,9 +134,9 @@ impl RemoteAgent {
         //   → outer completion_task publishes to broadcaster[outer_id]
         //   follow_stream is subscribed to inner_id, NOT outer_id → no echo ✓
         //
-        // All events are forwarded via context.emit() so the CLI sees the full
-        // execution trace (tool calls, LLM output, final answer) exactly as in
-        // local mode.
+        // All events are forwarded via context.emit() so the caller sees
+        // the full execution trace (tool calls, LLM output, final answer)
+        // exactly as in local mode.
         let inner_task_id = uuid::Uuid::new_v4().to_string();
 
         // Record the parent run mapping so OtelHooks can nest inner spans under outer invoke_agent.
@@ -148,14 +149,14 @@ impl RemoteAgent {
         }
 
         tracing::info!(
-            "RemoteAgent: spawning '{}' in sandbox (outer_task_id={}, inner_task_id={})",
+            "RemoteAgent: spawning '{}' remotely (outer_task_id={}, inner_task_id={})",
             self.definition.name,
             outer_task_id,
             inner_task_id,
         );
 
         // Instrument the spawn+follow loop with the invoke_agent span so all events
-        // and child spans (forwarded from the inner container) nest under it.
+        // and child spans (forwarded from the inner run) nest under it.
         async {
             self.runner
                 .spawn(

@@ -54,7 +54,6 @@ pub fn build_message_params(
         thread_id,
         task_id,
         model,
-        false,
         connections_context,
         None,
         None,
@@ -67,45 +66,21 @@ pub fn build_message_params_full(
     thread_id: Option<&str>,
     task_id: Option<&str>,
     model: Option<&str>,
-    remote: bool,
     connections_context: Option<String>,
     env_vars: Option<HashMap<String, String>>,
     tags: Option<HashMap<String, String>>,
     trace_context: Option<distri_types::TraceContext>,
 ) -> MessageSendParams {
-    let has_overrides = model.is_some() || remote;
-    // With --remote, the agent will execute on the server (forked into a
-    // sandbox by runtime-constraint dispatch). The CLI is just a passthrough
-    // for events — it is NOT the execution environment, so it must declare
-    // `runtime_mode = Cloud`. Sending `Cli` here causes the server to think
-    // the caller already provides Cli runtime, skip the sandbox, run the
-    // agent in-process, and 120s-timeout on tool calls (the outer CLI never
-    // bound a registry to handle them).
-    //
-    // Without --remote, the CLI is the execution environment for any external
-    // tool calls the server delegates back, so it stays in Cli mode.
-    let runtime_mode = if remote {
-        RuntimeMode::Cloud
-    } else {
-        RuntimeMode::Cli
-    };
-    // The sandbox entrypoint sets DISTRI_IN_SANDBOX=1 (see SandboxLauncher).
-    // Forward that to the server so it stamps ExecutorContext.is_sandbox for
-    // the child run — tools/prompts use this to detect sandbox-context runs.
-    let is_sandbox = std::env::var("DISTRI_IN_SANDBOX")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let has_overrides = model.is_some();
+    // The CLI is always the execution environment for any external tool
+    // calls the server delegates back — there is no remote/sandbox mode
+    // where a separate container executes them instead. Always declare
+    // `runtime_mode = Cli`.
     let mut metadata = ExecutorContextMetadata {
-        runtime_mode,
-        is_sandbox,
+        runtime_mode: RuntimeMode::Cli,
         definition_overrides: if has_overrides {
             Some(DefinitionOverrides {
                 model: model.map(|m| m.to_string()),
-                runtime: if remote {
-                    Some(vec![RuntimeMode::Cloud])
-                } else {
-                    None
-                },
                 ..Default::default()
             })
         } else {
@@ -160,52 +135,17 @@ mod tests {
         serde_json::from_value(raw.clone()).expect("metadata must deserialize")
     }
 
-    /// Regression: with `--remote`, the agent runs on the server (forked into a
-    /// sandbox). The CLI is not the execution environment, so it must declare
-    /// `runtime_mode = Cloud` so the orchestrator's runtime-constraint dispatch
-    /// fires. Sending `runtime_mode = Cli` here causes the dispatch to think the
-    /// caller already provides Cli runtime, skip the sandbox, run the agent
-    /// in-process on the cloud server, and 120s-timeout on tool calls because
-    /// the outer CLI never bound a registry.
+    /// The CLI is always the execution environment for any external tool
+    /// calls the server delegates back — there is no remote/sandbox mode.
+    /// Every request declares `runtime_mode = Cli` and carries no `runtime`
+    /// override.
     #[test]
-    fn remote_request_sets_runtime_mode_cloud() {
+    fn request_stays_in_cli_mode() {
         let params = build_message_params_full(
             "test task".into(),
             None,
             None,
             None,
-            true, // remote
-            None,
-            None,
-            None,
-            None,
-        );
-        let metadata = parse_metadata(&params);
-        assert_eq!(
-            metadata.runtime_mode,
-            RuntimeMode::Cloud,
-            "with --remote, runtime_mode must be Cloud so the server forks to a sandbox"
-        );
-        assert_eq!(
-            metadata
-                .definition_overrides
-                .as_ref()
-                .and_then(|o| o.runtime.clone()),
-            Some(vec![RuntimeMode::Cloud]),
-            "with --remote, definition_overrides.runtime must be Some([Cloud])"
-        );
-    }
-
-    /// Without `--remote`, the CLI is the execution environment for any external
-    /// tool calls the server delegates back. Stays in `Cli` mode.
-    #[test]
-    fn local_request_stays_in_cli_mode() {
-        let params = build_message_params_full(
-            "test task".into(),
-            None,
-            None,
-            None,
-            false, // local
             None,
             None,
             None,
@@ -219,7 +159,7 @@ mod tests {
                 .as_ref()
                 .and_then(|o| o.runtime.as_ref())
                 .is_none(),
-            "without --remote, definition_overrides.runtime must be unset"
+            "definition_overrides.runtime must be unset"
         );
     }
 }
