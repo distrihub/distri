@@ -303,40 +303,55 @@ pub async fn handle_slash_command(
         "/models" => {
             let client = distri::Distri::from_config(config.clone());
             match client.list_models().await {
-                Ok(providers) => {
+                Ok(models) => {
                     let current = current_model.as_deref().unwrap_or("Auto");
                     println!(
                         "{}Available models{} (current: {}{}{})",
                         COLOR_BRIGHT_GREEN, COLOR_RESET, COLOR_BRIGHT_GREEN, current, COLOR_RESET
                     );
-                    for provider in &providers {
-                        if provider.models.is_empty() {
+                    // The server returns a flat list (one row per model); group
+                    // by provider for display, preserving first-seen order.
+                    let mut groups: Vec<(String, String, bool, Vec<String>)> = Vec::new();
+                    for m in &models {
+                        if let Some(g) = groups.iter_mut().find(|g| g.0 == m.provider_id) {
+                            g.3.push(m.model.id.clone());
+                        } else {
+                            groups.push((
+                                m.provider_id.clone(),
+                                m.provider_label.clone(),
+                                m.configured,
+                                vec![m.model.id.clone()],
+                            ));
+                        }
+                    }
+                    for (_provider_id, provider_label, configured, model_ids) in &groups {
+                        if model_ids.is_empty() {
                             continue;
                         }
-                        let status = if provider.configured { "✓" } else { "✗" };
+                        let status = if *configured { "✓" } else { "✗" };
                         println!(
                             "\n  {} {} {}{}{}",
                             status,
-                            provider.provider_label,
-                            if provider.configured {
+                            provider_label,
+                            if *configured {
                                 COLOR_BRIGHT_GREEN
                             } else {
                                 "\x1b[90m"
                             },
-                            if provider.configured {
+                            if *configured {
                                 ""
                             } else {
                                 "(not configured)"
                             },
                             COLOR_RESET,
                         );
-                        for model in &provider.models {
-                            let marker = if current_model.as_deref() == Some(&model.id) {
+                        for id in model_ids {
+                            let marker = if current_model.as_deref() == Some(id.as_str()) {
                                 " ◀"
                             } else {
                                 ""
                             };
-                            println!("      {}{}", model.id, marker);
+                            println!("      {}{}", id, marker);
                         }
                     }
                 }
