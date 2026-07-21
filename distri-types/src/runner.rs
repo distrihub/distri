@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use distri_types::RuntimeMode;
+
+use crate::RuntimeMode;
 
 /// Trait for running agent execution in the background, outside this
 /// process's own runtime.
@@ -8,7 +9,7 @@ use distri_types::RuntimeMode;
 /// and returns immediately. The caller monitors progress by subscribing
 /// to the `AgentEventBroadcaster` for the given task_id.
 ///
-/// `distri-core` only defines this trait — it has no concrete
+/// `distri-types` only defines this trait — it has no concrete
 /// implementation and no knowledge of sandboxes/containers. The concrete
 /// implementation (spawning a browsr container running `distri-cli`)
 /// lives in `distri-cloud` (`cloud::runner::SandboxLauncher`), scoped to

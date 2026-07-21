@@ -55,7 +55,7 @@ pub struct AgentOrchestrator {
     /// `SandboxLauncher`, scoped to a specific channel-only tool) — there
     /// is no automatic fallback that uses this for a plain runtime
     /// mismatch.
-    pub remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
+    pub remote_task_runner: Option<Arc<dyn distri_types::RemoteTaskRunner>>,
     /// Unified runtime for event broadcasting + task coordination.
     /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
     pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
@@ -123,7 +123,7 @@ pub struct AgentOrchestratorBuilder {
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
-    remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
+    remote_task_runner: Option<Arc<dyn distri_types::RemoteTaskRunner>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
     workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
@@ -227,7 +227,7 @@ impl AgentOrchestratorBuilder {
     /// for `Force(Remote)`; `Auto` dispatch never falls back to it.
     pub fn with_remote_task_runner(
         mut self,
-        runner: Arc<dyn crate::runner::RemoteTaskRunner>,
+        runner: Arc<dyn distri_types::RemoteTaskRunner>,
     ) -> Self {
         self.remote_task_runner = Some(runner);
         self
