@@ -29,11 +29,10 @@ use distri_types::invocation::{
     AgentRef, AgentResult, Executor, ExecutorHint, Invocation, InvocationResult, Join, Target,
 };
 use distri_types::stores::CreateTaskInput;
-use distri_types::{RuntimeMode, StandardDefinition};
+use distri_types::{RemoteTaskRunner, RuntimeMode, StandardDefinition};
 
 use crate::agent::orchestrator::AgentOrchestrator;
 use crate::agent::ExecutorContext;
-use crate::runner::RemoteTaskRunner;
 use crate::AgentError;
 
 // ── Dispatch decision (shared with `call_agent_stream`) ──────────────────

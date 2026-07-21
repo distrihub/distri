@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use distri_types::{configuration::AgentConfig, AgentEventType, Tool};
+use distri_types::{configuration::AgentConfig, AgentEventType, RemoteTaskRunner, Tool};
 use futures_util::StreamExt;
 
 use crate::{
@@ -11,7 +11,6 @@ use crate::{
         InvokeResult,
     },
     broadcast::AgentEventBroadcaster,
-    runner::RemoteTaskRunner,
     tools::FinalTool,
     types::{Message, StandardDefinition},
     AgentError,

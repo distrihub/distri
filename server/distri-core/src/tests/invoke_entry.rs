@@ -32,7 +32,7 @@ use tokio::sync::Mutex;
 use crate::agent::types::AgentEvent;
 use crate::agent::ExecutorContext;
 use crate::broadcast::{in_process::InProcessBroadcaster, AgentEventBroadcaster};
-use crate::runner::RemoteTaskRunner;
+use distri_types::RemoteTaskRunner;
 use crate::tests::helpers::test_store_config;
 use crate::AgentOrchestratorBuilder;
 use distri_types::invocation::{
