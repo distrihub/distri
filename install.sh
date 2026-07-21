@@ -19,6 +19,27 @@ require_cmd() {
   fi
 }
 
+# Download a URL to a file, resilient to transient network failures.
+# GitHub's release CDN can reset the connection mid-transfer (curl error 56),
+# which a single bare `curl` turns into a failed install. Retry with backoff
+# and resume the partial file (`-C -`) — the CDN supports range requests.
+download() {
+  _url="$1"; _out="$2"
+  _max=5; _n=1
+  while :; do
+    if curl -fL --connect-timeout 30 --retry 3 --retry-delay 2 \
+        --retry-connrefused -C - -o "$_out" "$_url"; then
+      return 0
+    fi
+    if [ "$_n" -ge "$_max" ]; then
+      return 1
+    fi
+    log "download interrupted (attempt ${_n}/${_max}), retrying in $((_n * 3))s..."
+    sleep "$((_n * 3))"
+    _n=$((_n + 1))
+  done
+}
+
 require_cmd curl
 require_cmd tar
 require_cmd uname
@@ -92,11 +113,13 @@ TARBALL="$TMPDIR/$ASSET"
 log "Installing Distri (${TAG_LABEL}) for ${PLATFORM}/${ARCH} into ${INSTALL_DIR}"
 log "Downloading ${DOWNLOAD_URL}"
 
-if ! curl -fL "$DOWNLOAD_URL" -o "$TARBALL"; then
-  fatal "download failed. If you set DISTRI_VERSION, ensure that release exists for ${PLATFORM}/${ARCH}."
+if ! download "$DOWNLOAD_URL" "$TARBALL"; then
+  fatal "download failed after multiple attempts. If you set DISTRI_VERSION, ensure that release exists for ${PLATFORM}/${ARCH}."
 fi
 
-tar -xzf "$TARBALL" -C "$TMPDIR"
+if ! tar -xzf "$TARBALL" -C "$TMPDIR"; then
+  fatal "failed to extract archive (download may be incomplete); please re-run the installer."
+fi
 EXTRACT_ROOT="$TMPDIR/$SLUG"
 BIN_PATH="$EXTRACT_ROOT/distri"
 
