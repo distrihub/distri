@@ -26,7 +26,6 @@ distri/
 │   ├── distri-stores/     # Store implementations (diesel/sqlite/postgres)
 │   ├── distri-auth/       # Auth providers
 │   └── distri-parsers/    # Parsing utilities
-├── distrijs/              # TypeScript SDK (separate CLAUDE.md)
 └── docs/                  # Documentation
     └── code-agent.md      # Code execution agent docs
 ```

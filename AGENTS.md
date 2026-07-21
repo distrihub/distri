@@ -6,7 +6,7 @@ Instructions for AI agents working on the distri codebase.
 
 - `CLAUDE.md` — Build commands, architecture, conventions
 - `docs/code-agent.md` — Code execution agent (browsr shell sessions)
-- `distrijs/CLAUDE.md` — TypeScript SDK development
+- TypeScript SDK: separate repo, [distrihub/distrijs](https://github.com/distrihub/distrijs)
 
 ## Working with the codebase
 
