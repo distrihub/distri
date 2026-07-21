@@ -353,13 +353,7 @@ distri/
 │   ├── distri-parsers/    # Parsing utilities
 │   └── agents/            # Built-in agent definitions (.md)
 │
-├── distrijs/              # TypeScript SDK
-│   ├── @distri/core       # Agent client, A2A streaming
-│   ├── @distri/react      # React hooks, Chat component, browser tools
-│   └── @distri/components # Shared UI (shadcn/ui)
-│
 └── samples/               # Example applications
-    ├── maps-demo/         # Google Maps + AI chat
     └── scraper/           # Web scraping agent
 ```
 
@@ -391,10 +385,11 @@ cargo test
 
 # Test a specific crate
 cargo test -p distri-core
-
-# DistriJS development
-cd distrijs && pnpm install && pnpm dev
 ```
+
+This repo is the Rust backend only. The TypeScript SDK (`@distri/core`,
+`@distri/react`, `@distri/components`) lives in
+[distrihub/distrijs](https://github.com/distrihub/distrijs).
 
 ---
 
@@ -402,7 +397,6 @@ cd distrijs && pnpm install && pnpm dev
 
 | Sample | Type | Description |
 |--------|------|-------------|
-| [maps-demo](./samples/maps-demo) | React/Vite | Interactive Google Maps with AI chat |
 | [scraper](./samples/scraper) | CLI/Rust | Web scraping and data extraction agent |
 
 ---

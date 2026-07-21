@@ -16,7 +16,6 @@ else
 	NPROCS:=$(shell grep -c 'processor' /proc/cpuinfo 2>/dev/null || nproc 2>/dev/null || echo 2)
 endif
 MAKEFLAGS += -j${NPROCS}
-UI_PREFIX ?= ui
 
 ROOT_DIR=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 # Release version tracks the CLI crate (produces the `distri` binary and is what
@@ -38,8 +37,6 @@ else
 endif
 
 TARGETDIR=${ROOT_DIR}/target/${DEFAULT_CONTAINER_TARGET}/${PROFILE_DIR}
-FRONTEND_DIR=${ROOT_DIR}/distri-ui
-FRONTEND_DIST=${ROOT_DIR}/dist
 
 ifeq (${SYSTEM_TARGET}, ${DEFAULT_CONTAINER_TARGET})
 	RUN_CMD=cargo-zigbuild run --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC}
@@ -53,7 +50,7 @@ ${TARGETDIR}/distri: ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri 
 
 ${TARGETDIR}/distri-server: ${TMPDIR} FORCE
-	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"
+	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored"
 
 build-all: build-linux build-linux-arm build-mac build-mac-intel
 
@@ -61,31 +58,21 @@ build-all: build-linux build-linux-arm build-mac build-mac-intel
 # targets build locally since they can't cross-compile from Linux).
 build-all-mac: build-mac build-mac-intel
 
-build-linux: frontend-dist ${TMPDIR} FORCE
+build-linux: ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri
 	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored"
 
-build-linux-arm: frontend-dist ${TMPDIR} FORCE
+build-linux-arm: ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri
 	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored"
 
-build-mac: frontend-dist ${TMPDIR} FORCE
+build-mac: ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-cli --bin distri
 	cargo build --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-server-cli --bin distri-server --features "sqlite"
 
-build-mac-intel: frontend-dist ${TMPDIR} FORCE
+build-mac-intel: ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-cli --bin distri
 	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-server-cli --bin distri-server --features "sqlite"
-
-build-ui: frontend-dist
-
-frontend-dist:
-	@if [ -d "${FRONTEND_DIR}" ]; then \
-		VITE_PREFIX=${UI_PREFIX} pnpm run build; \
-	else \
-		echo "No frontend directory (${FRONTEND_DIR}) - skipping UI build"; \
-	fi
-
 
 ${TMPDIR}:
 	mkdir -p ${TMPDIR}
