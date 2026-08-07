@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(list_resp.status(), 200);
 
         let body: Value = test::read_body_json(list_resp).await;
-        let notes = body["notes"].as_array().expect("notes array");
+        let notes = body.as_array().expect("notes array");
         assert!(
             notes.iter().any(|n| n["title"] == "List Test"),
             "should find created note"
@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(list_resp.status(), 200);
 
         let body: Value = test::read_body_json(list_resp).await;
-        let notes = body["notes"].as_array().expect("notes array");
+        let notes = body.as_array().expect("notes array");
         assert_eq!(notes.len(), 1, "should only return notes with tag alpha");
         assert_eq!(notes[0]["title"], "Alpha");
     }

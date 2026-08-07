@@ -47,12 +47,6 @@ pub struct NoteRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Response wrapper for listing notes.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
-pub struct ListNotesResponse {
-    pub notes: Vec<NoteRecord>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
