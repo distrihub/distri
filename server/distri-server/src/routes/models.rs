@@ -1,7 +1,7 @@
 use actix_web::{web, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
 use distri_core::secrets::SecretResolver;
-use distri_types::{ModelProvider, ProviderModelsStatus};
+use distri_types::{ModelProvider, ModelWithProvider};
 use std::sync::Arc;
 
 pub fn configure_model_routes(cfg: &mut web::ServiceConfig) {
@@ -13,12 +13,15 @@ pub fn configure_model_routes(cfg: &mut web::ServiceConfig) {
     path = "/v1/models",
     tag = "Models",
     responses(
-        (status = 200, description = "List models grouped by provider")
+        (status = 200, description = "List all models, denormalized with provider info")
     )
 )]
-/// Returns all supported models grouped by provider, with configuration status.
-/// Each provider group includes `configured: bool` indicating whether the
+/// Returns all supported models as a flat list, each row denormalized with its
+/// provider's id/label and a `configured: bool` indicating whether the
 /// provider's required API key(s) are set in secrets or environment.
+///
+/// This is the shared `GET /v1/models` contract — it must match the shape the
+/// `distri` client (`Vec<ModelWithProvider>`) and distri-cloud emit.
 async fn list_models(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     let secret_store = executor.stores.secret_store.clone();
     let resolver = SecretResolver::new(secret_store);
@@ -26,7 +29,7 @@ async fn list_models(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
     let provider_models = ModelProvider::well_known_models();
     let provider_defs = ModelProvider::all_provider_definitions();
 
-    let mut result: Vec<ProviderModelsStatus> = Vec::new();
+    let mut result: Vec<ModelWithProvider> = Vec::new();
 
     for pm in provider_models {
         // Find the provider definition to get required keys
@@ -45,12 +48,14 @@ async fn list_models(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
             true
         };
 
-        result.push(ProviderModelsStatus {
-            provider_id: pm.provider_id,
-            provider_label: pm.provider_label,
-            configured,
-            models: pm.models,
-        });
+        for model in pm.models {
+            result.push(ModelWithProvider {
+                model,
+                provider_id: pm.provider_id.clone(),
+                provider_label: pm.provider_label.clone(),
+                configured,
+            });
+        }
     }
 
     HttpResponse::Ok().json(result)

@@ -95,8 +95,11 @@ mod tests {
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200, "expected 200 got {}", resp.status());
 
+        // GET /spans is OTLP JSON: { resourceSpans: [ { scopeSpans: [ { spans: [...] } ] } ] }
         let body: Value = test::read_body_json(resp).await;
-        let spans = body["spans"].as_array().expect("spans array");
+        let spans = body["resourceSpans"][0]["scopeSpans"][0]["spans"]
+            .as_array()
+            .expect("spans array");
         assert_eq!(spans.len(), 1, "should have 1 span");
         assert_eq!(spans[0]["traceId"], trace_id);
         assert_eq!(spans[0]["spanId"], "span-1");

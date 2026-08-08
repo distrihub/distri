@@ -10,7 +10,7 @@
 use actix_web::{web, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
 use distri_types::api::notes::{
-    CreateNoteRequest, ListNotesQuery, ListNotesResponse, NoteRecord, UpdateNoteRequest,
+    CreateNoteRequest, ListNotesQuery, NoteRecord, UpdateNoteRequest,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -43,7 +43,7 @@ pub fn configure_note_routes(cfg: &mut web::ServiceConfig) {
         ("search" = Option<String>, Query, description = "Full-text search on title and content"),
     ),
     responses(
-        (status = 200, description = "List of notes", body = ListNotesResponse),
+        (status = 200, description = "List of notes", body = Vec<NoteRecord>),
         (status = 503, description = "Note store not configured"),
         (status = 500, description = "Internal server error"),
     )
@@ -58,7 +58,7 @@ async fn list_notes(
     };
 
     match store.list(&query.into_inner()).await {
-        Ok(notes) => HttpResponse::Ok().json(ListNotesResponse { notes }),
+        Ok(notes) => HttpResponse::Ok().json(notes),
         Err(e) => {
             tracing::error!("Failed to list notes: {}", e);
             HttpResponse::InternalServerError().json(json!({"error": "Failed to list notes"}))

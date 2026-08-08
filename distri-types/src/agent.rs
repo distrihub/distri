@@ -1326,19 +1326,6 @@ pub struct ProviderModels {
     pub models: Vec<crate::models::Model>,
 }
 
-/// Provider models with configuration status (returned by API)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderModelsStatus {
-    /// Provider identifier
-    pub provider_id: String,
-    /// Human-readable provider name
-    pub provider_label: String,
-    /// Whether the provider's API key is configured
-    pub configured: bool,
-    /// Available models for this provider
-    pub models: Vec<crate::models::Model>,
-}
-
 impl Default for ModelProvider {
     fn default() -> Self {
         ModelProvider::OpenAI {}
