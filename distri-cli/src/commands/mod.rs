@@ -625,14 +625,26 @@ pub async fn handle_models_command(client: &Distri, command: ModelsCommands) -> 
             if models.is_empty() {
                 println!("No models available.");
             } else {
-                for provider in models {
-                    let status = if provider.configured { "✓" } else { " " };
-                    println!(
-                        "{} {} ({})",
-                        status, provider.provider_id, provider.provider_label
-                    );
-                    for m in &provider.models {
-                        println!("    {}", m.id);
+                // The server returns a flat list (one row per model); group by
+                // provider for display, preserving first-seen order.
+                let mut groups: Vec<(String, String, bool, Vec<String>)> = Vec::new();
+                for m in models {
+                    if let Some(g) = groups.iter_mut().find(|g| g.0 == m.provider_id) {
+                        g.3.push(m.model.id.clone());
+                    } else {
+                        groups.push((
+                            m.provider_id.clone(),
+                            m.provider_label.clone(),
+                            m.configured,
+                            vec![m.model.id.clone()],
+                        ));
+                    }
+                }
+                for (provider_id, provider_label, configured, model_ids) in groups {
+                    let status = if configured { "✓" } else { " " };
+                    println!("{} {} ({})", status, provider_id, provider_label);
+                    for id in model_ids {
+                        println!("    {}", id);
                     }
                 }
             }

@@ -1,6 +1,6 @@
 use actix_web::{web, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
-use distri_types::stores::NewSecret;
+use distri_types::stores::{NewSecret, SecretRecord};
 use distri_types::ModelProvider;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -47,6 +47,30 @@ pub struct SecretResponse {
     pub key: String,
     pub masked_value: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Map a stored secret record into the masked wire response. Sensitive keys
+/// (provider API keys, or anything that looks like a credential) have their
+/// value masked; plain config values pass through in the clear. This is the
+/// single shape the `distri` client's `SecretEntry` deserializes — get/create/
+/// update must all go through it, not return the raw store record (which has no
+/// `masked_value`).
+fn to_secret_response(record: SecretRecord, sensitive: &HashSet<String>) -> SecretResponse {
+    let is_sensitive = sensitive.contains(&record.key)
+        || record.key.contains("KEY")
+        || record.key.contains("SECRET")
+        || record.key.contains("TOKEN")
+        || record.key.contains("PASSWORD");
+    SecretResponse {
+        id: record.id,
+        key: record.key,
+        masked_value: if is_sensitive {
+            "••••••••".to_string()
+        } else {
+            record.value
+        },
+        updated_at: record.updated_at,
+    }
 }
 
 /// Build the set of sensitive key names from provider definitions.
@@ -135,23 +159,7 @@ async fn list_secrets(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespon
             let sensitive = sensitive_keys();
             let response: Vec<SecretResponse> = secrets
                 .into_iter()
-                .map(|s| {
-                    let is_sensitive = sensitive.contains(&s.key)
-                        || s.key.contains("KEY")
-                        || s.key.contains("SECRET")
-                        || s.key.contains("TOKEN")
-                        || s.key.contains("PASSWORD");
-                    SecretResponse {
-                        id: s.id,
-                        key: s.key,
-                        masked_value: if is_sensitive {
-                            "••••••••".to_string()
-                        } else {
-                            s.value
-                        },
-                        updated_at: s.updated_at,
-                    }
-                })
+                .map(|s| to_secret_response(s, &sensitive))
                 .collect();
             HttpResponse::Ok().json(response)
         }
@@ -185,7 +193,9 @@ async fn get_secret(
     };
 
     match store.get(&key).await {
-        Ok(Some(secret)) => HttpResponse::Ok().json(secret),
+        Ok(Some(secret)) => {
+            HttpResponse::Ok().json(to_secret_response(secret, &sensitive_keys()))
+        }
         Ok(None) => HttpResponse::NotFound().json(json!({"error": "Secret not found"})),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
@@ -214,7 +224,7 @@ async fn create_secret(
     };
 
     match store.create(payload.into_inner()).await {
-        Ok(secret) => HttpResponse::Ok().json(secret),
+        Ok(secret) => HttpResponse::Ok().json(to_secret_response(secret, &sensitive_keys())),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
 }
@@ -251,7 +261,7 @@ async fn update_secret(
     };
 
     match store.update(&key, &payload.value).await {
-        Ok(secret) => HttpResponse::Ok().json(secret),
+        Ok(secret) => HttpResponse::Ok().json(to_secret_response(secret, &sensitive_keys())),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
 }

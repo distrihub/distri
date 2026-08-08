@@ -1,12 +1,14 @@
 //! Span and trace read endpoints for OSS distri-server.
 //!
-//! These handlers mirror the JSON contract of
-//! `distri-cloud/cloud/src/handlers/spans.rs` for the read path, but return
-//! typed wrappers instead of OTLP-formatted JSON.  The wire shape is:
+//! These handlers share the JSON contract of
+//! `distri-cloud/cloud/src/handlers/spans.rs` for the read path — `GET /spans`
+//! is OTLP-formatted JSON via the shared `distri_types::api::spans::spans_to_otlp`
+//! so both servers emit the identical shape the `distri` client's trace viewer
+//! reads.  The wire shape is:
 //!
 //! ```text
-//! GET /v1/spans?trace_id=X         → SpansResponse { spans: Vec<SpanRecord> }
-//! GET /v1/spans?thread_id=X        → SpansResponse { spans: Vec<SpanRecord> }
+//! GET /v1/spans?trace_id=X         → { resourceSpans: [...] }  (OTLP)
+//! GET /v1/spans?thread_id=X        → { resourceSpans: [...] }  (OTLP)
 //! GET /v1/traces?limit=N           → TracesResponse { traces: Vec<TraceRecord> }
 //! ```
 //!
@@ -15,7 +17,7 @@
 
 use actix_web::{web, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
-use distri_types::api::spans::{SpansResponse, TracesResponse};
+use distri_types::api::spans::{spans_to_otlp, TracesResponse};
 use distri_types::stores::SpanQuery;
 use serde::Deserialize;
 use serde_json::json;
@@ -66,7 +68,7 @@ pub fn configure_spans_routes(cfg: &mut web::ServiceConfig) {
         ("thread_id" = Option<String>, Query, description = "Filter by thread ID"),
     ),
     responses(
-        (status = 200, description = "Spans for the requested trace or thread", body = SpansResponse),
+        (status = 200, description = "Spans for the requested trace or thread (OTLP JSON)"),
         (status = 400, description = "trace_id or thread_id is required"),
         (status = 503, description = "Span store not configured"),
         (status = 500, description = "Internal server error"),
@@ -93,7 +95,7 @@ pub async fn list_spans(
     // In single-tenant mode workspace_id is the nil UUID.
     let workspace_id = uuid::Uuid::nil().to_string();
     match store.list_spans(&workspace_id, span_query).await {
-        Ok(spans) => HttpResponse::Ok().json(SpansResponse { spans }),
+        Ok(spans) => HttpResponse::Ok().json(spans_to_otlp(&spans)),
         Err(e) => {
             tracing::error!(error = ?e, "Failed to query spans");
             HttpResponse::InternalServerError().json(json!({"error": "Failed to query spans"}))

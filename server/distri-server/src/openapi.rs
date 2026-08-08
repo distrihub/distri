@@ -154,14 +154,12 @@ use utoipa::OpenApi;
         // Spans / Traces wire types
         distri_types::api::spans::SpanRecord,
         distri_types::api::spans::TraceRecord,
-        distri_types::api::spans::SpansResponse,
         distri_types::api::spans::TracesResponse,
         // Note wire types
         distri_types::api::notes::NoteRecord,
         distri_types::api::notes::CreateNoteRequest,
         distri_types::api::notes::UpdateNoteRequest,
         distri_types::api::notes::ListNotesQuery,
-        distri_types::api::notes::ListNotesResponse,
         // Usage wire types
         distri_types::api::usage::UsageStatsResponse,
         distri_types::api::usage::UsageTotals,
