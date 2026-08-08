@@ -590,12 +590,17 @@ pub struct StandardDefinition {
     ///
     /// - empty / omitted → runs in any runtime (default).
     /// - `["cli"]` → only runs when `ExecutorContext.runtime_mode == Cli`,
-    ///   OR via a `RemoteTaskRunner` providing `Cli` (e.g. `SandboxLauncher`
-    ///   spawning `distri-cli` inside a browsr container).
+    ///   i.e. driven by the distri CLI, which executes tool calls locally
+    ///   on the user's own machine.
     /// - `["cli", "cloud"]` → runs in either Cli or Cloud, but not Browser.
     ///
-    /// When the current runtime doesn't match any allowed value and no
-    /// compatible runner exists, the orchestrator fails fast at request entry.
+    /// Every agent executes in-process against the caller's own runtime by
+    /// default — there is no automatic remote/sandbox fallback. When the
+    /// current runtime doesn't match any allowed value, the orchestrator
+    /// fails fast at request entry with a clear error, UNLESS the caller
+    /// explicitly requested remote dispatch (`ExecutorHint::Force(Remote)`)
+    /// and a `RemoteTaskRunner` providing one of the allowed runtimes is
+    /// configured (see [`is_runnable_in`](StandardDefinition::is_runnable_in)).
     ///
     /// Accepts both scalar (`runtime = "cli"`) and array (`runtime = ["cli"]`)
     /// syntax in TOML/JSON for ergonomics.
@@ -668,13 +673,16 @@ impl StandardDefinition {
 
     /// Whether this agent can execute given the caller's `current` runtime,
     /// optionally with a `RemoteTaskRunner` providing an alternative runtime
-    /// via remote dispatch.
+    /// via explicit remote dispatch.
     ///
     /// Returns true when:
     /// - the agent has no runtime constraint, OR
     /// - the current runtime matches one of the allowed runtimes, OR
     /// - a runner is available whose `provided_runtime` matches one of the
-    ///   allowed runtimes.
+    ///   allowed runtimes (i.e. remote dispatch could satisfy it, even
+    ///   though nothing here forces that dispatch to happen automatically —
+    ///   see `decide_dispatch` in distri-core, which still requires an
+    ///   explicit `ExecutorHint::Force(Remote)` to actually use it).
     pub fn is_runnable_in(
         &self,
         current: &RuntimeMode,

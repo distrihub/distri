@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use distri_types::AgentEvent;
 use futures_util::stream::BoxStream;
 use tokio::sync::broadcast;
@@ -177,6 +177,14 @@ pub struct InProcessCoordinator {
     /// channel_id → active task_id. Populated by gateway so a user's
     /// `/stop` can find the in-flight task on their channel.
     channel_tasks: DashMap<String, String>,
+    /// child_task_id → opaque payload JSON for a pending subtask
+    /// completion callback (see `AgentTaskCoordinator::set_subtask_callback`).
+    subtask_callbacks: DashMap<String, String>,
+    /// child_task_ids still awaiting notification. Membership here, not in
+    /// `subtask_callbacks`, is the source of truth for "pending" — the
+    /// payload stays around after notifying so a late `get_subtask_callback`
+    /// still resolves, but the id drops out of this set.
+    pending_subtask_callbacks: DashSet<String>,
 }
 
 impl InProcessCoordinator {
@@ -188,6 +196,8 @@ impl InProcessCoordinator {
             mailbox_rxs: DashMap::new(),
             names: DashMap::new(),
             channel_tasks: DashMap::new(),
+            subtask_callbacks: DashMap::new(),
+            pending_subtask_callbacks: DashSet::new(),
         }
     }
 
@@ -327,6 +337,37 @@ impl AgentTaskCoordinator for InProcessCoordinator {
     async fn clear_channel_task(&self, channel_id: &str) -> anyhow::Result<()> {
         self.channel_tasks.remove(channel_id);
         Ok(())
+    }
+
+    async fn set_subtask_callback(
+        &self,
+        child_task_id: &str,
+        payload_json: &str,
+    ) -> anyhow::Result<()> {
+        self.subtask_callbacks
+            .insert(child_task_id.to_string(), payload_json.to_string());
+        self.pending_subtask_callbacks
+            .insert(child_task_id.to_string());
+        Ok(())
+    }
+
+    async fn get_subtask_callback(&self, child_task_id: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .subtask_callbacks
+            .get(child_task_id)
+            .map(|e| e.clone()))
+    }
+
+    async fn mark_subtask_notified(&self, child_task_id: &str) -> anyhow::Result<bool> {
+        Ok(self.pending_subtask_callbacks.remove(child_task_id).is_some())
+    }
+
+    async fn list_pending_subtask_callbacks(&self) -> anyhow::Result<Vec<String>> {
+        Ok(self
+            .pending_subtask_callbacks
+            .iter()
+            .map(|e| e.clone())
+            .collect())
     }
 }
 
