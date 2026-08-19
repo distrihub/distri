@@ -2152,6 +2152,61 @@ impl ToolsConfig {
     }
 }
 
+/// The top-level keys `StandardDefinition` actually understands, derived from
+/// its own JSON schema so the list cannot drift from the struct.
+fn known_frontmatter_keys() -> &'static std::collections::HashSet<String> {
+    static KNOWN: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    KNOWN.get_or_init(|| {
+        let schema = schemars::schema_for!(StandardDefinition);
+        serde_json::to_value(schema)
+            .ok()
+            .and_then(|v| v.get("properties").cloned())
+            .and_then(|p| p.as_object().cloned())
+            .map(|props| props.keys().cloned().collect())
+            .unwrap_or_default()
+    })
+}
+
+/// Reject frontmatter keys the definition has no field for.
+///
+/// `StandardDefinition` cannot carry `#[serde(deny_unknown_fields)]`:
+/// `AgentConfigWithTools` *flattens* it next to `resolved_tools`, `markdown`
+/// and the cloud metadata, and serde hands a flattened struct every unmatched
+/// key — denying them there would make every agent read from the server fail.
+/// So the denial lives at the boundary that needs it, the frontmatter a human
+/// writes and `push` sends.
+///
+/// Without this a mistyped key is accepted and discarded in silence. The one
+/// that cost us was a top-level `model = "azure_ai_foundry/gpt-5.4-mini"` —
+/// the model belongs under `[model_settings]`, so the agent was pushed with no
+/// model at all and every run quietly went to the workspace default.
+fn validate_frontmatter_keys(toml_content: &str) -> Result<(), AgentError> {
+    let Ok(table) = toml_content.parse::<toml::Table>() else {
+        return Ok(()); // a genuine syntax error is reported by the real parse
+    };
+    let known = known_frontmatter_keys();
+    let mut unknown: Vec<&str> = table
+        .keys()
+        .map(|k| k.as_str())
+        .filter(|k| !known.contains(*k))
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    unknown.sort_unstable();
+    let hint = if unknown.contains(&"model") {
+        "\n  hint: the model goes under a [model_settings] table:\n        [model_settings]\n        model = \"provider/model\""
+    } else {
+        ""
+    };
+    Err(AgentError::Validation(format!(
+        "unknown frontmatter key(s): {}. They would be dropped silently, so the push is refused instead.{}",
+        unknown.join(", "),
+        hint
+    )))
+}
+
 pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefinition, AgentError> {
     // Split by --- to separate TOML frontmatter from markdown content
     let parts: Vec<&str> = content.split("---").collect();
@@ -2165,6 +2220,7 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
 
     // Parse TOML frontmatter (parts[1] is between the first two --- markers)
     let toml_content = parts[1].trim();
+    validate_frontmatter_keys(toml_content)?;
     let mut agent_def: crate::StandardDefinition =
         toml::from_str(toml_content).map_err(|e| AgentError::Validation(e.to_string()))?;
 
@@ -3277,5 +3333,57 @@ tool_format = "json_l"
         };
         assert!(p.base_url_slot_mut().is_none());
         assert!(p.api_key_slot_mut().is_some());
+    }
+
+    /// Regression: a top-level `model` key is not a field on
+    /// `StandardDefinition`, so serde drops it and the agent is pushed with no
+    /// model — every run then silently goes to the workspace default.
+    #[test]
+    fn top_level_model_key_is_refused_with_a_hint() {
+        let err = validate_frontmatter_keys("name = \"probe\"\nmodel = \"alibaba_cloud/qwen3.7-flash\"")
+            .expect_err("a dropped key must not be accepted in silence");
+        let msg = err.to_string();
+        assert!(msg.contains("model"), "names the offending key: {msg}");
+        assert!(msg.contains("model_settings"), "points at the fix: {msg}");
+    }
+
+    #[test]
+    fn model_settings_table_is_accepted() {
+        let toml_in = "name = \"probe\"\n\n[model_settings]\nmodel = \"alibaba_cloud/qwen3.7-flash\"";
+        validate_frontmatter_keys(toml_in).expect("the documented form must pass");
+        // The `provider/model` prefix is resolved later, in
+        // `parse_agent_markdown_content`; raw deserialization keeps it intact.
+        let def: StandardDefinition = toml::from_str(toml_in).expect("and must parse");
+        assert_eq!(
+            def.model_settings.expect("model_settings kept").model,
+            "alibaba_cloud/qwen3.7-flash"
+        );
+    }
+
+    /// A syntax error is the real parser's job to report, not this check's.
+    #[test]
+    fn broken_toml_is_left_to_the_parser() {
+        validate_frontmatter_keys("name = \"unterminated").expect("no opinion on malformed TOML");
+    }
+
+    /// The key list is derived from the schema, so every field the struct
+    /// really has must be accepted in frontmatter.
+    #[test]
+    fn known_keys_cover_the_struct() {
+        let known = known_frontmatter_keys();
+        for key in [
+            "name",
+            "description",
+            "version",
+            "model_settings",
+            "strategy",
+            "tools",
+            "max_iterations",
+            "tool_format",
+            "append_default_instructions",
+            "include_scratchpad",
+        ] {
+            assert!(known.contains(key), "schema-derived keys must include {key}");
+        }
     }
 }
