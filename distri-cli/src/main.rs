@@ -668,7 +668,9 @@ async fn main() -> Result<()> {
             resume,
             overrides,
         } => {
-            let extra_tools = parse_cli_overrides(overrides.as_deref());
+            let extra_tools = parse_cli_overrides(overrides.as_deref())
+                .dynamic_tools
+                .unwrap_or_default();
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             run_interactive_chat(
                 &mut app,
@@ -694,7 +696,9 @@ async fn main() -> Result<()> {
             tags,
             headers,
         } => {
-            let extra_tools = parse_cli_overrides(overrides.as_deref());
+            let cli_overrides = parse_cli_overrides(overrides.as_deref());
+            let override_model = cli_overrides.model.clone();
+            let extra_tools = cli_overrides.dynamic_tools.unwrap_or_default();
             let tag_map = parse_key_value_pairs(&tags);
             let header_map = parse_key_value_pairs(&headers);
             // Pre-resolve thread_id: explicit --thread-id > DISTRI_THREAD_ID env
@@ -729,7 +733,7 @@ async fn main() -> Result<()> {
                 task_id,
                 thread_id: resolved_thread_id,
                 remote,
-                model: None,
+                model: override_model,
                 env_vars,
                 skip_connections_context: false,
                 tags: if tag_map.is_empty() {
@@ -1077,8 +1081,15 @@ async fn run_distri_server(
     Ok(())
 }
 
-/// Parse `--overrides` JSON into dynamic tool factories.
-/// Expected format: `{"dynamic_tools": [{"name": "...", "factory_type": "http", "config": {...}}]}`
+/// Parse the `--overrides` JSON into a `DefinitionOverrides`.
+/// Expected format: `{"model": "...", "dynamic_tools": [{"name": "...", ...}]}`
+///
+/// Every field the caller sets has to be carried through to the request.
+/// Returning only `dynamic_tools` here silently dropped `--overrides
+/// '{"model":"…"}'`: the server honours `definition_overrides.model`
+/// (`AgentDefinition::apply_overrides`) and `RunOptions.model` feeds it, but
+/// the value never left the CLI, so the run went to the workspace default and
+/// said nothing.
 /// Parse repeated `key=value` CLI args into a map. Accepts `key=value`
 /// (value may contain `=`). Pairs without `=` or with an empty key are skipped
 /// with a warning.
@@ -1095,15 +1106,15 @@ fn parse_key_value_pairs(pairs: &[String]) -> std::collections::HashMap<String, 
     map
 }
 
-fn parse_cli_overrides(json: Option<&str>) -> Vec<distri_types::dynamic_tool::DynamicToolFactory> {
+fn parse_cli_overrides(json: Option<&str>) -> distri_types::configuration::DefinitionOverrides {
     let Some(json) = json else {
-        return Vec::new();
+        return Default::default();
     };
     match serde_json::from_str::<distri_types::configuration::DefinitionOverrides>(json) {
-        Ok(overrides) => overrides.dynamic_tools.unwrap_or_default(),
+        Ok(overrides) => overrides,
         Err(e) => {
             eprintln!("Warning: failed to parse --overrides: {e}");
-            Vec::new()
+            Default::default()
         }
     }
 }
