@@ -1516,10 +1516,12 @@ async fn list_tasks(
     let fetched = if let Some(root) = query.parent_task_id.as_deref() {
         // Sub-tree scope: root + descendants; drop the root itself so the
         // response is "the children of X" (the caller already has X).
-        store
-            .list_descendant_tasks(root)
-            .await
-            .map(|tasks| tasks.into_iter().filter(|t| t.id != root).collect::<Vec<_>>())
+        store.list_descendant_tasks(root).await.map(|tasks| {
+            tasks
+                .into_iter()
+                .filter(|t| t.id != root)
+                .collect::<Vec<_>>()
+        })
     } else {
         store.list_tasks(query.thread_id.as_deref()).await
     };
@@ -1541,7 +1543,11 @@ async fn list_tasks(
             tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
             let end = std::cmp::min(offset + limit, tasks.len());
-            let page = if offset >= tasks.len() { &[] as &[_] } else { &tasks[offset..end] };
+            let page = if offset >= tasks.len() {
+                &[] as &[_]
+            } else {
+                &tasks[offset..end]
+            };
 
             // Enrich the page with each task's latest activity (preview +
             // last_event_at). Page-sized, so the N+1 stays bounded.
@@ -1580,7 +1586,9 @@ async fn get_task_handler(
                 .unwrap_or(None);
             HttpResponse::Ok().json(task_with_activity(&task, activity))
         }
-        Ok(None) => HttpResponse::NotFound().json(json!({ "error": format!("task '{task_id}' not found") })),
+        Ok(None) => {
+            HttpResponse::NotFound().json(json!({ "error": format!("task '{task_id}' not found") }))
+        }
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to get task: {}", e)
         })),

@@ -411,10 +411,7 @@ pub trait TaskStore: Send + Sync {
     /// stores that persist task messages (cloud Postgres) override this so
     /// `GET /tasks` can show what each background child last did without
     /// streaming it.
-    async fn latest_task_activity(
-        &self,
-        _task_id: &str,
-    ) -> anyhow::Result<Option<(String, i64)>> {
+    async fn latest_task_activity(&self, _task_id: &str) -> anyhow::Result<Option<(String, i64)>> {
         Ok(None)
     }
 
