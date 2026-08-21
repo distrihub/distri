@@ -1,10 +1,11 @@
-/// Model pricing entry loaded from model_pricing.json
+/// Model pricing entry loaded from model_pricing.json. Rates are USD per
+/// 1M tokens.
 #[derive(Debug, Clone, serde::Deserialize)]
-pub(crate) struct ModelPricing {
-    pub(crate) input: f64,
-    pub(crate) output: f64,
+pub struct ModelPricing {
+    pub input: f64,
+    pub output: f64,
     #[serde(default)]
-    pub(crate) cached_input: f64,
+    pub cached_input: f64,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -13,7 +14,7 @@ struct PricingFile {
 }
 
 /// Load pricing from embedded JSON file, cached in a static.
-pub(crate) fn get_model_pricing() -> &'static std::collections::HashMap<String, ModelPricing> {
+pub fn get_model_pricing() -> &'static std::collections::HashMap<String, ModelPricing> {
     use std::sync::OnceLock;
     static PRICING: OnceLock<std::collections::HashMap<String, ModelPricing>> = OnceLock::new();
     PRICING.get_or_init(|| {
@@ -27,7 +28,7 @@ pub(crate) fn get_model_pricing() -> &'static std::collections::HashMap<String, 
 /// Estimate cost in USD based on model name, token counts, and cached tokens.
 /// Prices loaded from model_pricing.json (per 1M tokens).
 /// Cached tokens are charged at the discounted cached_input rate instead of full input rate.
-pub(crate) fn estimate_cost(
+pub fn estimate_cost(
     model: &str,
     input_tokens: u32,
     output_tokens: u32,

@@ -11,7 +11,7 @@ pub mod log;
 pub mod memory;
 pub mod orchestrator;
 mod parser;
-pub(crate) mod pricing;
+pub mod pricing;
 pub mod prompt_registry {
     pub use distri_types::prompt::*;
 }
