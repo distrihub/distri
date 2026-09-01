@@ -18,6 +18,15 @@ postgres_vendored = [
   "distri-core/postgres_vendored",
   "distri-server/postgres_vendored",
 ]
+# Compile OpenSSL rather than link the host's.
+#
+# Needed only when CROSS-compiling: pkg-config will not answer for a foreign
+# target, so a build from an Apple Silicon Mac for arm64 Linux stops at
+# openssl-sys. openssl-sys arrives through async-mcp's reqwest, which takes the
+# default native-tls stack, so it cannot be swapped for rustls from here.
+#
+# Sits beside sqlite_vendored, which solves the same problem for libsqlite3.
+openssl_vendored = ["dep:openssl"]
 otel = [
   "dep:opentelemetry",
   "dep:opentelemetry_sdk",
@@ -28,6 +37,8 @@ ui = ["distri-server/ui"]
 
 [dependencies]
 distri-core = { path = "../distri-core", version = "0.4.4", default-features = false }
+# Only ever pulled in by `openssl_vendored`. See the feature above.
+openssl = { version = "0.10", optional = true, features = ["vendored"] }
 distri-types = { path = "../../distri-types", version = "0.4.4" }
 distri-filesystem = { path = "../distri-filesystem", version = "0.4.4" }
 distri-server = { path = "../distri-server", version = "0.4.4", default-features = false }
