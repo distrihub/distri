@@ -40,6 +40,7 @@ distri-core = { path = "../distri-core", version = "0.4.4", default-features = f
 # Only ever pulled in by `openssl_vendored`. See the feature above.
 openssl = { version = "0.10", optional = true, features = ["vendored"] }
 distri-types = { path = "../../distri-types", version = "0.4.4" }
+distri-auth = { path = "../distri-auth", version = "0.4.4" }
 distri-filesystem = { path = "../distri-filesystem", version = "0.4.4" }
 distri-server = { path = "../distri-server", version = "0.4.4", default-features = false }
 dotenv = "0.15"

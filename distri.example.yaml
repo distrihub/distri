@@ -32,6 +32,58 @@ model_providers:
 # A `providers/` directory here is also picked up automatically.
 model_providers_path: providers
 
+# ── Server ────────────────────────────────────────────────────────────────
+# How this deployment is addressed. Every field here is overridden by the
+# matching CLI flag or env var (--host / DISTRI_HOST, --port / DISTRI_PORT).
+server:
+  # Public base URL as it appears in agent cards. Defaults to
+  # http://{host}:{port}/v1 — set it when the server sits behind a proxy.
+  base_url: http://127.0.0.1:8081/v1
+  host: 127.0.0.1
+  port: 8081
+
+# ── Auth ──────────────────────────────────────────────────────────────────
+# OFF by default: a local server requires nothing and sets nothing up. Off
+# means the check does not run — it is never "accept any token".
+#
+# Turned on, the API surface requires a bearer access token. There are two
+# credentials and they are not interchangeable:
+#
+#   * the deployment secret — server-side only. It authorises minting via
+#     POST /v1/token (sent as `x-api-key`, which is what the distri client
+#     and `Distri::issue_token()` send) and nothing else. No route ever
+#     returns it, and a browser must never hold it.
+#   * an access token — short-lived, minted by a backend that knows the
+#     secret and handed to the browser. The only thing /v1 accepts.
+#
+# The refresh_token renews the pair without re-presenting the secret, so a
+# console can re-mint on expiry without ever seeing the deployment key.
+#
+# If auth is on and the secret is missing or too short, the server refuses
+# to start rather than coming up unauthenticated.
+auth:
+  mode: off               # off (default) | token — DISTRI_AUTH overrides
+  secret_env: DISTRI_AUTH_SECRET   # where to read the secret from
+  # secret: "..."         # inline alternative; avoid in a checked-in file
+  access_token_ttl: 1h
+  refresh_token_ttl: 30d
+
+# ── Custom provider endpoints ─────────────────────────────────────────────
+# OpenAI-compatible endpoints this deployment talks to, by id and base URL.
+# Applied on every start — the file owns the endpoint. Reference one from
+# `default_model` (below) or from an agent's `[model_settings]` as
+# `<id>/<model>`.
+#
+# An API key, if the endpoint wants one, goes in the secret store (or the
+# environment) as {ID}_API_KEY — e.g. CUSTOM_LOCAL_API_KEY. Leave it unset
+# for an endpoint that needs no auth: a local shim is not made safer by a
+# placeholder key, and the deployment's OPENAI_API_KEY is never borrowed for
+# a third-party base URL.
+providers:
+  - id: custom_local
+    name: Local model
+    base_url: http://127.0.0.1:8080/v1
+
 # ── Default model ─────────────────────────────────────────────────────────
 # In `provider/model` form. Seeded into the runtime store only when no
 # default model has been set yet.
