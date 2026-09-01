@@ -50,7 +50,7 @@ ${TARGETDIR}/distri: ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri 
 
 ${TARGETDIR}/distri-server: ${TMPDIR} FORCE
-	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored"
+	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored,openssl_vendored"
 
 build-all: build-linux build-linux-arm build-mac build-mac-intel
 
@@ -60,11 +60,11 @@ build-all-mac: build-mac build-mac-intel
 
 build-linux: ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri
-	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored"
+	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored,openssl_vendored"
 
 build-linux-arm: ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri
-	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored"
+	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "sqlite_vendored,openssl_vendored"
 
 build-mac: ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-cli --bin distri
