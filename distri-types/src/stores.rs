@@ -411,10 +411,7 @@ pub trait TaskStore: Send + Sync {
     /// stores that persist task messages (cloud Postgres) override this so
     /// `GET /tasks` can show what each background child last did without
     /// streaming it.
-    async fn latest_task_activity(
-        &self,
-        _task_id: &str,
-    ) -> anyhow::Result<Option<(String, i64)>> {
+    async fn latest_task_activity(&self, _task_id: &str) -> anyhow::Result<Option<(String, i64)>> {
         Ok(None)
     }
 
@@ -1061,6 +1058,18 @@ pub trait ProviderStore: Send + Sync {
 
     async fn get_default_model(&self) -> anyhow::Result<Option<String>>;
 
+    /// The full provider-settings row, for callers that need more than the
+    /// default-model pointer — resolving it into `ModelSettings` also needs
+    /// `custom_providers` (see [`resolve_default_model_settings`]).
+    ///
+    /// Defaults to empty: only the single-tenant standalone server has a
+    /// server-global settings row. Multi-tenant implementations are
+    /// workspace-scoped and hand their default model to a run by injecting
+    /// `ModelSettings` per request instead.
+    async fn get_server_settings(&self) -> anyhow::Result<ServerSettings> {
+        Ok(ServerSettings::default())
+    }
+
     /// Resolve a provider's probe target (base URL + API key) from stored
     /// config, for the `POST /v1/providers/test` validation endpoint.
     async fn resolve_provider_endpoint(
@@ -1130,6 +1139,153 @@ pub struct ServerSettings {
     /// Connection (OAuth) provider definitions.
     #[serde(default)]
     pub connection_providers: Vec<ConnectionProviderConfig>,
+}
+
+/// Why the server's stored `default_model` could not be turned into a
+/// usable [`ModelSettings`]. Every variant names the offending value so
+/// the failure surfaces as a configuration error at task start, rather
+/// than as a connection failure against an empty base URL later on.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DefaultModelError {
+    /// Not in `"provider/model"` form (no `/`, or nothing after it).
+    #[error(
+        "stored default_model '{model}' is not in 'provider/model' format. \
+         Set it with POST /v1/providers, e.g. \"openai/gpt-4.1\"."
+    )]
+    Unparseable { model: String },
+    /// The prefix is neither a built-in provider nor a `custom_*` id.
+    #[error("stored default_model '{model}': {reason}")]
+    UnknownProvider { model: String, reason: String },
+    /// A `custom_*` provider with no usable `base_url` in `custom_providers`.
+    #[error(
+        "stored default_model '{model}' names provider '{provider}', which has no base_url in \
+         custom_providers. Register it with POST /v1/providers before making it the default."
+    )]
+    UnconfiguredProvider { model: String, provider: String },
+    /// The secret store failed while looking up a custom provider's key.
+    #[error("failed to read secret '{secret}' for the default model: {reason}")]
+    SecretLookup { secret: String, reason: String },
+}
+
+/// Resolve the server's stored default model into ready-to-use
+/// [`ModelSettings`], including credentials.
+///
+/// [`ServerSettings::to_model_settings`] fills the endpoint; this adds the
+/// key. A `custom_*` provider's key lives under `{PROVIDER_ID}_API_KEY` —
+/// the same lookup [`resolve_provider_test_endpoint`] uses — and is set
+/// *inline* on the provider, because
+/// [`ModelProvider::api_key_secret`](crate::agent::ModelProvider::api_key_secret)
+/// has no per-custom-provider name to fall back to.
+///
+/// A custom provider registered without that secret is treated as an
+/// unauthenticated endpoint (empty inline key) rather than borrowing
+/// `OPENAI_API_KEY`: sending the workspace's OpenAI key to an arbitrary
+/// third-party `base_url` is not a safe default. Built-in providers are
+/// left alone — their key still resolves through the secret store.
+pub async fn resolve_default_model_settings(
+    settings: &ServerSettings,
+    secret_store: &dyn SecretStore,
+) -> Result<Option<crate::agent::ModelSettings>, DefaultModelError> {
+    let Some(mut ms) = settings.to_model_settings()? else {
+        return Ok(None);
+    };
+    let Some((provider_str, _)) = settings
+        .default_model
+        .as_deref()
+        .and_then(|dm| dm.split_once('/'))
+    else {
+        return Ok(Some(ms));
+    };
+    if let crate::agent::ModelProvider::OpenAICompatible {
+        api_key: api_key @ None,
+        ..
+    } = &mut ms.inner.provider
+    {
+        let secret_key = format!("{}_API_KEY", provider_str.to_uppercase());
+        let stored =
+            secret_store
+                .get(&secret_key)
+                .await
+                .map_err(|e| DefaultModelError::SecretLookup {
+                    secret: secret_key.clone(),
+                    reason: e.to_string(),
+                })?;
+        if stored.is_none() {
+            tracing::info!(
+                "provider '{provider_str}' has no {secret_key}; treating its endpoint \
+                 as unauthenticated"
+            );
+        }
+        *api_key = Some(stored.map(|s| s.value).unwrap_or_default());
+    }
+    Ok(Some(ms))
+}
+
+impl ServerSettings {
+    /// Convert the stored `default_model` ("provider/model") into a
+    /// [`ModelSettings`], filling `base_url` for custom providers from
+    /// [`Self::custom_providers`].
+    ///
+    /// `Ok(None)` means no default model is configured — the caller keeps
+    /// whatever the agent definition pins. Any *stored but unusable* value
+    /// is an error, never a silent `None`: an empty `base_url` would
+    /// otherwise fail much later as an opaque network error.
+    ///
+    /// This mirrors the cloud's per-workspace `Workspace::to_model_settings`;
+    /// credentials are not resolved here — [`ModelSettings::hydrate_creds`]
+    /// does that once the settings reach the orchestrator.
+    pub fn to_model_settings(
+        &self,
+    ) -> Result<Option<crate::agent::ModelSettings>, DefaultModelError> {
+        use crate::agent::ModelSettings;
+        let Some(dm) = self.default_model.as_ref().filter(|s| !s.trim().is_empty()) else {
+            return Ok(None);
+        };
+        let mut ms = ModelSettings::from_provider_model_str(dm)
+            .map_err(|reason| DefaultModelError::UnknownProvider {
+                model: dm.clone(),
+                reason,
+            })?
+            .ok_or_else(|| DefaultModelError::Unparseable { model: dm.clone() })?;
+
+        let (provider_str, _) = dm
+            .split_once('/')
+            .ok_or_else(|| DefaultModelError::Unparseable { model: dm.clone() })?;
+        let configured = self.custom_providers.iter().find(|p| p.id == provider_str);
+
+        match &mut ms.inner.provider {
+            // Custom providers carry their endpoint in `custom_providers`,
+            // not in a secret — without this fill the base URL is empty.
+            crate::agent::ModelProvider::OpenAICompatible {
+                base_url,
+                project_id,
+                ..
+            } => {
+                let cp = configured
+                    .filter(|cp| !cp.base_url.trim().is_empty())
+                    .ok_or_else(|| DefaultModelError::UnconfiguredProvider {
+                        model: dm.clone(),
+                        provider: provider_str.to_string(),
+                    })?;
+                *base_url = cp.base_url.clone();
+                *project_id = cp.project_id.clone();
+            }
+            // Built-ins that need a tenant-specific endpoint may also have
+            // one stored as a custom provider entry. Azure AI Foundry is
+            // excluded: it derives its URL from a secret resource name.
+            crate::agent::ModelProvider::AwsBedrock { base_url, .. }
+            | crate::agent::ModelProvider::GoogleVertex { base_url, .. }
+                if base_url.is_empty() =>
+            {
+                if let Some(cp) = configured {
+                    *base_url = cp.base_url.clone();
+                }
+            }
+            _ => {}
+        }
+
+        Ok(Some(ms))
+    }
 }
 
 // ========== Skill Store ==========
@@ -1810,5 +1966,227 @@ mod tests {
         let decoded: SkillsListResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.skills[0].name, "my_skill");
         assert!(decoded.skills[0].is_workspace);
+    }
+
+    fn settings(default_model: Option<&str>, custom: Vec<CustomProviderConfig>) -> ServerSettings {
+        ServerSettings {
+            default_model: default_model.map(|s| s.to_string()),
+            custom_providers: custom,
+            ..Default::default()
+        }
+    }
+
+    fn custom_provider(id: &str, base_url: &str) -> CustomProviderConfig {
+        CustomProviderConfig {
+            id: id.to_string(),
+            name: id.to_string(),
+            base_url: base_url.to_string(),
+            project_id: None,
+        }
+    }
+
+    #[test]
+    fn no_stored_default_model_resolves_to_none() {
+        assert!(
+            settings(None, vec![])
+                .to_model_settings()
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn builtin_provider_resolves_without_custom_providers() {
+        let ms = settings(Some("openai/gpt-4.1"), vec![])
+            .to_model_settings()
+            .unwrap()
+            .expect("builtin provider should resolve");
+        assert_eq!(ms.model, "gpt-4.1");
+        assert!(matches!(
+            ms.inner.provider,
+            crate::agent::ModelProvider::OpenAI {}
+        ));
+    }
+
+    #[test]
+    fn custom_provider_in_settings_fills_base_url() {
+        let ms = settings(
+            Some("custom_orange/gemma-3-4b-it-w8a8"),
+            vec![custom_provider("custom_orange", "http://127.0.0.1:8080/v1")],
+        )
+        .to_model_settings()
+        .unwrap()
+        .expect("custom provider should resolve");
+        assert_eq!(ms.model, "gemma-3-4b-it-w8a8");
+        match ms.inner.provider {
+            crate::agent::ModelProvider::OpenAICompatible { base_url, .. } => {
+                assert_eq!(base_url, "http://127.0.0.1:8080/v1");
+            }
+            other => panic!("expected OpenAICompatible, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_provider_missing_from_settings_is_a_named_error() {
+        let err = settings(Some("custom_orange/gemma-3-4b-it-w8a8"), vec![])
+            .to_model_settings()
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            DefaultModelError::UnconfiguredProvider { ref provider, .. } if provider == "custom_orange"
+        ));
+        let msg = err.to_string();
+        assert!(msg.contains("custom_orange"), "message was: {msg}");
+    }
+
+    #[test]
+    fn custom_provider_with_blank_base_url_is_a_named_error() {
+        let err = settings(
+            Some("custom_orange/gemma-3-4b-it-w8a8"),
+            vec![custom_provider("custom_orange", "   ")],
+        )
+        .to_model_settings()
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            DefaultModelError::UnconfiguredProvider { ref provider, .. } if provider == "custom_orange"
+        ));
+    }
+
+    #[test]
+    fn unparseable_default_model_is_a_named_error() {
+        let err = settings(Some("gpt-4.1"), vec![])
+            .to_model_settings()
+            .unwrap_err();
+        assert!(matches!(err, DefaultModelError::Unparseable { .. }));
+        assert!(err.to_string().contains("gpt-4.1"));
+    }
+
+    #[test]
+    fn empty_model_after_provider_prefix_is_a_named_error() {
+        let err = settings(Some("openai/"), vec![])
+            .to_model_settings()
+            .unwrap_err();
+        assert!(matches!(err, DefaultModelError::Unparseable { .. }));
+    }
+
+    #[test]
+    fn unknown_builtin_provider_prefix_is_a_named_error() {
+        let err = settings(Some("azure_foundry/gpt-5"), vec![])
+            .to_model_settings()
+            .unwrap_err();
+        assert!(matches!(err, DefaultModelError::UnknownProvider { .. }));
+        assert!(err.to_string().contains("azure_foundry"));
+    }
+
+    /// Minimal in-memory `SecretStore` for the resolver tests.
+    struct FakeSecrets(HashMap<String, String>);
+
+    #[async_trait]
+    impl SecretStore for FakeSecrets {
+        async fn list(&self) -> anyhow::Result<Vec<SecretRecord>> {
+            unimplemented!("not used by these tests")
+        }
+        async fn get(&self, key: &str) -> anyhow::Result<Option<SecretRecord>> {
+            Ok(self.0.get(key).map(|v| SecretRecord {
+                id: key.to_string(),
+                key: key.to_string(),
+                value: v.clone(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            }))
+        }
+        async fn create(&self, _secret: NewSecret) -> anyhow::Result<SecretRecord> {
+            unimplemented!("not used by these tests")
+        }
+        async fn update(&self, _key: &str, _value: &str) -> anyhow::Result<SecretRecord> {
+            unimplemented!("not used by these tests")
+        }
+        async fn delete(&self, _key: &str) -> anyhow::Result<()> {
+            unimplemented!("not used by these tests")
+        }
+    }
+
+    fn secrets(pairs: &[(&str, &str)]) -> FakeSecrets {
+        FakeSecrets(
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
+    }
+
+    #[tokio::test]
+    async fn custom_provider_api_key_comes_from_its_own_secret() {
+        let settings = settings(
+            Some("custom_orange/gemma-3-4b-it-w8a8"),
+            vec![custom_provider("custom_orange", "http://127.0.0.1:8080/v1")],
+        );
+        let ms = resolve_default_model_settings(
+            &settings,
+            &secrets(&[("CUSTOM_ORANGE_API_KEY", "sk-orange")]),
+        )
+        .await
+        .unwrap()
+        .expect("should resolve");
+        match ms.inner.provider {
+            crate::agent::ModelProvider::OpenAICompatible { ref api_key, .. } => {
+                assert_eq!(api_key.as_deref(), Some("sk-orange"));
+            }
+            ref other => panic!("expected OpenAICompatible, got {other:?}"),
+        }
+        assert!(ms.inner.provider.required_secret_keys().is_empty());
+    }
+
+    #[tokio::test]
+    async fn custom_provider_without_a_secret_needs_no_api_key() {
+        // A local, unauthenticated OpenAI-compatible endpoint: the provider
+        // was registered with no `{ID}_API_KEY`, so nothing is required and
+        // OPENAI_API_KEY is NOT borrowed for a third-party base_url.
+        let settings = settings(
+            Some("custom_orange/gemma-3-4b-it-w8a8"),
+            vec![custom_provider("custom_orange", "http://127.0.0.1:8080/v1")],
+        );
+        let ms =
+            resolve_default_model_settings(&settings, &secrets(&[("OPENAI_API_KEY", "sk-oai")]))
+                .await
+                .unwrap()
+                .expect("should resolve");
+        match ms.inner.provider {
+            crate::agent::ModelProvider::OpenAICompatible { ref api_key, .. } => {
+                assert_eq!(api_key.as_deref(), Some(""));
+            }
+            ref other => panic!("expected OpenAICompatible, got {other:?}"),
+        }
+        assert!(
+            ms.inner.provider.required_secret_keys().is_empty(),
+            "an unauthenticated custom endpoint must not demand OPENAI_API_KEY"
+        );
+    }
+
+    #[tokio::test]
+    async fn builtin_provider_still_requires_its_own_secret() {
+        let settings = settings(Some("anthropic/claude-sonnet-4"), vec![]);
+        let ms = resolve_default_model_settings(&settings, &secrets(&[]))
+            .await
+            .unwrap()
+            .expect("should resolve");
+        assert_eq!(
+            ms.inner.provider.required_secret_keys(),
+            vec!["ANTHROPIC_API_KEY"],
+            "built-in providers keep secret-store hydration"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_propagates_named_errors() {
+        let settings = settings(Some("custom_orange/gemma"), vec![]);
+        let err = resolve_default_model_settings(&settings, &secrets(&[]))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            DefaultModelError::UnconfiguredProvider { .. }
+        ));
     }
 }

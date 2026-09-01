@@ -354,7 +354,13 @@ impl A2AService {
                     .await?
             }
         };
-        if let Some(ms) = workspace_model_settings {
+        // Injected settings (cloud middleware) win; otherwise fall back to the
+        // server's own stored default model.
+        if let Some(ms) = self
+            .orchestrator
+            .effective_default_model_settings(workspace_model_settings)
+            .await?
+        {
             executor_context.default_model_settings = Some(ms);
         }
         let executor_context = Arc::new(executor_context);

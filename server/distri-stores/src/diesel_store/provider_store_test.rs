@@ -207,3 +207,44 @@ async fn delete_provider_removes_secrets_models_and_default_model() {
         "default_model pointing at the deleted provider must be cleared"
     );
 }
+
+#[tokio::test]
+async fn stored_default_model_resolves_through_the_provider_store_trait() {
+    let store = test_store().await;
+    let provider_store: std::sync::Arc<dyn ProviderStore> =
+        std::sync::Arc::new(store.provider_store());
+    let secret_store = store.secret_store();
+
+    let mut req = upsert_req("custom_acme");
+    req.secrets
+        .insert("CUSTOM_ACME_API_KEY".to_string(), "sk-acme".to_string());
+    req.config = Some(CustomProviderConfig {
+        id: "custom_acme".to_string(),
+        name: "Acme".to_string(),
+        base_url: "https://acme.example/v1".to_string(),
+        project_id: None,
+    });
+    req.default_model = Some("custom_acme/acme-1".to_string());
+    provider_store.upsert_provider(req).await.unwrap();
+
+    // What a run sees: the trait exposes the whole settings row, so the
+    // default model resolves with its endpoint and key filled in.
+    let settings = provider_store.get_server_settings().await.unwrap();
+    let ms = distri_types::stores::resolve_default_model_settings(&settings, &secret_store)
+        .await
+        .unwrap()
+        .expect("stored default_model should resolve");
+
+    assert_eq!(ms.model, "acme-1");
+    match ms.inner.provider {
+        distri_types::ModelProvider::OpenAICompatible {
+            ref base_url,
+            ref api_key,
+            ..
+        } => {
+            assert_eq!(base_url, "https://acme.example/v1");
+            assert_eq!(api_key.as_deref(), Some("sk-acme"));
+        }
+        ref other => panic!("expected OpenAICompatible, got {other:?}"),
+    }
+}
