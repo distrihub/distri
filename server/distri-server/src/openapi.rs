@@ -35,8 +35,11 @@ use utoipa::OpenApi;
         (name = "Spans", description = "OTel span and trace read access"),
         (name = "Usage", description = "Usage stats aggregation"),
         (name = "Health", description = "Health checks"),
+        (name = "Tokens", description = "Deployment token minting (optional token auth)"),
     ),
     paths(
+        // Tokens
+        crate::token_auth::issue_token,
         // Agents
         crate::routes::list_agents,
         crate::routes::get_agent_definition,

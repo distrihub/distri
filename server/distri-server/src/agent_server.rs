@@ -25,6 +25,8 @@ pub struct DistriAgentServer {
     pub service_name: String,
     pub description: String,
     pub capabilities: Vec<String>,
+    /// Deployment-token auth. `None` — the default — means no check runs.
+    pub auth: Option<distri_auth::TokenAuth>,
 }
 
 impl Default for DistriAgentServer {
@@ -33,6 +35,7 @@ impl Default for DistriAgentServer {
             service_name: "distri-server".to_string(),
             description: "A Distri server instance".to_string(),
             capabilities: vec!["agent_execution".to_string(), "task_management".to_string()],
+            auth: None,
         }
     }
 }
@@ -49,6 +52,13 @@ pub const DEFAULT_PORT: u16 = 8081;
 pub const DEFAULT_HOST: &str = "localhost";
 
 impl DistriAgentServer {
+    /// Require a valid deployment access token on the API surface. Without
+    /// this the server keeps its zero-config local behaviour: no check runs.
+    pub fn with_auth(mut self, auth: Option<distri_auth::TokenAuth>) -> Self {
+        self.auth = auth;
+        self
+    }
+
     /// Start the server with the configured settings
     pub async fn start(
         self,
@@ -98,9 +108,15 @@ impl DistriAgentServer {
             tracing::info!("");
         }
 
+        let auth = self.auth.clone();
+        if auth.is_some() {
+            tracing::info!("🔒 Deployment token auth is ON — /v1 requires a bearer access token");
+        }
+
         HttpServer::new(move || {
             let executor = executor.clone();
             let service_name = self.service_name.clone();
+            let auth = auth.clone();
 
             let verbose = Some(VerboseLog(verbose));
             let mut app = App::new()
@@ -162,8 +178,19 @@ impl DistriAgentServer {
                     if let Some(provider_store) = executor.stores.provider_store.clone() {
                         cfg.app_data(web::Data::new(provider_store));
                     }
+                    // Token auth, when on, guards every /v1 route except the
+                    // mint endpoint, which carries its own credential check.
+                    if let Some(auth) = auth.clone() {
+                        cfg.app_data(web::Data::new(auth));
+                    }
                     cfg.app_data(web::Data::new(executor)).configure(|cfg| {
-                        cfg.service(web::scope("/v1").configure(routes::distri));
+                        let scope = web::scope("/v1").configure(routes::distri);
+                        match auth.is_some() {
+                            true => cfg.service(scope.wrap(actix_web::middleware::from_fn(
+                                crate::token_auth::require_access_token,
+                            ))),
+                            false => cfg.service(scope),
+                        };
                     });
                 });
 

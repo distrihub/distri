@@ -11,13 +11,15 @@ pub struct Cli {
     #[clap(long, short, help = "Verbose output")]
     pub verbose: bool,
 
-    /// Host to bind to
-    #[clap(long, env = "DISTRI_HOST", default_value = "127.0.0.1")]
-    pub host: String,
+    /// Host to bind to. Falls back to `server.host` in distri.yaml, then
+    /// 127.0.0.1.
+    #[clap(long, env = "DISTRI_HOST")]
+    pub host: Option<String>,
 
-    /// Port to listen on
-    #[clap(long, env = "DISTRI_PORT", default_value = "8081")]
-    pub port: u16,
+    /// Port to listen on. Falls back to `server.port` in distri.yaml, then
+    /// 8081.
+    #[clap(long, env = "DISTRI_PORT")]
+    pub port: Option<u16>,
 
     /// Run headless (do not open the web UI automatically)
     #[clap(long, help = "Skip opening the web UI in your browser")]
