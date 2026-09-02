@@ -5,6 +5,7 @@ pub mod implementations;
 pub mod provider_registry;
 pub mod provider_session_store;
 pub mod providers;
+pub mod token;
 
 // Re-export commonly used types and traits from distri-types
 pub use distri_types::auth::{
@@ -18,6 +19,7 @@ pub use implementations::*;
 pub use provider_registry::{ProviderConfig, ProviderRegistry, ProvidersConfig};
 pub use provider_session_store::*;
 pub use providers::*;
+pub use token::{TokenAuth, TokenClaims, TokenError, TokenKind};
 
 const LOCAL_USER_ID: &str = "0d6a4a55-e992-4888-874a-1ed7c66613e5";
 

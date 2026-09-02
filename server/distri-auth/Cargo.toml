@@ -22,6 +22,10 @@ serde_urlencoded = "0.7"
 actix-web.workspace = true
 actix-cors.workspace = true
 rand.workspace = true
+hmac = "0.13"
+sha2 = "0.11"
+base64 = "0.22"
+subtle = "2.6"
 open = "5.0"
 dirs = "5.0"
 oauth2 = { version = "5", features = ["reqwest"], default-features = false }
