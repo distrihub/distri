@@ -133,6 +133,12 @@ define_routes! {
     BrowserSession    => "/browser/session" { POST: Execute },
     LlmExecute        => "/llm/execute" { POST: Execute },
     Request           => "/request" { POST: Execute },
+
+    // ── Deployment tokens ───────────────────────────────────────────────────
+    /// Mint or refresh a deployment token. Public in the catalog sense: it
+    /// carries its own credential check (the deployment secret, or a refresh
+    /// token) rather than a bearer access token, and 404s when auth is off.
+    Token             => "/token" { POST: Public },
 }
 
 /// Flat `(path, method, access)` over every route+method — the helper an

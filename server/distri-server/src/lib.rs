@@ -5,6 +5,7 @@ pub mod openapi;
 pub mod routes;
 pub mod routes_catalog;
 pub mod server;
+pub mod token_auth;
 
 pub mod ui_server;
 
