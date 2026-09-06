@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-06 · **Status:** parked. The first consumer chose a client-side pipeline (browser VAD, streaming STT over the provider's WebSocket, sentence-level TTS) that needs nothing from this spec; the streaming voice experience gets its own spec and session, and this document is input to it. Read the ordering there as: cascade first, provider speech-to-speech optional. ·
 **Companion docs:** the cloud surface (`distri-cloud/docs/specs/2026-09-06-voice-sessions-cloud.md`)
-and the first consumer (`platform/docs/specs/2026-09-06-live-ai-teacher-design.md`, Zippy's
+and the first consumer (`platform/docs/specs/2026-09-06-live-session-and-voice-chat.md`, Zippy's
 live AI teacher). This document is the engine half: types, the agent loop, and the transports.
 
 ## What exists today
