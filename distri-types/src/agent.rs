@@ -3340,8 +3340,9 @@ tool_format = "json_l"
     /// model — every run then silently goes to the workspace default.
     #[test]
     fn top_level_model_key_is_refused_with_a_hint() {
-        let err = validate_frontmatter_keys("name = \"probe\"\nmodel = \"alibaba_cloud/qwen3.7-flash\"")
-            .expect_err("a dropped key must not be accepted in silence");
+        let err =
+            validate_frontmatter_keys("name = \"probe\"\nmodel = \"alibaba_cloud/qwen3.7-flash\"")
+                .expect_err("a dropped key must not be accepted in silence");
         let msg = err.to_string();
         assert!(msg.contains("model"), "names the offending key: {msg}");
         assert!(msg.contains("model_settings"), "points at the fix: {msg}");
@@ -3349,7 +3350,8 @@ tool_format = "json_l"
 
     #[test]
     fn model_settings_table_is_accepted() {
-        let toml_in = "name = \"probe\"\n\n[model_settings]\nmodel = \"alibaba_cloud/qwen3.7-flash\"";
+        let toml_in =
+            "name = \"probe\"\n\n[model_settings]\nmodel = \"alibaba_cloud/qwen3.7-flash\"";
         validate_frontmatter_keys(toml_in).expect("the documented form must pass");
         // The `provider/model` prefix is resolved later, in
         // `parse_agent_markdown_content`; raw deserialization keeps it intact.
@@ -3383,7 +3385,10 @@ tool_format = "json_l"
             "append_default_instructions",
             "include_scratchpad",
         ] {
-            assert!(known.contains(key), "schema-derived keys must include {key}");
+            assert!(
+                known.contains(key),
+                "schema-derived keys must include {key}"
+            );
         }
     }
 }
