@@ -69,6 +69,10 @@ pub struct TtsRequest {
     // ElevenLabs
     pub voice_id: Option<String>,
     pub elevenlabs_model_id: Option<String>,
+    /// Ask for a chunked response: audio bytes as the provider produces them
+    /// (`call_tts_stream`). Ignored by `call_tts`. Defaults to `false`.
+    #[serde(default)]
+    pub stream: bool,
 }
 
 fn default_model() -> String {
@@ -93,4 +97,14 @@ pub struct TtsCredentials {
 pub struct TtsResult {
     pub audio: Vec<u8>,
     pub content_type: String,
+}
+
+/// Result from a streaming TTS call: the content type up front and the audio
+/// as a stream of chunks in playback order. A provider that cannot stream
+/// (DashScope returns a URL) yields the whole buffer as a single chunk.
+pub struct TtsStream {
+    pub content_type: String,
+    pub bytes: std::pin::Pin<
+        Box<dyn futures::Stream<Item = Result<bytes::Bytes, String>> + Send + 'static>,
+    >,
 }
