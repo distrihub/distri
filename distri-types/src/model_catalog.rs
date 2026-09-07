@@ -21,7 +21,7 @@
 
 use crate::models::{
     Model, ModelCapability, ModelPricing, ModelProviderDefinition, ProviderKeyDefinition,
-    ProviderTestConfig, TtsVoiceInfo,
+    ProviderTestConfig, SttStreamInfo, TtsVoiceInfo,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,9 @@ pub struct CatalogModel {
     pub voices: Vec<TtsVoiceInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub formats: Vec<String>,
+    /// Streaming STT metadata (`stt:` entries only). See [`SttStreamInfo`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<SttStreamInfo>,
 }
 
 impl CatalogModel {
@@ -61,6 +64,7 @@ impl CatalogModel {
             pricing: self.pricing,
             voices: self.voices,
             formats: self.formats,
+            stream: self.stream,
         }
     }
 
@@ -72,6 +76,7 @@ impl CatalogModel {
             pricing: m.pricing.clone(),
             voices: m.voices.clone(),
             formats: m.formats.clone(),
+            stream: m.stream.clone(),
         }
     }
 }
@@ -254,6 +259,10 @@ tts:
   - { id: gpt-4o-mini-tts, pricing: { type: tts, per_1m_chars: 12.0 } }
 stt:
   - { id: whisper-1, name: Whisper, pricing: { type: stt, per_minute: 0.006 } }
+  - id: realtime
+    pricing: { type: stt, per_minute: 0.0167 }
+    formats: [pcm16]
+    stream: { transport: websocket, token: sts, sample_rates: [16000], languages: [en-US, zh-CN] }
 "#;
 
     #[test]
@@ -261,7 +270,7 @@ stt:
         let entry = parse_provider_entry(SAMPLE).expect("parses");
         let def = entry.into_definition();
         assert_eq!(def.id, "azure_ai_foundry");
-        assert_eq!(def.models.len(), 3);
+        assert_eq!(def.models.len(), 4);
 
         let by_id = |id: &str| def.models.iter().find(|m| m.id == id).unwrap();
         assert_eq!(by_id("gpt-5.4").capability, ModelCapability::Completion);
@@ -270,6 +279,15 @@ stt:
 
         // `name` is backfilled from `id` when the section entry omits it.
         assert_eq!(by_id("gpt-4o-mini-tts").name, "gpt-4o-mini-tts");
+
+        // Whole-clip STT carries no stream block; a streaming entry keeps it
+        // through the flatten so `GET /v1/models` can advertise it.
+        assert!(by_id("whisper-1").stream.is_none());
+        let stream = by_id("realtime").stream.as_ref().expect("stream info");
+        assert_eq!(stream.transport, crate::models::SttTransport::Websocket);
+        assert_eq!(stream.token, crate::models::SttTokenKind::Sts);
+        assert_eq!(stream.sample_rates, vec![16000]);
+        assert_eq!(stream.languages, vec!["en-US", "zh-CN"]);
     }
 
     #[test]
@@ -280,12 +298,21 @@ stt:
         let regrouped = ProviderCatalogEntry::from_definition(&def);
         assert_eq!(regrouped.completion.len(), 1);
         assert_eq!(regrouped.tts.len(), 1);
-        assert_eq!(regrouped.stt.len(), 1);
+        assert_eq!(regrouped.stt.len(), 2);
 
         let combined = combine_to_yaml(vec![regrouped]).expect("serializes");
         let mut reparsed = parse_combined_catalog(&combined).expect("combined parses");
         assert_eq!(reparsed.len(), 1);
-        assert_eq!(reparsed.remove(0).into_definition().models.len(), 3);
+        let models = reparsed.remove(0).into_definition().models;
+        assert_eq!(models.len(), 4);
+        // The stream block survives the combined-file round trip.
+        assert!(
+            models
+                .iter()
+                .find(|m| m.id == "realtime")
+                .and_then(|m| m.stream.as_ref())
+                .is_some()
+        );
     }
 
     #[test]

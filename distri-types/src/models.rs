@@ -119,6 +119,44 @@ pub enum ModelPricing {
     },
 }
 
+/// How a browser reaches a streaming STT model directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SttTransport {
+    /// The client opens the provider's WebSocket itself.
+    Websocket,
+}
+
+/// Which short-lived credential `POST /v1/audio/stt/token` mints for a
+/// streaming STT model. Drives the provider branch in the cloud's
+/// `SttTokenService`; the browser never sees the workspace key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SttTokenKind {
+    /// Azure `sts/v1.0/issueToken` bearer token (10 min).
+    Sts,
+    /// Deepgram `POST /v1/auth/grant` JWT (valid at connect only).
+    Grant,
+    /// AssemblyAI `GET /v3/token` single-use token.
+    TempToken,
+    /// distri-signed token for the `/v1/audio/stt/stream` relay.
+    Relay,
+}
+
+/// Streaming metadata on an STT catalog entry. Present only on models a
+/// browser can stream to; whole-clip models (Whisper) leave it `None`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SttStreamInfo {
+    pub transport: SttTransport,
+    pub token: SttTokenKind,
+    /// Sample rates the provider accepts for PCM16 input, in Hz.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sample_rates: Vec<u32>,
+    /// BCP-47 tags (or provider codes such as Deepgram's `multi`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
+}
+
 /// A model with its capability, pricing, and metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
@@ -136,6 +174,10 @@ pub struct Model {
     pub voices: Vec<TtsVoiceInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub formats: Vec<String>,
+    /// Streaming STT metadata — `Some` only for `capability == Stt` models a
+    /// browser can stream to (see [`SttStreamInfo`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<SttStreamInfo>,
 }
 
 // ── Model lookup ────────────────────────────────────────────────────────

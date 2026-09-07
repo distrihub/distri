@@ -174,7 +174,10 @@ impl AgentConfig {
     /// other execution config — callers that only need the card (the public
     /// `.well-known/agent.json` endpoint, agent listings, CLI agent pickers)
     /// should go through here instead of loading + matching the full definition.
-    pub fn to_card(&self, server_config: &crate::configuration::ServerConfig) -> distri_a2a::AgentCard {
+    pub fn to_card(
+        &self,
+        server_config: &crate::configuration::ServerConfig,
+    ) -> distri_a2a::AgentCard {
         let (name, description, version, icon_url, skills) = match self {
             AgentConfig::StandardAgent(def) => (
                 def.name.clone(),
