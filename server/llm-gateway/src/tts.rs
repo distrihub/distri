@@ -1,4 +1,6 @@
 use crate::tts_types::*;
+use bytes::Bytes;
+use futures::StreamExt;
 
 /// Call the appropriate TTS provider and return audio bytes.
 pub async fn call_tts(
@@ -21,36 +23,90 @@ pub async fn call_tts(
     result
 }
 
+/// Call the TTS provider and return the audio as a stream of chunks, in
+/// playback order, as the provider produces them. OpenAI-compatible endpoints
+/// stream by default, ElevenLabs has a `/stream` route, Azure Speech sends a
+/// chunked body; DashScope returns a URL and so falls back to one buffered
+/// chunk. The content type is known before the first chunk.
+pub async fn call_tts_stream(
+    client: &reqwest::Client,
+    req: &TtsRequest,
+    creds: &TtsCredentials,
+) -> Result<TtsStream, String> {
+    let span = crate::observability::create_tts_span(
+        &req.model,
+        &format!("{}", req.provider),
+        &req.voice,
+        req.response_format.as_str(),
+    );
+    let _guard = span.enter();
+    let start = std::time::Instant::now();
+
+    let result = match provider_request(client, req, creds)? {
+        Some((request, fallback_ct)) => send_streaming(request, fallback_ct).await,
+        None => {
+            // No streaming route for this provider: buffer, then emit once.
+            let buffered = call_tts_inner(client, req, creds).await?;
+            Ok(TtsStream {
+                content_type: buffered.content_type,
+                bytes: Box::pin(futures::stream::once(async move {
+                    Ok(Bytes::from(buffered.audio))
+                })),
+            })
+        }
+    };
+
+    // Time to headers, not to last byte — the stream outlives this call.
+    crate::observability::record_tts_response(&span, start.elapsed().as_millis() as u64);
+    result
+}
+
 async fn call_tts_inner(
     client: &reqwest::Client,
     req: &TtsRequest,
     creds: &TtsCredentials,
 ) -> Result<TtsResult, String> {
-    match &req.provider {
-        ProviderType::OpenAI => {
-            let base = creds
-                .base_url
-                .as_deref()
-                .unwrap_or("https://api.openai.com/v1");
-            call_openai_compat_tts(client, req, base, &creds.api_key).await
-        }
-        ProviderType::Azure => {
-            // Azure can do both OpenAI-style TTS and Speech Services TTS.
-            // Use azure_region presence to distinguish.
-            if creds.region.is_some() {
-                call_azure_speech(client, req, creds).await
-            } else {
-                call_azure_openai(client, req, creds).await
-            }
-        }
-        ProviderType::ElevenLabs => call_elevenlabs(client, req, creds).await,
-        ProviderType::AlibabaCloud => {
+    match provider_request(client, req, creds)? {
+        Some((request, fallback_ct)) => send_buffered(request, fallback_ct).await,
+        None => {
+            // Only DashScope lands here: it returns a URL, not audio.
             let base = creds
                 .base_url
                 .as_deref()
                 .unwrap_or("https://dashscope-intl.aliyuncs.com");
             call_dashscope_tts(client, req, base, &creds.api_key).await
         }
+    }
+}
+
+/// Build the provider request for `req`, with the content type to report when
+/// the provider does not say. `None` means the provider has no direct
+/// audio-body endpoint (DashScope) and needs its own two-step call.
+fn provider_request(
+    client: &reqwest::Client,
+    req: &TtsRequest,
+    creds: &TtsCredentials,
+) -> Result<Option<(reqwest::RequestBuilder, String)>, String> {
+    let fallback_ct = req.response_format.content_type().to_string();
+    let built = match &req.provider {
+        ProviderType::OpenAI => {
+            let base = creds
+                .base_url
+                .as_deref()
+                .unwrap_or("https://api.openai.com/v1");
+            openai_compat_request(client, req, base, &creds.api_key)
+        }
+        ProviderType::Azure => {
+            // Azure can do both OpenAI-style TTS and Speech Services TTS.
+            // Use azure_region presence to distinguish.
+            if creds.region.is_some() {
+                azure_speech_request(client, req, creds)
+            } else {
+                azure_openai_request(client, req, creds)?
+            }
+        }
+        ProviderType::ElevenLabs => elevenlabs_request(client, req, creds),
+        ProviderType::AlibabaCloud => return Ok(None),
         ProviderType::AzureAiFoundry | ProviderType::Custom(_) => {
             let base = creds
                 .base_url
@@ -58,10 +114,73 @@ async fn call_tts_inner(
                 .ok_or("Base URL is required for this provider")?;
             // Azure AI Foundry endpoints need /openai/v1 appended if missing
             let base = normalize_openai_base(base);
-            call_openai_compat_tts(client, req, base, &creds.api_key).await
+            openai_compat_request(client, req, base, &creds.api_key)
         }
-        _ => Err(format!("TTS not supported for provider: {}", req.provider)),
+        _ => return Err(format!("TTS not supported for provider: {}", req.provider)),
+    };
+    Ok(Some((built, fallback_ct)))
+}
+
+/// Send and read the whole body.
+async fn send_buffered(
+    request: reqwest::RequestBuilder,
+    fallback_ct: String,
+) -> Result<TtsResult, String> {
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| format!("TTS request failed: {e}"))?;
+    let resp = check_status(resp).await?;
+    let content_type = response_content_type(&resp, &fallback_ct);
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read TTS response: {e}"))?;
+    Ok(TtsResult {
+        audio: bytes.to_vec(),
+        content_type,
+    })
+}
+
+/// Send and hand back the body as it arrives.
+async fn send_streaming(
+    request: reqwest::RequestBuilder,
+    fallback_ct: String,
+) -> Result<TtsStream, String> {
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| format!("TTS request failed: {e}"))?;
+    let resp = check_status(resp).await?;
+    let content_type = response_content_type(&resp, &fallback_ct);
+    let bytes = resp
+        .bytes_stream()
+        .map(|chunk| chunk.map_err(|e| format!("TTS stream read failed: {e}")));
+    Ok(TtsStream {
+        content_type,
+        bytes: Box::pin(bytes),
+    })
+}
+
+async fn check_status(resp: reqwest::Response) -> Result<reqwest::Response, String> {
+    if resp.status().is_success() {
+        return Ok(resp);
     }
+    let status = resp.status();
+    let err = resp.text().await.unwrap_or_default();
+    Err(format!("TTS error ({status}): {err}"))
+}
+
+/// The provider's `content-type` when it sends one that names an audio type,
+/// otherwise what the requested format implies. Azure Speech and ElevenLabs
+/// are known to omit or generalise it.
+fn response_content_type(resp: &reqwest::Response, fallback: &str) -> String {
+    resp.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .filter(|ct| ct.starts_with("audio/") || ct.starts_with("application/octet-stream"))
+        .map(|ct| ct.to_string())
+        .unwrap_or_else(|| fallback.to_string())
 }
 
 // ── DashScope TTS (Alibaba Cloud) ────────────────────────────────────────
@@ -150,16 +269,24 @@ async fn call_dashscope_tts(
 
 // ── OpenAI-compatible TTS (OpenAI, Azure AI Foundry, custom) ──
 
-/// Unified TTS call for any OpenAI-compatible endpoint.
-/// `base_url` should end with `/v1` or similar — we append `/audio/speech`.
-async fn call_openai_compat_tts(
+/// Request for any OpenAI-compatible endpoint. `base_url` should end with
+/// `/v1` or similar — we append `/audio/speech`. The endpoint streams by
+/// default, so the same request serves both the buffered and streaming paths.
+fn openai_compat_request(
     client: &reqwest::Client,
     req: &TtsRequest,
     base_url: impl AsRef<str>,
     api_key: &str,
-) -> Result<TtsResult, String> {
+) -> reqwest::RequestBuilder {
     let url = format!("{}/audio/speech", base_url.as_ref().trim_end_matches('/'));
+    client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&openai_body(req))
+}
 
+fn openai_body(req: &TtsRequest) -> serde_json::Value {
     let mut body = serde_json::json!({
         "model": req.model,
         "input": req.input,
@@ -172,46 +299,16 @@ async fn call_openai_compat_tts(
     if let Some(ref instructions) = req.instructions {
         body["instructions"] = serde_json::json!(instructions);
     }
-
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("TTS request failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let err = resp.text().await.unwrap_or_default();
-        return Err(format!("TTS error ({status}): {err}"));
-    }
-
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or(req.response_format.content_type())
-        .to_string();
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read TTS response: {e}"))?;
-
-    Ok(TtsResult {
-        audio: bytes.to_vec(),
-        content_type: ct,
-    })
+    body
 }
 
 // ── Azure OpenAI (deployment-based) ─────────────────────────────────────────
 
-async fn call_azure_openai(
+fn azure_openai_request(
     client: &reqwest::Client,
     req: &TtsRequest,
     creds: &TtsCredentials,
-) -> Result<TtsResult, String> {
+) -> Result<reqwest::RequestBuilder, String> {
     let endpoint = creds
         .base_url
         .as_deref()
@@ -225,59 +322,20 @@ async fn call_azure_openai(
     let url = format!(
         "{base}/openai/deployments/{deployment}/audio/speech?api-version=2024-12-01-preview"
     );
-
-    let mut body = serde_json::json!({
-        "model": req.model,
-        "input": req.input,
-        "voice": req.voice,
-        "response_format": req.response_format.as_str(),
-    });
-    if let Some(speed) = req.speed {
-        body["speed"] = serde_json::json!(speed);
-    }
-    if let Some(ref instructions) = req.instructions {
-        body["instructions"] = serde_json::json!(instructions);
-    }
-
-    let resp = client
+    Ok(client
         .post(&url)
         .header("api-key", &creds.api_key)
         .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Azure OpenAI request failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let err = resp.text().await.unwrap_or_default();
-        return Err(format!("Azure OpenAI TTS error ({status}): {err}"));
-    }
-
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or(req.response_format.content_type())
-        .to_string();
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read Azure OpenAI response: {e}"))?;
-
-    Ok(TtsResult {
-        audio: bytes.to_vec(),
-        content_type: ct,
-    })
+        .json(&openai_body(req)))
 }
 
 // ── Azure Cognitive Services Speech (SSML) ──────────────────────────────────
 
-async fn call_azure_speech(
+fn azure_speech_request(
     client: &reqwest::Client,
     req: &TtsRequest,
     creds: &TtsCredentials,
-) -> Result<TtsResult, String> {
+) -> reqwest::RequestBuilder {
     let region = creds
         .region
         .as_deref()
@@ -300,42 +358,32 @@ async fn call_azure_speech(
         _ => "audio-24khz-96kbitrate-mono-mp3",
     };
 
-    let resp = client
+    client
         .post(&url)
         .header("Ocp-Apim-Subscription-Key", &creds.api_key)
         .header("Content-Type", "application/ssml+xml")
         .header("X-Microsoft-OutputFormat", output_format)
         .body(ssml)
-        .send()
-        .await
-        .map_err(|e| format!("Azure Speech request failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let err = resp.text().await.unwrap_or_default();
-        return Err(format!("Azure Speech TTS error ({status}): {err}"));
-    }
-
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read Azure Speech response: {e}"))?;
-
-    Ok(TtsResult {
-        audio: bytes.to_vec(),
-        content_type: req.response_format.content_type().to_string(),
-    })
 }
 
 // ── ElevenLabs ──────────────────────────────────────────────────────────────
 
-async fn call_elevenlabs(
+/// ElevenLabs' `/stream` route returns the same audio as the plain route but
+/// starts sending before synthesis finishes, so both paths use it.
+fn elevenlabs_request(
     client: &reqwest::Client,
     req: &TtsRequest,
     creds: &TtsCredentials,
-) -> Result<TtsResult, String> {
+) -> reqwest::RequestBuilder {
     let voice_id = req.voice_id.as_deref().unwrap_or("21m00Tcm4TlvDq8ikWAM");
-    let url = format!("https://api.elevenlabs.io/v1/text-to-speech/{voice_id}");
+    let base = creds
+        .base_url
+        .as_deref()
+        .unwrap_or("https://api.elevenlabs.io");
+    let url = format!(
+        "{}/v1/text-to-speech/{voice_id}/stream",
+        base.trim_end_matches('/')
+    );
     let model_id = req
         .elevenlabs_model_id
         .as_deref()
@@ -352,31 +400,12 @@ async fn call_elevenlabs(
         _ => "mp3_44100_128",
     };
 
-    let resp = client
+    client
         .post(&url)
         .header("xi-api-key", &creds.api_key)
         .header("Content-Type", "application/json")
         .query(&[("output_format", output_format)])
         .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("ElevenLabs request failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let err = resp.text().await.unwrap_or_default();
-        return Err(format!("ElevenLabs TTS error ({status}): {err}"));
-    }
-
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read ElevenLabs response: {e}"))?;
-
-    Ok(TtsResult {
-        audio: bytes.to_vec(),
-        content_type: req.response_format.content_type().to_string(),
-    })
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -399,4 +428,144 @@ fn escape_xml(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{body_partial_json, header, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn request(provider: ProviderType) -> TtsRequest {
+        serde_json::from_value(serde_json::json!({
+            "input": "Hello there. How are you?",
+            "model": "gpt-4o-mini-tts",
+            "voice": "alloy",
+            "provider": provider.as_str(),
+            "response_format": "mp3",
+        }))
+        .expect("request parses")
+    }
+
+    async fn collect(stream: TtsStream) -> (String, Vec<u8>, usize) {
+        let mut out = Vec::new();
+        let mut chunks = 0;
+        let mut bytes = stream.bytes;
+        while let Some(chunk) = bytes.next().await {
+            out.extend_from_slice(&chunk.expect("chunk ok"));
+            chunks += 1;
+        }
+        (stream.content_type, out, chunks)
+    }
+
+    #[tokio::test]
+    async fn openai_compat_stream_matches_buffered_and_keeps_order() {
+        let server = MockServer::start().await;
+        let audio: Vec<u8> = (0..=255u8).cycle().take(64 * 1024).collect();
+        Mock::given(method("POST"))
+            .and(path("/v1/audio/speech"))
+            .and(header("Authorization", "Bearer sk-test"))
+            .and(body_partial_json(serde_json::json!({
+                "model": "gpt-4o-mini-tts", "voice": "alloy", "response_format": "mp3"
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "audio/mpeg")
+                    .set_body_bytes(audio.clone()),
+            )
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let creds = TtsCredentials {
+            api_key: "sk-test".into(),
+            base_url: Some(format!("{}/v1", server.uri())),
+            region: None,
+        };
+        let req = request(ProviderType::OpenAI);
+
+        let buffered = call_tts(&client, &req, &creds).await.expect("buffered");
+        assert_eq!(buffered.content_type, "audio/mpeg");
+        assert_eq!(buffered.audio, audio);
+
+        let (ct, streamed, chunks) = collect(
+            call_tts_stream(&client, &req, &creds)
+                .await
+                .expect("stream"),
+        )
+        .await;
+        assert_eq!(ct, "audio/mpeg");
+        assert_eq!(
+            streamed, audio,
+            "chunks reassemble to the same bytes, in order"
+        );
+        assert!(chunks >= 1);
+    }
+
+    #[tokio::test]
+    async fn stream_reports_provider_errors_before_any_chunk() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/audio/speech"))
+            .respond_with(ResponseTemplate::new(429).set_body_string("slow down"))
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let creds = TtsCredentials {
+            api_key: "sk-test".into(),
+            base_url: Some(format!("{}/v1", server.uri())),
+            region: None,
+        };
+        let err = call_tts_stream(&client, &request(ProviderType::OpenAI), &creds)
+            .await
+            .err()
+            .expect("error");
+        assert!(err.contains("429") && err.contains("slow down"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn elevenlabs_uses_the_stream_route_and_falls_back_on_content_type() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/text-to-speech/voice-1/stream"))
+            .and(header("xi-api-key", "xi-test"))
+            .and(query_param("output_format", "mp3_44100_128"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    // ElevenLabs answers with a generic type; we report the
+                    // requested format instead.
+                    .insert_header("content-type", "application/json")
+                    .set_body_bytes(b"ID3audio".to_vec()),
+            )
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let creds = TtsCredentials {
+            api_key: "xi-test".into(),
+            base_url: Some(server.uri()),
+            region: None,
+        };
+        let mut req = request(ProviderType::ElevenLabs);
+        req.voice_id = Some("voice-1".into());
+
+        let (ct, streamed, _) = collect(
+            call_tts_stream(&client, &req, &creds)
+                .await
+                .expect("stream"),
+        )
+        .await;
+        assert_eq!(ct, "audio/mpeg");
+        assert_eq!(streamed, b"ID3audio");
+    }
+
+    #[test]
+    fn stream_flag_defaults_to_false_and_parses() {
+        let req = request(ProviderType::OpenAI);
+        assert!(!req.stream);
+        let req: TtsRequest = serde_json::from_value(serde_json::json!({
+            "input": "hi", "stream": true
+        }))
+        .unwrap();
+        assert!(req.stream);
+    }
 }

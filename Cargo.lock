@@ -3480,6 +3480,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "base64 0.22.1",
+ "bytes",
  "distri-types",
  "futures",
  "futures-util",
@@ -3490,6 +3491,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wiremock",
 ]
 
 [[package]]

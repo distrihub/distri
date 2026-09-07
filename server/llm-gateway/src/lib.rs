@@ -14,5 +14,5 @@ pub use image::call_image_generation;
 pub use image_types::*;
 pub use provider_config::ProviderClientConfig;
 pub use providers_builder::build_provider_definitions;
-pub use tts::call_tts;
+pub use tts::{call_tts, call_tts_stream};
 pub use tts_types::*;

@@ -28,19 +28,38 @@ pub enum Bucket {
     None,
 }
 
+/// Row discriminators on the usage ledger. `usage_records.kind` holds one of
+/// these; anything else is treated as opaque by the aggregation.
+pub mod usage_kind {
+    /// An agent run's token usage (the historical row; the default).
+    pub const TOKENS: &str = "tokens";
+    /// Streaming STT audio, `quantity` in milliseconds (voice sessions).
+    pub const STT_AUDIO_MS: &str = "stt_audio_ms";
+    /// Text-to-speech input, `quantity` in characters.
+    pub const TTS_CHARS: &str = "tts_chars";
+}
+
 /// Aggregated totals across the full query window.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UsageTotals {
+    /// Agent runs (`kind == tokens` rows).
     pub messages: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub cached_tokens: i64,
     pub total_tokens: i64,
+    /// Every kind's cost, summed.
     pub cost_usd: f64,
+    /// Streaming STT minutes (`stt_audio_ms` rows / 60 000).
+    #[serde(default)]
+    pub voice_minutes: f64,
+    /// Text-to-speech characters (`tts_chars` rows).
+    #[serde(default)]
+    pub tts_chars: i64,
 }
 
 /// One time-bucket's aggregated usage.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UsageBucket {
     /// Bucket start timestamp, RFC3339. `None` when `bucket == None`.
     pub ts: Option<String>,
@@ -50,6 +69,10 @@ pub struct UsageBucket {
     pub cached_tokens: i64,
     pub total_tokens: i64,
     pub cost_usd: f64,
+    #[serde(default)]
+    pub voice_minutes: f64,
+    #[serde(default)]
+    pub tts_chars: i64,
 }
 
 /// Filters that were applied to produce the response, echoed back to the
@@ -96,4 +119,7 @@ pub struct UsageStatsQuery {
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
     pub bucket: Option<Bucket>,
+    /// Restrict to one row kind (see [`usage_kind`]); all kinds when omitted.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
