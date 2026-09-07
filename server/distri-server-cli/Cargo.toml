@@ -1,6 +1,6 @@
 [package]
 name = "distri-server-cli"
-version = "0.4.4"
+version = "0.4.6"
 edition = "2021"
 description = "Distri OSS server binary"
 
@@ -36,13 +36,13 @@ otel = [
 ui = ["distri-server/ui"]
 
 [dependencies]
-distri-core = { path = "../distri-core", version = "0.4.4", default-features = false }
+distri-core = { path = "../distri-core", version = "0.4.6", default-features = false }
 # Only ever pulled in by `openssl_vendored`. See the feature above.
 openssl = { version = "0.10", optional = true, features = ["vendored"] }
-distri-types = { path = "../../distri-types", version = "0.4.4" }
-distri-auth = { path = "../distri-auth", version = "0.4.4" }
-distri-filesystem = { path = "../distri-filesystem", version = "0.4.4" }
-distri-server = { path = "../distri-server", version = "0.4.4", default-features = false }
+distri-types = { path = "../../distri-types", version = "0.4.6" }
+distri-auth = { path = "../distri-auth", version = "0.4.6" }
+distri-filesystem = { path = "../distri-filesystem", version = "0.4.6" }
+distri-server = { path = "../distri-server", version = "0.4.6", default-features = false }
 dotenv = "0.15"
 clap = { version = "4.5", features = ["derive", "env"] }
 anyhow = { workspace = true }
