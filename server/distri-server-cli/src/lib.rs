@@ -19,6 +19,7 @@ pub use cli::Cli;
 pub async fn init_orchestrator(
     home_dir: &Path,
     workspace_path: &Path,
+    distri_config: &distri_yaml::DistriYamlConfig,
 ) -> Result<Arc<AgentOrchestrator>> {
     use distri_types::configuration::StoreConfig;
 
@@ -32,8 +33,7 @@ pub async fn init_orchestrator(
     // DISTRI_MODEL_CATALOG) must be registered before the server serves the
     // catalog, so this happens up front; the default-model and agent seeds
     // are applied after the orchestrator is built.
-    let distri_config = distri_yaml::load(workspace_path)?;
-    distri_yaml::register_extensions(workspace_path, distri_config.as_ref());
+    distri_yaml::register_extensions(workspace_path, Some(distri_config));
 
     let mut store_config = StoreConfig::default();
     store_config.session.ephemeral = false;
@@ -81,9 +81,7 @@ pub async fn init_orchestrator(
     seed::seed_bundled_defaults(orchestrator.as_ref()).await?;
     register_workspace_agents(&orchestrator, workspace_path).await?;
 
-    if let Some(config) = &distri_config {
-        distri_yaml::apply_runtime_seeds(config, orchestrator.as_ref(), workspace_path).await?;
-    }
+    distri_yaml::apply_runtime_seeds(distri_config, orchestrator.as_ref(), workspace_path).await?;
 
     Ok(orchestrator)
 }

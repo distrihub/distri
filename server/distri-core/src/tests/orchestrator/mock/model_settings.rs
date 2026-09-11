@@ -210,3 +210,129 @@ async fn test_merge_agent_explicit_provider_overrides_workspace() {
         "agent's explicit provider should be used"
     );
 }
+
+// ── Stored server default model (standalone server) ──────────────────────────
+//
+// The cloud injects `ModelSettings` per request via middleware. The standalone
+// server has no such middleware — it must read back the default model it
+// stored itself, or every run fails with "No model configured".
+
+use distri_types::stores::{CustomProviderConfig, UpsertProviderRequest};
+
+async fn orchestrator_with_stored_provider(
+    default_model: Option<&str>,
+    config: Option<CustomProviderConfig>,
+    secrets: &[(&str, &str)],
+) -> Arc<AgentOrchestrator> {
+    let orchestrator = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .build()
+            .await
+            .unwrap(),
+    );
+    let provider_store = orchestrator
+        .stores
+        .provider_store
+        .as_ref()
+        .expect("sqlite stores expose a provider store");
+    provider_store
+        .upsert_provider(UpsertProviderRequest {
+            provider_id: "custom_orange".to_string(),
+            secrets: secrets
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            config,
+            custom_models: None,
+            default_model: default_model.map(|s| s.to_string()),
+            connection_provider: None,
+        })
+        .await
+        .unwrap();
+    orchestrator
+}
+
+fn orange_provider() -> CustomProviderConfig {
+    CustomProviderConfig {
+        id: "custom_orange".to_string(),
+        name: "Orange".to_string(),
+        base_url: "http://127.0.0.1:8080/v1".to_string(),
+        project_id: None,
+    }
+}
+
+#[tokio::test]
+async fn test_stored_default_model_is_used_when_nothing_is_injected() {
+    let orchestrator = orchestrator_with_stored_provider(
+        Some("custom_orange/gemma-3-4b-it-w8a8"),
+        Some(orange_provider()),
+        &[],
+    )
+    .await;
+
+    let ms = orchestrator
+        .effective_default_model_settings(None)
+        .await
+        .unwrap()
+        .expect("stored default_model should resolve");
+
+    assert_eq!(ms.model, "gemma-3-4b-it-w8a8");
+    match ms.inner.provider {
+        distri_types::ModelProvider::OpenAICompatible { ref base_url, .. } => {
+            assert_eq!(base_url, "http://127.0.0.1:8080/v1");
+        }
+        ref other => panic!("expected OpenAICompatible, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_injected_model_settings_win_over_the_stored_default() {
+    let orchestrator = orchestrator_with_stored_provider(
+        Some("custom_orange/gemma-3-4b-it-w8a8"),
+        Some(orange_provider()),
+        &[],
+    )
+    .await;
+
+    let injected = ModelSettings::new("gpt-4o-injected");
+    let ms = orchestrator
+        .effective_default_model_settings(Some(injected))
+        .await
+        .unwrap()
+        .expect("injected settings should be used");
+
+    assert_eq!(ms.model, "gpt-4o-injected");
+}
+
+#[tokio::test]
+async fn test_no_stored_default_model_stays_unset() {
+    let orchestrator = orchestrator_with_stored_provider(None, None, &[]).await;
+
+    assert!(
+        orchestrator
+            .effective_default_model_settings(None)
+            .await
+            .unwrap()
+            .is_none(),
+        "with nothing stored the agent's own model_settings must stand"
+    );
+}
+
+#[tokio::test]
+async fn test_stored_default_model_naming_an_unregistered_provider_is_named_error() {
+    // default_model points at a provider that was never registered — surface
+    // it as a configuration error, not an empty base_url that fails later as
+    // an opaque connection error.
+    let orchestrator =
+        orchestrator_with_stored_provider(Some("custom_orange/gemma-3-4b-it-w8a8"), None, &[])
+            .await;
+
+    let err = orchestrator
+        .effective_default_model_settings(None)
+        .await
+        .expect_err("unregistered provider must be an error");
+
+    let msg = err.to_string();
+    assert!(msg.contains("custom_orange"), "message was: {msg}");
+}

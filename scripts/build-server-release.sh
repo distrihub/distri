@@ -26,8 +26,31 @@ if [[ -z "$VERSION" ]]; then
     exit 1
 fi
 
-echo "Building distri-server v${VERSION} for ${TARGET} (${PLAT})..."
-cargo build --release --target "$TARGET" -p distri-server-cli
+# Linux targets cross-compile from macOS, and that needs three things a plain
+# `cargo build --target` does not do:
+#
+#   cargo-zigbuild       supplies the cross linker
+#   the .GLIBC suffix    pins the ABI floor, matching the Makefile
+#   the vendored features compile libsqlite3 and OpenSSL rather than looking for
+#                        aarch64 copies that are not on a Mac
+#
+# Without them this stops at "unable to find library" or at openssl-sys saying
+# pkg-config will not answer for a foreign target. Native targets need none of
+# it and link what is already installed.
+GLIBC=2.31
+case "$TARGET" in
+    *-linux-gnu)
+        echo "Building distri-server v${VERSION} for ${TARGET}.${GLIBC} (${PLAT})..."
+        cargo zigbuild --release --target "${TARGET}.${GLIBC}" \
+            -p distri-server-cli --bin distri-server \
+            --features "sqlite_vendored,openssl_vendored"
+        ;;
+    *)
+        echo "Building distri-server v${VERSION} for ${TARGET} (${PLAT})..."
+        cargo build --release --target "$TARGET" \
+            -p distri-server-cli --bin distri-server --features "sqlite"
+        ;;
+esac
 
 OUT=release-out
 mkdir -p "$OUT"

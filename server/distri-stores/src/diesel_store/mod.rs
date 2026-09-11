@@ -3769,6 +3769,10 @@ where
         Ok(self.load_settings().await?.default_model)
     }
 
+    async fn get_server_settings(&self) -> Result<ServerSettings> {
+        self.load_settings().await
+    }
+
     async fn resolve_provider_endpoint(
         &self,
         provider_id: &str,

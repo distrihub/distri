@@ -1628,7 +1628,7 @@ dependencies = [
 
 [[package]]
 name = "distri"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -1656,7 +1656,7 @@ dependencies = [
 
 [[package]]
 name = "distri-a2a"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "schemars",
  "serde",
@@ -1666,15 +1666,17 @@ dependencies = [
 
 [[package]]
 name = "distri-auth"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "actix-cors",
  "actix-web",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
  "distri-types",
+ "hmac",
  "oauth2",
  "open",
  "rand 0.10.0",
@@ -1682,6 +1684,8 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "sha2 0.11.0",
+ "subtle",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -1694,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "distri-cli"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1736,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "distri-core"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -1799,7 +1803,7 @@ dependencies = [
 
 [[package]]
 name = "distri-filesystem"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1825,7 +1829,7 @@ dependencies = [
 
 [[package]]
 name = "distri-formatter"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1837,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "distri-parsers"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1862,7 +1866,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -1916,16 +1920,18 @@ dependencies = [
 
 [[package]]
 name = "distri-server-cli"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "clap",
  "dirs 5.0.1",
+ "distri-auth",
  "distri-core",
  "distri-filesystem",
  "distri-server",
  "distri-types",
  "dotenv",
+ "openssl",
  "opentelemetry 0.28.0",
  "opentelemetry-otlp",
  "opentelemetry_sdk 0.28.0",
@@ -1942,7 +1948,7 @@ dependencies = [
 
 [[package]]
 name = "distri-stores"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1970,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "distri-types"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -2008,7 +2014,7 @@ dependencies = [
 
 [[package]]
 name = "distri-workflow"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3468,7 +3474,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "llm-gateway"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "async-openai",
  "async-stream",

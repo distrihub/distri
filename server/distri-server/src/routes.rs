@@ -53,115 +53,105 @@ pub fn all(cfg: &mut web::ServiceConfig) {
 
 // https://github.com/google-a2a/A2A/blob/main/specification/json/a2a.json
 pub fn distri(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::resource(Route::AgentCard.path()).route(web::get().to(get_agent_card)))
-        .service(web::resource(Route::AgentCards.path()).route(web::get().to(list_agent_cards)))
-        .service(
-            web::resource(Route::Agents.path())
-                .route(web::get().to(list_agents))
-                .route(web::post().to(create_agent)),
-        )
-        .service(
-            web::resource(Route::AgentValidate.path()).route(web::get().to(validate_agent_handler)),
-        )
-        .service(
-            web::resource(Route::AgentCompleteTool.path())
-                .route(web::post().to(complete_tool_handler)),
-        )
-        .service(web::resource(Route::AgentDag.path()).route(web::get().to(get_agent_dag)))
-        .service(
-            web::resource(Route::AgentDispatch.path())
-                .route(web::get().to(get_agent_definition))
-                .route(web::post().to(a2a_handler))
-                .route(web::put().to(update_agent))
-                .route(web::delete().to(delete_agent)),
-        )
-        .service(
-            web::resource(Route::EventHooks.path()).route(web::post().to(complete_hook_handler)),
-        )
-        .service(web::resource(Route::Tasks.path()).route(web::get().to(list_tasks)))
-        .service(
-            web::resource(Route::TaskCompact.path()).route(web::post().to(compact_task_handler)),
-        )
-        // Specific /tasks/{id}/events before the bare /tasks/{id} resource.
-        .service(web::resource(Route::TaskEvents.path()).route(web::get().to(task_events_handler)))
-        .service(web::resource(Route::TaskGet.path()).route(web::get().to(get_task_handler)))
-        .service(web::resource(Route::Tools.path()).route(web::get().to(list_tools)))
-        // Webhook endpoint for triggering agents
-        // Thread endpoints
-        .service(web::resource(Route::Threads.path()).route(web::get().to(list_threads_handler)))
-        .service(
-            web::resource(Route::ThreadsAgents.path()).route(web::get().to(list_agents_by_usage)),
-        )
-        .service(
-            web::resource(Route::ThreadMessages.path()).route(web::get().to(get_thread_messages)),
-        )
-        .service(
-            web::resource(Route::Thread.path())
-                .route(web::get().to(get_thread_handler))
-                .route(web::put().to(update_thread_handler))
-                .route(web::delete().to(delete_thread_handler)),
-        )
-        // Message read status endpoints
-        .service(
-            web::resource(Route::ThreadMessageRead.path())
-                .route(web::post().to(mark_message_read_handler))
-                .route(web::get().to(get_message_read_status_handler)),
-        )
-        .service(
-            web::resource(Route::ThreadReadStatus.path())
-                .route(web::get().to(get_thread_read_status_handler)),
-        )
-        // Message voting endpoints
-        .service(
-            web::resource(Route::ThreadMessageVote.path())
-                .route(web::post().to(vote_message_handler))
-                .route(web::delete().to(remove_vote_handler))
-                .route(web::get().to(get_message_vote_summary_handler)),
-        )
-        .service(
-            web::resource(Route::ThreadMessageVotes.path())
-                .route(web::get().to(get_message_votes_handler)),
-        )
-        .service(web::resource(Route::SchemaAgent.path()).route(web::get().to(get_agent_schema))) // Note: External tools and approvals are now handled via message metadata
-        // Workspace file endpoints
-        .service(web::scope(Route::FilesScope.path()).configure(files::configure_file_routes))
-        .service(
-            web::scope(Route::SessionsScope.path()).configure(session::configure_session_routes),
-        )
-        // Artifact endpoints (session storage for thread/task artifacts)
-        .service(
-            web::scope(Route::ArtifactsScope.path())
-                .configure(artifacts::configure_artifact_routes),
-        )
-        .service(web::resource(Route::Build.path()).route(web::post().to(build_workspace)))
-        .configure(tools::configure)
-        // Browser session endpoint
-        .service(
-            web::resource(Route::BrowserSession.path())
-                .route(web::post().to(create_browser_session)),
-        )
-        // LLM execute
-        .service(web::resource(Route::LlmExecute.path()).route(web::post().to(llm_execute)))
-        // Configuration endpoints
-        .service(web::resource(Route::Device.path()).route(web::get().to(get_device_info)))
-        .service(web::resource(Route::HomeStats.path()).route(web::get().to(get_home_stats)))
-        .configure(prompt_templates::configure_prompt_template_routes)
-        // HTTP request proxy — resolves secrets/connections server-side
-        .service(web::resource(Route::Request.path()).route(web::post().to(proxy_request_handler)))
-        .configure(secrets::configure_secret_routes)
-        .configure(providers::configure_provider_routes)
-        .configure(skills::configure_skill_routes)
-        .configure(models::configure_model_routes)
-        // Connection management endpoints
-        .configure(connections::configure_connection_routes)
-        // Notes CRUD endpoints
-        .configure(notes::configure_note_routes)
-        // Spans / traces endpoints
-        .configure(spans::configure_spans_routes)
-        // Usage stats endpoint
-        .configure(usage::configure_usage_routes)
-        // Authentication endpoints
-        .configure(auth_routes::configure_auth_routes);
+    cfg.service(
+        web::resource(Route::Token.path()).route(web::post().to(crate::token_auth::issue_token)),
+    )
+    .service(web::resource(Route::AgentCard.path()).route(web::get().to(get_agent_card)))
+    .service(web::resource(Route::AgentCards.path()).route(web::get().to(list_agent_cards)))
+    .service(
+        web::resource(Route::Agents.path())
+            .route(web::get().to(list_agents))
+            .route(web::post().to(create_agent)),
+    )
+    .service(
+        web::resource(Route::AgentValidate.path()).route(web::get().to(validate_agent_handler)),
+    )
+    .service(
+        web::resource(Route::AgentCompleteTool.path()).route(web::post().to(complete_tool_handler)),
+    )
+    .service(web::resource(Route::AgentDag.path()).route(web::get().to(get_agent_dag)))
+    .service(
+        web::resource(Route::AgentDispatch.path())
+            .route(web::get().to(get_agent_definition))
+            .route(web::post().to(a2a_handler))
+            .route(web::put().to(update_agent))
+            .route(web::delete().to(delete_agent)),
+    )
+    .service(web::resource(Route::EventHooks.path()).route(web::post().to(complete_hook_handler)))
+    .service(web::resource(Route::Tasks.path()).route(web::get().to(list_tasks)))
+    .service(web::resource(Route::TaskCompact.path()).route(web::post().to(compact_task_handler)))
+    // Specific /tasks/{id}/events before the bare /tasks/{id} resource.
+    .service(web::resource(Route::TaskEvents.path()).route(web::get().to(task_events_handler)))
+    .service(web::resource(Route::TaskGet.path()).route(web::get().to(get_task_handler)))
+    .service(web::resource(Route::Tools.path()).route(web::get().to(list_tools)))
+    // Webhook endpoint for triggering agents
+    // Thread endpoints
+    .service(web::resource(Route::Threads.path()).route(web::get().to(list_threads_handler)))
+    .service(web::resource(Route::ThreadsAgents.path()).route(web::get().to(list_agents_by_usage)))
+    .service(web::resource(Route::ThreadMessages.path()).route(web::get().to(get_thread_messages)))
+    .service(
+        web::resource(Route::Thread.path())
+            .route(web::get().to(get_thread_handler))
+            .route(web::put().to(update_thread_handler))
+            .route(web::delete().to(delete_thread_handler)),
+    )
+    // Message read status endpoints
+    .service(
+        web::resource(Route::ThreadMessageRead.path())
+            .route(web::post().to(mark_message_read_handler))
+            .route(web::get().to(get_message_read_status_handler)),
+    )
+    .service(
+        web::resource(Route::ThreadReadStatus.path())
+            .route(web::get().to(get_thread_read_status_handler)),
+    )
+    // Message voting endpoints
+    .service(
+        web::resource(Route::ThreadMessageVote.path())
+            .route(web::post().to(vote_message_handler))
+            .route(web::delete().to(remove_vote_handler))
+            .route(web::get().to(get_message_vote_summary_handler)),
+    )
+    .service(
+        web::resource(Route::ThreadMessageVotes.path())
+            .route(web::get().to(get_message_votes_handler)),
+    )
+    .service(web::resource(Route::SchemaAgent.path()).route(web::get().to(get_agent_schema))) // Note: External tools and approvals are now handled via message metadata
+    // Workspace file endpoints
+    .service(web::scope(Route::FilesScope.path()).configure(files::configure_file_routes))
+    .service(web::scope(Route::SessionsScope.path()).configure(session::configure_session_routes))
+    // Artifact endpoints (session storage for thread/task artifacts)
+    .service(
+        web::scope(Route::ArtifactsScope.path()).configure(artifacts::configure_artifact_routes),
+    )
+    .service(web::resource(Route::Build.path()).route(web::post().to(build_workspace)))
+    .configure(tools::configure)
+    // Browser session endpoint
+    .service(
+        web::resource(Route::BrowserSession.path()).route(web::post().to(create_browser_session)),
+    )
+    // LLM execute
+    .service(web::resource(Route::LlmExecute.path()).route(web::post().to(llm_execute)))
+    // Configuration endpoints
+    .service(web::resource(Route::Device.path()).route(web::get().to(get_device_info)))
+    .service(web::resource(Route::HomeStats.path()).route(web::get().to(get_home_stats)))
+    .configure(prompt_templates::configure_prompt_template_routes)
+    // HTTP request proxy — resolves secrets/connections server-side
+    .service(web::resource(Route::Request.path()).route(web::post().to(proxy_request_handler)))
+    .configure(secrets::configure_secret_routes)
+    .configure(providers::configure_provider_routes)
+    .configure(skills::configure_skill_routes)
+    .configure(models::configure_model_routes)
+    // Connection management endpoints
+    .configure(connections::configure_connection_routes)
+    // Notes CRUD endpoints
+    .configure(notes::configure_note_routes)
+    // Spans / traces endpoints
+    .configure(spans::configure_spans_routes)
+    // Usage stats endpoint
+    .configure(usage::configure_usage_routes)
+    // Authentication endpoints
+    .configure(auth_routes::configure_auth_routes);
 }
 
 /// Agent with stats response
@@ -985,10 +975,22 @@ async fn llm_execute(
         .get::<distri_types::ModelSettings>()
         .cloned();
 
+    // Injected settings win over the server's own stored default, same as in
+    // `A2AService::initialize_task`.
+    let default_model_settings = match executor
+        .effective_default_model_settings(workspace_model_settings)
+        .await
+    {
+        Ok(ms) => ms,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(json!({ "error": e.to_string() }));
+        }
+    };
+
     let base_model_settings: Option<ModelSettings> =
         llm_helpers::load_agent_model_settings(&executor, payload.agent_id.as_deref())
             .await
-            .or(workspace_model_settings);
+            .or(default_model_settings);
 
     // Merge with request's model_settings if provided
     let model_settings: Option<ModelSettings> =
@@ -1516,10 +1518,12 @@ async fn list_tasks(
     let fetched = if let Some(root) = query.parent_task_id.as_deref() {
         // Sub-tree scope: root + descendants; drop the root itself so the
         // response is "the children of X" (the caller already has X).
-        store
-            .list_descendant_tasks(root)
-            .await
-            .map(|tasks| tasks.into_iter().filter(|t| t.id != root).collect::<Vec<_>>())
+        store.list_descendant_tasks(root).await.map(|tasks| {
+            tasks
+                .into_iter()
+                .filter(|t| t.id != root)
+                .collect::<Vec<_>>()
+        })
     } else {
         store.list_tasks(query.thread_id.as_deref()).await
     };
@@ -1541,7 +1545,11 @@ async fn list_tasks(
             tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
             let end = std::cmp::min(offset + limit, tasks.len());
-            let page = if offset >= tasks.len() { &[] as &[_] } else { &tasks[offset..end] };
+            let page = if offset >= tasks.len() {
+                &[] as &[_]
+            } else {
+                &tasks[offset..end]
+            };
 
             // Enrich the page with each task's latest activity (preview +
             // last_event_at). Page-sized, so the N+1 stays bounded.
@@ -1580,7 +1588,9 @@ async fn get_task_handler(
                 .unwrap_or(None);
             HttpResponse::Ok().json(task_with_activity(&task, activity))
         }
-        Ok(None) => HttpResponse::NotFound().json(json!({ "error": format!("task '{task_id}' not found") })),
+        Ok(None) => {
+            HttpResponse::NotFound().json(json!({ "error": format!("task '{task_id}' not found") }))
+        }
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to get task: {}", e)
         })),
