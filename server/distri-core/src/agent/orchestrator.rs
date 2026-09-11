@@ -1663,6 +1663,39 @@ impl AgentOrchestrator {
         (agents, next_cursor)
     }
 
+    /// The default `ModelSettings` a run should start from.
+    ///
+    /// The multi-tenant cloud resolves its workspace default in middleware and
+    /// injects it per request — that always wins. The standalone server has no
+    /// such middleware, so when nothing is injected it reads back the default
+    /// model it stored itself (`POST /v1/providers`), resolving a custom
+    /// provider's `base_url` and key from the same settings row. `None` means
+    /// no default is configured and the agent's own `model_settings` stand.
+    ///
+    /// A stored-but-unusable default is an error rather than a silent `None`:
+    /// see [`distri_types::stores::DefaultModelError`].
+    pub async fn effective_default_model_settings(
+        &self,
+        injected: Option<ModelSettings>,
+    ) -> Result<Option<ModelSettings>, AgentError> {
+        if injected.is_some() {
+            return Ok(injected);
+        }
+        let (Some(provider_store), Some(secret_store)) = (
+            self.stores.provider_store.as_ref(),
+            self.stores.secret_store.as_ref(),
+        ) else {
+            return Ok(None);
+        };
+        let settings = provider_store
+            .get_server_settings()
+            .await
+            .map_err(|e| AgentError::Storage(e.to_string()))?;
+        distri_types::stores::resolve_default_model_settings(&settings, secret_store.as_ref())
+            .await
+            .map_err(|e| AgentError::InvalidConfiguration(e.to_string()))
+    }
+
     /// Validate that the agent has a model provider configured after merging
     /// workspace defaults with agent-level settings. At least one must provide
     /// model settings.

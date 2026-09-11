@@ -4,4 +4,5 @@ pub mod notes_test;
 pub mod skills_test;
 pub mod spans_test;
 pub mod thread_tokens_test;
+pub mod token_auth_test;
 pub mod usage_test;
