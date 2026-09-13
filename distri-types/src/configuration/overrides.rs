@@ -60,6 +60,21 @@ pub struct DefinitionOverrides {
     /// Additional dynamic tool factories to inject into the agent's tool config
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dynamic_tools: Option<Vec<DynamicToolFactory>>,
+
+    /// Override the response format, so an answer can be demanded **in a shape** per call
+    /// rather than only on a stored agent definition.
+    ///
+    /// Merged onto `ModelSettings::inner.response_format` by
+    /// `StandardDefinition::apply_overrides`, which `distri-core`'s `build_request` already
+    /// turns into a real provider `ResponseFormat` (`llm.rs`, the `json_schema` arm). The
+    /// shape is the provider's: `{"type":"json_schema","json_schema":{"name":…,"schema":…}}`.
+    ///
+    /// Without this a schema can live only on a stored definition, so writing an agent's
+    /// answer onto a typed column is guesswork — see the four-way string parsing in
+    /// `builder/starters/crm/scripts/lib/enrich.ts::parseOutput`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub response_format: Option<serde_json::Value>,
 }
 
 impl DefinitionOverrides {
@@ -141,6 +156,11 @@ impl DefinitionOverrides {
 
     pub fn with_dynamic_tools(mut self, tools: Vec<DynamicToolFactory>) -> Self {
         self.dynamic_tools = Some(tools);
+        self
+    }
+
+    pub fn with_response_format(mut self, response_format: serde_json::Value) -> Self {
+        self.response_format = Some(response_format);
         self
     }
 }

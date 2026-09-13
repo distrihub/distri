@@ -788,6 +788,12 @@ impl StandardDefinition {
             if let Some(max_tokens) = overrides.max_tokens {
                 ms.inner.max_tokens = Some(max_tokens);
             }
+            // Demand an answer in a shape, per call. `distri-core`'s `build_request` already
+            // turns this into a real provider `ResponseFormat`; without it a schema could
+            // live only on a stored definition, never on one invocation.
+            if let Some(response_format) = overrides.response_format {
+                ms.inner.response_format = Some(response_format);
+            }
         }
 
         // Override max_iterations
@@ -3020,6 +3026,73 @@ tool_format = "json_l"
             assert_eq!(base_url, Some("https://custom.anthropic.com".into()));
             assert_eq!(api_key, Some("key".into()));
         }
+    }
+
+    /// D4-S4: an answer can be demanded **in a shape** per call, not only on a stored
+    /// definition. Without this, writing an agent's answer onto a typed column is guesswork —
+    /// see the four-way string parsing in
+    /// `builder/starters/crm/scripts/lib/enrich.ts::parseOutput`.
+    #[test]
+    fn apply_overrides_sets_response_format() {
+        let schema = serde_json::json!({
+            "type": "json_schema",
+            "json_schema": { "name": "statement", "schema": { "type": "object", "properties": { "balance": { "type": "number" } } } }
+        });
+
+        // The override lands on the settings `build_request` reads, beside model and
+        // temperature, which is the whole ask.
+        let mut def = StandardDefinition {
+            model_settings: Some(ModelSettings::new("gpt-4.1-mini")),
+            ..Default::default()
+        };
+        def.apply_overrides(
+            DefinitionOverrides::new()
+                .with_model("gpt-5.1".into())
+                .with_temperature(0.2)
+                .with_response_format(schema.clone()),
+        );
+        let ms = def.model_settings.as_ref().expect("model settings");
+        assert_eq!(ms.model, "gpt-5.1");
+        assert_eq!(ms.inner.temperature, Some(0.2));
+        assert_eq!(ms.inner.response_format, Some(schema.clone()));
+
+        // The override wins over whatever the definition carried.
+        let mut def = StandardDefinition {
+            model_settings: Some(ModelSettings {
+                model: "gpt-4.1-mini".into(),
+                inner: ModelSettingsInner {
+                    response_format: Some(serde_json::json!({"type": "text"})),
+                    ..Default::default()
+                },
+            }),
+            ..Default::default()
+        };
+        def.apply_overrides(DefinitionOverrides::new().with_response_format(schema.clone()));
+        assert_eq!(
+            def.model_settings.as_ref().unwrap().inner.response_format,
+            Some(schema)
+        );
+
+        // An absent override leaves the definition's own value alone.
+        let mut def = StandardDefinition {
+            model_settings: Some(ModelSettings {
+                model: "gpt-4.1-mini".into(),
+                inner: ModelSettingsInner {
+                    response_format: Some(serde_json::json!({"type": "text"})),
+                    ..Default::default()
+                },
+            }),
+            ..Default::default()
+        };
+        def.apply_overrides(DefinitionOverrides::new().with_temperature(0.9));
+        assert_eq!(
+            def.model_settings.as_ref().unwrap().inner.response_format,
+            Some(serde_json::json!({"type": "text"}))
+        );
+        assert_eq!(
+            def.model_settings.as_ref().unwrap().inner.temperature,
+            Some(0.9)
+        );
     }
 
     #[test]
