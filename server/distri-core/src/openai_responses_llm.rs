@@ -12,7 +12,7 @@ use crate::{
     openai_responses_client::{
         CreateResponseRequest, InputContent, InputContentPart, InputFunctionCall,
         InputFunctionCallOutput, InputItem, InputMessage, OpenAIResponsesClient, OutputContentPart,
-        OutputFunctionCall, OutputItem, OutputMessage, ResponsesTool, TypedStreamEvent,
+        OutputFunctionCall, OutputItem, OutputMessage, ResponseUsage, ResponsesTool, TypedStreamEvent,
     },
     tools::Tool,
     types::{Message, MessageRole, Part, ToolCall},
@@ -26,6 +26,23 @@ use tracing::Instrument as _;
 
 /// Default max_output_tokens for the Responses API
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 8192;
+
+/// Lifecycle events report cumulative usage. Apply only newly reported tokens, including
+/// input tokens first supplied at completion, and never count a repeated event twice.
+#[derive(Default)]
+struct StreamUsage {
+    input: u32,
+    output: u32,
+}
+
+impl StreamUsage {
+    fn observe(&mut self, usage: &ResponseUsage) -> (u32, u32) {
+        let delta = (usage.input_tokens.saturating_sub(self.input), usage.output_tokens.saturating_sub(self.output));
+        self.input = self.input.max(usage.input_tokens);
+        self.output = self.output.max(usage.output_tokens);
+        delta
+    }
+}
 
 #[derive(Debug)]
 pub struct OpenAIResponsesLLMExecutor {
@@ -379,7 +396,10 @@ impl OpenAIResponsesLLMExecutor {
                     name: def.name,
                     description: def.description,
                     parameters,
-                    strict: Some(true),
+                    // Tool contracts may contain optional fields. Strict Responses schemas
+                    // require all properties and recursive additionalProperties=false.
+                    // Preserve the declared contracts rather than silently rewriting them.
+                    strict: Some(false),
                 }
             })
             .collect()
@@ -595,6 +615,7 @@ impl OpenAIResponsesLLMExecutor {
 
         for item in output {
             match item {
+                OutputItem::Unknown => {},
                 OutputItem::Message(OutputMessage { content: parts, .. }) => {
                     for part in parts {
                         match part {
@@ -732,31 +753,20 @@ impl OpenAIResponsesLLMExecutor {
             arguments: String,
         }
         let mut partial_function_calls: HashMap<usize, PartialFunctionCall> = HashMap::new();
-        let mut stream_input_tokens: u32 = 0;
-        let mut stream_output_tokens: u32 = 0;
+        let mut stream_usage = StreamUsage::default();
 
         tokio::pin!(stream);
 
         while let Some(event_result) = stream.next().await {
             match event_result {
                 Ok(event) => match event {
-                    TypedStreamEvent::ResponseCreated(resp) => {
-                        if resp.usage.input_tokens > 0 {
-                            stream_input_tokens += resp.usage.input_tokens;
-                            self.context
-                                .increment_usage(resp.usage.input_tokens, 0)
-                                .await;
-                        }
-                    }
-                    TypedStreamEvent::ResponseCompleted(resp) => {
-                        if resp.usage.output_tokens > 0 {
-                            stream_output_tokens += resp.usage.output_tokens;
-                            self.context
-                                .increment_usage(0, resp.usage.output_tokens)
-                                .await;
-                        }
+                    TypedStreamEvent::ResponseCreated(resp) | TypedStreamEvent::ResponseCompleted(resp) => {
+                        let (input, output) = stream_usage.observe(&resp.usage);
+                        self.context.increment_usage(input, output).await;
                     }
                     TypedStreamEvent::ResponseFailed(resp) => {
+                        let (input, output) = stream_usage.observe(&resp.usage);
+                        self.context.increment_usage(input, output).await;
                         return Err(AgentError::LLMError(format!(
                             "OpenAI Responses API failed with status: {}",
                             resp.status
@@ -973,8 +983,8 @@ impl OpenAIResponsesLLMExecutor {
         let elapsed = start.elapsed().as_millis() as u64;
         let cost = crate::agent::pricing::estimate_cost(
             &ms.model,
-            stream_input_tokens,
-            stream_output_tokens,
+            stream_usage.input,
+            stream_usage.output,
             0,
         );
         llm_gateway::observability::recorder::record_inference_response(
@@ -982,13 +992,13 @@ impl OpenAIResponsesLLMExecutor {
             Some(ms.model.as_str()),
             None,
             &[format!("{:?}", finish_reason)],
-            if stream_input_tokens > 0 {
-                Some(stream_input_tokens as i64)
+            if stream_usage.input > 0 {
+                Some(stream_usage.input as i64)
             } else {
                 None
             },
-            if stream_output_tokens > 0 {
-                Some(stream_output_tokens as i64)
+            if stream_usage.output > 0 {
+                Some(stream_usage.output as i64)
             } else {
                 None
             },
@@ -1037,6 +1047,18 @@ fn file_type_to_input_file(file: &FileType) -> InputContentPart {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_usage_applies_cumulative_deltas_once() {
+        let mut seen = StreamUsage::default();
+        let report = |input_tokens, output_tokens| ResponseUsage { input_tokens, output_tokens, total_tokens: input_tokens + output_tokens };
+        assert_eq!(seen.observe(&report(10, 0)), (10, 0));
+        assert_eq!(seen.observe(&report(10, 0)), (0, 0));
+        assert_eq!(seen.observe(&report(123, 45)), (113, 45));
+        assert_eq!(seen.observe(&report(123, 45)), (0, 0));
+        assert_eq!(seen.observe(&report(0, 0)), (0, 0));
+        assert_eq!((seen.input, seen.output), (123, 45));
+    }
 
     #[test]
     fn file_type_to_input_file_emits_data_for_bytes() {
