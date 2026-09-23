@@ -1030,7 +1030,12 @@ pub enum McpServerType {
     Agent,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// `Debug` is **hand-written** (see below), not derived: ten of these eleven variants carry an
+/// `api_key`, and a derived `Debug` prints it verbatim. `llm.rs` logs the provider with `{:?}`
+/// on every request, which put a live Azure key in plaintext into the app log, the Tauri
+/// sidecar's stdout and anything tailing either. Redacting at the type fixes every call site
+/// at once, including the ones nobody has written yet.
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "lowercase", tag = "name")]
 pub enum ModelProvider {
     #[serde(rename = "openai")]
@@ -1335,6 +1340,63 @@ pub struct ProviderModels {
 impl Default for ModelProvider {
     fn default() -> Self {
         ModelProvider::OpenAI {}
+    }
+}
+
+impl std::fmt::Debug for ModelProvider {
+    /// Every field except the secret, and for the secret only whether one is set.
+    ///
+    /// "set"/"unset" is the part that matters when reading a log: the usual question is
+    /// whether the key reached the provider at all, and that is answerable without printing
+    /// it. Deriving `Debug` instead put live keys into every log line that formats a provider.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn key(k: &Option<String>) -> &'static str {
+            match k {
+                Some(v) if !v.is_empty() => "set",
+                _ => "unset",
+            }
+        }
+        match self {
+            Self::OpenAI {} => f.debug_struct("OpenAI").finish(),
+            Self::OpenAICompatible { base_url, api_key, project_id } => f
+                .debug_struct("OpenAICompatible")
+                .field("base_url", base_url)
+                .field("api_key", &key(api_key))
+                .field("project_id", project_id)
+                .finish(),
+            Self::AzureOpenAI { base_url, api_key, deployment, api_version } => f
+                .debug_struct("AzureOpenAI")
+                .field("base_url", base_url)
+                .field("api_key", &key(api_key))
+                .field("deployment", deployment)
+                .field("api_version", api_version)
+                .finish(),
+            Self::Anthropic { base_url, api_key } => {
+                f.debug_struct("Anthropic").field("base_url", base_url).field("api_key", &key(api_key)).finish()
+            }
+            Self::ZAi { base_url, api_key } => {
+                f.debug_struct("ZAi").field("base_url", base_url).field("api_key", &key(api_key)).finish()
+            }
+            Self::Gemini { base_url, api_key } => {
+                f.debug_struct("Gemini").field("base_url", base_url).field("api_key", &key(api_key)).finish()
+            }
+            Self::AzureAiFoundry { resource, api_key } => {
+                f.debug_struct("AzureAiFoundry").field("resource", resource).field("api_key", &key(api_key)).finish()
+            }
+            Self::AwsBedrock { base_url, api_key } => {
+                f.debug_struct("AwsBedrock").field("base_url", base_url).field("api_key", &key(api_key)).finish()
+            }
+            Self::GoogleVertex { base_url, api_key, project_id } => f
+                .debug_struct("GoogleVertex")
+                .field("base_url", base_url)
+                .field("api_key", &key(api_key))
+                .field("project_id", project_id)
+                .finish(),
+            Self::AlibabaCloud { base_url, api_key } => {
+                f.debug_struct("AlibabaCloud").field("base_url", base_url).field("api_key", &key(api_key)).finish()
+            }
+            Self::FalAi { api_key } => f.debug_struct("FalAi").field("api_key", &key(api_key)).finish(),
+        }
     }
 }
 
@@ -3391,5 +3453,47 @@ tool_format = "json_l"
         ] {
             assert!(known.contains(key), "schema-derived keys must include {key}");
         }
+    }
+    /// A live Azure key reached `/tmp/make-app.log` in plaintext, seven times in one session,
+    /// because `llm.rs` logs `provider={:?}` on every request and `Debug` was derived.
+    #[test]
+    fn debug_never_prints_an_api_key() {
+        const SECRET: &str = "AtEp4MYkiuqD9pOKLN0cUviNKAprUyFM3ltCGP8HZbB4";
+        let providers = vec![
+            ModelProvider::OpenAICompatible {
+                base_url: "https://example.openai.azure.com/openai/v1".into(),
+                api_key: Some(SECRET.into()),
+                project_id: None,
+            },
+            ModelProvider::AzureOpenAI {
+                base_url: "https://example.openai.azure.com".into(),
+                api_key: Some(SECRET.into()),
+                deployment: "gpt".into(),
+                api_version: ModelProvider::azure_api_version(),
+            },
+            ModelProvider::Anthropic { base_url: None, api_key: Some(SECRET.into()) },
+            ModelProvider::ZAi { base_url: ModelProvider::zai_base_url(), api_key: Some(SECRET.into()) },
+            ModelProvider::Gemini { base_url: ModelProvider::gemini_base_url(), api_key: Some(SECRET.into()) },
+            ModelProvider::AzureAiFoundry { resource: "res".into(), api_key: Some(SECRET.into()) },
+            ModelProvider::AwsBedrock { base_url: "https://bedrock".into(), api_key: Some(SECRET.into()) },
+            ModelProvider::GoogleVertex {
+                base_url: "https://vertex".into(),
+                api_key: Some(SECRET.into()),
+                project_id: Some("p".into()),
+            },
+            ModelProvider::AlibabaCloud { base_url: ModelProvider::alibaba_cloud_base_url(), api_key: Some(SECRET.into()) },
+            ModelProvider::FalAi { api_key: Some(SECRET.into()) },
+        ];
+        for p in &providers {
+            let shown = format!("{p:?}");
+            assert!(!shown.contains(SECRET), "Debug leaked the api_key: {shown}");
+            assert!(shown.contains("set"), "Debug should still say a key is present: {shown}");
+        }
+        // …and it still says when one is missing, which is the question a log is usually asked.
+        let none = format!("{:?}", ModelProvider::FalAi { api_key: None });
+        assert!(none.contains("unset"), "{none}");
+        // The non-secret fields are what make the line worth logging; they stay.
+        let shown = format!("{:?}", &providers[0]);
+        assert!(shown.contains("example.openai.azure.com"), "{shown}");
     }
 }
