@@ -14,7 +14,7 @@
 //! |------|-------|--------|
 //! | `Join` | Single / All / Detached | ✓ |
 //! | `Executor` | Local | ✓ |
-//! | `Executor` | Remote | NotImplemented (Commit D) |
+//! | `Executor` | Remote | ✓ (only via `ExecutorHint::Force` — `Auto` never falls back to it) |
 //! | `ContextScope` | Independent | ✓ |
 //! | `ContextScope` | Inherited / Shared | NotImplemented (Commit G) |
 //!
@@ -29,11 +29,10 @@ use distri_types::invocation::{
     AgentRef, AgentResult, Executor, ExecutorHint, Invocation, InvocationResult, Join, Target,
 };
 use distri_types::stores::CreateTaskInput;
-use distri_types::{RuntimeMode, StandardDefinition};
+use distri_types::{RemoteTaskRunner, RuntimeMode, StandardDefinition};
 
 use crate::agent::orchestrator::AgentOrchestrator;
 use crate::agent::ExecutorContext;
-use crate::runner::RemoteTaskRunner;
 use crate::AgentError;
 
 // ── Dispatch decision (shared with `call_agent_stream`) ──────────────────
@@ -51,9 +50,9 @@ pub(crate) enum DispatchPlan {
     Remote { runner: Arc<dyn RemoteTaskRunner> },
 }
 
-/// Decide how to launch a target given the agent's runtime constraint
-/// and the caller's `ExecutorHint`. Single source of truth for the
-/// runtime-mode dispatch logic — both `invoke()` (typed) and the legacy
+/// Decide how to launch a target given the agent's runtime constraint and
+/// the caller's `ExecutorHint`. Single source of truth for the runtime-mode
+/// dispatch logic — both `invoke()` (typed) and the legacy
 /// `call_agent_stream` (untyped) call into this.
 ///
 /// Resolution order:
@@ -61,11 +60,15 @@ pub(crate) enum DispatchPlan {
 ///   2. `ExecutorHint::Force(Remote { .. })` → `DispatchPlan::Remote`
 ///      (errors if no runner configured).
 ///   3. `ExecutorHint::Auto`:
-///      - Agent has no runtime constraint, OR parent's runtime is in
-///        the allowed list → `Local`.
-///      - Otherwise need `Remote`: requires a runner whose
-///        `provided_runtime` is in the allowed list. Errors clearly
-///        if no runner / wrong runner.
+///      - Agent has no runtime constraint, OR the caller's own runtime is
+///        already in the allowed list → `Local`.
+///      - Otherwise: fails fast with a clear error. **`Auto` never falls
+///        back to `Remote`** — remote/sandboxed execution only happens
+///        when a caller explicitly asks for it via `Force(Remote)` (e.g.
+///        the cloud-side `execute_sandbox` tool available to channel
+///        invocations). This is deliberate: an agent whose `runtime`
+///        constraint the caller can't satisfy should fail loudly, not be
+///        silently escalated to a sandbox the caller didn't ask for.
 pub(crate) fn decide_dispatch(
     agent_def: &StandardDefinition,
     parent_runtime: &RuntimeMode,
@@ -91,24 +94,14 @@ pub(crate) fn decide_dispatch(
             if allowed.is_empty() || allowed.iter().any(|r| r == parent_runtime) {
                 return Ok(DispatchPlan::Local);
             }
-            let runner = runner.ok_or_else(|| {
-                AgentError::Session(format!(
-                    "Agent '{}' requires runtime {:?} but the current runtime is {:?} \
-                     and no runner initializer is configured to provide it.",
-                    agent_def.name, allowed, parent_runtime
-                ))
-            })?;
-            let provided = runner.provided_runtime();
-            if !allowed.iter().any(|r| r == &provided) {
-                return Err(AgentError::Session(format!(
-                    "Agent '{}' requires runtime {:?} but the only available background \
-                     runner provides {:?}.",
-                    agent_def.name, allowed, provided
-                )));
-            }
-            Ok(DispatchPlan::Remote {
-                runner: runner.clone(),
-            })
+            Err(AgentError::Session(format!(
+                "Agent '{}' requires runtime {:?} but the caller's runtime is {:?}. Only a \
+                 client that natively provides one of the required runtimes (the CLI for \
+                 Cli, a browser tab for Browser) can run this agent in-process — remote/\
+                 sandboxed execution must be requested explicitly via \
+                 Executor::Force(Remote), it is never an automatic fallback.",
+                agent_def.name, allowed, parent_runtime
+            )))
         }
     }
 }
@@ -349,7 +342,6 @@ impl AgentOrchestrator {
         // Plan-only path: only `agent_id` is read off the resolved
         // target. Tool inheritance is irrelevant here — pass `None` to
         // skip the extra lookup.
-        let _ = parent_ctx;
         let resolved = ResolvedTarget::from_target(target, None);
         let def = self.standard_definition(&resolved.agent_id).await?;
         let hint = target
@@ -461,124 +453,6 @@ impl AgentOrchestrator {
             task_id: child_ctx.task_id.clone(),
             status,
         })
-    }
-
-    /// Single-target Remote + Independent dispatch. Persists the row
-    /// with `remote = true` + the typed Invocation blob, builds a
-    /// [`RemoteAgent`](crate::agent::remote::RemoteAgent) wrapping the
-    /// resolved [`RemoteTaskRunner`], and drives its invoke_stream.
-    /// `RemoteAgent::invoke_inner` allocates its own inner_task_id
-    /// internally and forwards events from the inner broadcaster onto
-    /// the outer task's broadcaster — same path the legacy
-    /// `call_agent_stream` already uses.
-    async fn invoke_remote_independent(
-        self: &Arc<Self>,
-        target: Target,
-        invocation_blob: &serde_json::Value,
-        parent_ctx: &Arc<ExecutorContext>,
-        runner: Arc<dyn RemoteTaskRunner>,
-    ) -> Result<AgentResult, AgentError> {
-        let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
-        let resolved = ResolvedTarget::from_target(&target, inherited);
-        let def = self.standard_definition(&resolved.agent_id).await?;
-        let child_ctx = self
-            .persist_child_task_remote(&resolved, invocation_blob, parent_ctx)
-            .await?;
-
-        let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
-            crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
-        );
-        let agent = crate::agent::remote::RemoteAgent {
-            definition: def,
-            runner,
-            broadcaster: self.runtime.broadcaster_arc(),
-            hooks,
-        };
-        let invoke_result = crate::agent::types::BaseAgent::invoke_stream(
-            &agent,
-            target.message,
-            child_ctx.clone(),
-        )
-        .await?;
-
-        let final_value = match child_ctx.get_final_result().await {
-            Some(v) => v,
-            None => invoke_result
-                .content
-                .clone()
-                .map(serde_json::Value::String)
-                .unwrap_or(serde_json::Value::Null),
-        };
-
-        let status = self
-            .stores
-            .task_store
-            .get_task(&child_ctx.task_id)
-            .await
-            .ok()
-            .flatten()
-            .map(|t| t.status)
-            .unwrap_or(distri_types::TaskStatus::Completed);
-
-        Ok(AgentResult {
-            content: final_value,
-            task_id: child_ctx.task_id.clone(),
-            status,
-        })
-    }
-
-    /// Detached Remote dispatch — same row write as `invoke_remote_independent`
-    /// but spawns the relay in the background and returns immediately.
-    async fn detach_remote_independent(
-        self: &Arc<Self>,
-        target: Target,
-        invocation_blob: &serde_json::Value,
-        parent_ctx: &Arc<ExecutorContext>,
-        runner: Arc<dyn RemoteTaskRunner>,
-    ) -> Result<String, AgentError> {
-        let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
-        let resolved = ResolvedTarget::from_target(&target, inherited);
-        let def = self.standard_definition(&resolved.agent_id).await?;
-        let child_ctx = self
-            .persist_child_task_remote(&resolved, invocation_blob, parent_ctx)
-            .await?;
-        let task_id = child_ctx.task_id.clone();
-
-        let orch = self.clone();
-        let message = target.message;
-        let user_id = parent_ctx.user_id.clone();
-        let ws_uuid = parent_ctx
-            .workspace_id
-            .as_deref()
-            .and_then(|s| uuid::Uuid::parse_str(s).ok());
-        let spawned_task_id = task_id.clone();
-        tokio::spawn(distri_auth::context::with_user_and_workspace(
-            user_id,
-            ws_uuid,
-            async move {
-                let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
-                    crate::agent::hooks::CombinedHooks::new(orch.system_hooks.clone()),
-                );
-                let agent = crate::agent::remote::RemoteAgent {
-                    definition: def,
-                    runner,
-                    broadcaster: orch.runtime.broadcaster_arc(),
-                    hooks,
-                };
-                if let Err(e) =
-                    crate::agent::types::BaseAgent::invoke_stream(&agent, message, child_ctx).await
-                {
-                    tracing::warn!(
-                        target: "invoke.detached",
-                        error = %e,
-                        "detached remote invocation loop failed",
-                    );
-                }
-                orch.settle_detached_task(&spawned_task_id).await;
-            },
-        ));
-
-        Ok(task_id)
     }
 
     /// Detached counterpart of [`invoke_local_independent`]. Persists
@@ -740,18 +614,136 @@ impl AgentOrchestrator {
         Ok(child_ctx)
     }
 
-    /// Remote variant. Pre-allocates the inner task_id (the id the
-    /// `RemoteTaskRunner` publishes events under) and writes it to the
-    /// row's `inner_task_id` column up front. The CHECK constraint
-    /// `tasks_remote_consistency` allows `remote=true` with NULL
-    /// inner_task_id — we fill it eagerly anyway so supervisor tools
-    /// have the outer↔inner relay pointer immediately.
+    /// Single-target Remote + Independent dispatch. Persists the row
+    /// with `remote = true` + the typed Invocation blob, builds a
+    /// [`RemoteAgent`](crate::agent::remote::RemoteAgent) wrapping the
+    /// resolved [`RemoteTaskRunner`], and drives its invoke_stream.
+    /// `RemoteAgent::invoke_inner` allocates its own inner_task_id
+    /// internally and forwards events from the inner broadcaster onto
+    /// the outer task's broadcaster — same path the legacy
+    /// `call_agent_stream` already uses.
+    async fn invoke_remote_independent(
+        self: &Arc<Self>,
+        target: Target,
+        invocation_blob: &serde_json::Value,
+        parent_ctx: &Arc<ExecutorContext>,
+        runner: Arc<dyn RemoteTaskRunner>,
+    ) -> Result<AgentResult, AgentError> {
+        let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
+        let resolved = ResolvedTarget::from_target(&target, inherited);
+        let def = self.standard_definition(&resolved.agent_id).await?;
+        let child_ctx = self
+            .persist_child_task_remote(&resolved, invocation_blob, parent_ctx)
+            .await?;
+
+        let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+            crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
+        );
+        let agent = crate::agent::remote::RemoteAgent {
+            definition: def,
+            runner,
+            broadcaster: self.runtime.broadcaster_arc(),
+            hooks,
+        };
+        let invoke_result = crate::agent::types::BaseAgent::invoke_stream(
+            &agent,
+            target.message,
+            child_ctx.clone(),
+        )
+        .await?;
+
+        let final_value = match child_ctx.get_final_result().await {
+            Some(v) => v,
+            None => invoke_result
+                .content
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        };
+
+        let status = self
+            .stores
+            .task_store
+            .get_task(&child_ctx.task_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|t| t.status)
+            .unwrap_or(distri_types::TaskStatus::Completed);
+
+        Ok(AgentResult {
+            content: final_value,
+            task_id: child_ctx.task_id.clone(),
+            status,
+        })
+    }
+
+    /// Detached Remote dispatch — same row write as `invoke_remote_independent`
+    /// but spawns the relay in the background and returns immediately.
+    async fn detach_remote_independent(
+        self: &Arc<Self>,
+        target: Target,
+        invocation_blob: &serde_json::Value,
+        parent_ctx: &Arc<ExecutorContext>,
+        runner: Arc<dyn RemoteTaskRunner>,
+    ) -> Result<String, AgentError> {
+        let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
+        let resolved = ResolvedTarget::from_target(&target, inherited);
+        let def = self.standard_definition(&resolved.agent_id).await?;
+        let child_ctx = self
+            .persist_child_task_remote(&resolved, invocation_blob, parent_ctx)
+            .await?;
+        let task_id = child_ctx.task_id.clone();
+
+        let orch = self.clone();
+        let message = target.message;
+        let user_id = parent_ctx.user_id.clone();
+        let ws_uuid = parent_ctx
+            .workspace_id
+            .as_deref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let spawned_task_id = task_id.clone();
+        tokio::spawn(distri_auth::context::with_user_and_workspace(
+            user_id,
+            ws_uuid,
+            async move {
+                let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+                    crate::agent::hooks::CombinedHooks::new(orch.system_hooks.clone()),
+                );
+                let agent = crate::agent::remote::RemoteAgent {
+                    definition: def,
+                    runner,
+                    broadcaster: orch.runtime.broadcaster_arc(),
+                    hooks,
+                };
+                if let Err(e) =
+                    crate::agent::types::BaseAgent::invoke_stream(&agent, message, child_ctx).await
+                {
+                    tracing::warn!(
+                        target: "invoke.detached",
+                        error = %e,
+                        "detached remote invocation loop failed",
+                    );
+                }
+                orch.settle_detached_task(&spawned_task_id).await;
+            },
+        ));
+
+        Ok(task_id)
+    }
+
+    /// Remote variant of [`persist_child_task`]. Pre-allocates the inner
+    /// task_id (the id the `RemoteTaskRunner` publishes events under)
+    /// and writes it to the row's `inner_task_id` column up front. The
+    /// CHECK constraint `tasks_remote_consistency` allows `remote=true`
+    /// with NULL inner_task_id — we fill it eagerly anyway so
+    /// supervisor tools have the outer↔inner relay pointer immediately.
     ///
     /// Today's `RemoteAgent::invoke_inner` allocates its OWN inner id
     /// internally; that means the value we persist here and the value
     /// the runner publishes under are different. That's a known
-    /// inconsistency we'll resolve in a follow-up that threads
-    /// `inner_task_id` into RemoteAgent so it uses ours instead of
+    /// inconsistency to resolve in a follow-up that threads
+    /// `inner_task_id` into `RemoteAgent` so it uses ours instead of
     /// allocating its own. For now the row's `inner_task_id` is
     /// reserved and will become authoritative once that wire-through
     /// lands.

@@ -406,3 +406,68 @@ async fn test_full_iteration_simulation() {
         Some("task-sim".to_string())
     );
 }
+
+// ── Scenario 10: subtask callback tracking ────────────────────────────────
+
+#[tokio::test]
+async fn test_subtask_callback_round_trips_and_lists_pending() {
+    let (coord, _task_store) = make_coordinator().await;
+
+    coord
+        .set_subtask_callback("child-1", r#"{"parent":"p1"}"#)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        coord.get_subtask_callback("child-1").await.unwrap(),
+        Some(r#"{"parent":"p1"}"#.to_string())
+    );
+    assert_eq!(
+        coord.list_pending_subtask_callbacks().await.unwrap(),
+        vec!["child-1".to_string()]
+    );
+
+    // No callback set for an unknown id.
+    assert_eq!(coord.get_subtask_callback("unknown").await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn test_mark_subtask_notified_is_idempotent_and_excludes_from_pending() {
+    let (coord, _task_store) = make_coordinator().await;
+
+    coord
+        .set_subtask_callback("child-2", "{}")
+        .await
+        .unwrap();
+
+    let first = coord.mark_subtask_notified("child-2").await.unwrap();
+    assert!(first, "first call must flip pending -> notified");
+
+    let second = coord.mark_subtask_notified("child-2").await.unwrap();
+    assert!(!second, "second call on an already-notified id must be a no-op");
+
+    // Dropped from the pending list...
+    assert!(coord
+        .list_pending_subtask_callbacks()
+        .await
+        .unwrap()
+        .is_empty());
+    // ...but the payload is still readable (a late get shouldn't 404).
+    assert_eq!(
+        coord.get_subtask_callback("child-2").await.unwrap(),
+        Some("{}".to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_list_pending_subtask_callbacks_excludes_notified() {
+    let (coord, _task_store) = make_coordinator().await;
+
+    coord.set_subtask_callback("pending-1", "{}").await.unwrap();
+    coord.set_subtask_callback("notified-1", "{}").await.unwrap();
+    coord.mark_subtask_notified("notified-1").await.unwrap();
+
+    let pending = coord.list_pending_subtask_callbacks().await.unwrap();
+    assert!(pending.contains(&"pending-1".to_string()));
+    assert!(!pending.contains(&"notified-1".to_string()));
+}
