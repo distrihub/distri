@@ -1,7 +1,6 @@
-//! `distri::run` — shared entry point used by `distri-cli` (Commands::Run) and
-//! server-side runners (e.g. cloud's `LocalProcessRemoteRunner`). Both go
-//! through the same `MessageSendParams` construction so anything tested via
-//! one is effectively tested via the other.
+//! `distri::run` — shared entry point used by `distri-cli` (Commands::Run).
+//! Goes through a single `MessageSendParams` construction path so behavior
+//! stays consistent across callers.
 //!
 //! The shape is split into two halves so the CLI can slot in its
 //! `inject_external_tools` step between building and streaming:
@@ -17,9 +16,6 @@
 //! let mut params = build_run_params(&platform_client, &opts).await;
 //! app.inject_external_tools(&mut params)?;
 //! stream_run(&stream_client, &agent_name, params, on_event).await?;
-//!
-//! // Server-side runner usage (no injection):
-//! run_agent(&platform_client, &stream_client, opts, on_event).await?;
 //! ```
 
 use std::collections::HashMap;
@@ -48,9 +44,6 @@ pub struct RunOptions {
     /// Explicit thread_id (a.k.a. context_id). Falls back to
     /// `DISTRI_THREAD_ID` env when None.
     pub thread_id: Option<String>,
-    /// True when the call should run remotely (server forks to sandbox /
-    /// in-process runner via runtime-constraint dispatch).
-    pub remote: bool,
     /// Model override. Shows up in `definition_overrides.model`.
     pub model: Option<String>,
     /// Env vars to pass through the `ExecutorContext`. Merged with secrets
@@ -105,7 +98,6 @@ pub async fn build_run_params(platform_client: &Distri, opts: &RunOptions) -> Me
         effective_thread.as_deref(),
         effective_task.as_deref(),
         opts.model.as_deref(),
-        opts.remote,
         connections_context,
         opts.env_vars.clone(),
         opts.tags.clone(),

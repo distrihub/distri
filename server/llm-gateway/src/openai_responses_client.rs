@@ -120,8 +120,9 @@ pub struct CreateResponseResponse {
     pub id: String,
     #[serde(default)]
     pub status: String,
-    pub output: Vec<OutputItem>,
     #[serde(default)]
+    pub output: Vec<OutputItem>,
+    #[serde(default, deserialize_with = "deserialize_usage")]
     pub usage: ResponseUsage,
 }
 
@@ -131,6 +132,9 @@ pub struct CreateResponseResponse {
 pub enum OutputItem {
     Message(OutputMessage),
     FunctionCall(OutputFunctionCall),
+    /// Reasoning and future output item kinds do not invalidate terminal usage.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -163,6 +167,24 @@ pub struct ResponseUsage {
     pub output_tokens: u32,
     #[serde(default)]
     pub total_tokens: u32,
+}
+
+fn deserialize_usage<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<ResponseUsage, D::Error> {
+    Option::<ResponseUsage>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
+/// Lifecycle SSE events wrap the response; accept legacy bare payloads as well.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ResponseEventPayload {
+    Wrapped { response: CreateResponseResponse },
+    Bare(CreateResponseResponse),
+}
+
+fn lifecycle_response(data: &str) -> Result<CreateResponseResponse, String> {
+    serde_json::from_str::<ResponseEventPayload>(data).map(|payload| match payload {
+        ResponseEventPayload::Wrapped { response } | ResponseEventPayload::Bare(response) => response,
+    }).map_err(|error| error.to_string())
 }
 
 // ─── Streaming Types ─────────────────────────────────────────────────────────
@@ -417,11 +439,10 @@ impl OpenAIResponsesClient {
                             match parse_typed_event(&current_event_type, &current_data) {
                                 Some(Ok(event)) => yield Ok(event),
                                 Some(Err(e)) => {
-                                    tracing::warn!(
-                                        "Failed to parse SSE event (type={}): {} data={}",
-                                        current_event_type, e,
-                                        &current_data[..current_data.len().min(200)]
-                                    );
+                                    yield Err(distri_types::AgentError::LLMError(format!(
+                                        "Invalid Responses SSE event {}: {}", current_event_type, e
+                                    )));
+                                    return;
                                 }
                                 None => {
                                     tracing::trace!(
@@ -455,17 +476,17 @@ impl OpenAIResponsesClient {
 fn parse_typed_event(event_type: &str, data: &str) -> Option<Result<TypedStreamEvent, String>> {
     match event_type {
         "response.created" | "response.in_progress" => Some(
-            serde_json::from_str::<CreateResponseResponse>(data)
+            lifecycle_response(data)
                 .map(TypedStreamEvent::ResponseCreated)
                 .map_err(|e| e.to_string()),
         ),
         "response.completed" => Some(
-            serde_json::from_str::<CreateResponseResponse>(data)
+            lifecycle_response(data)
                 .map(TypedStreamEvent::ResponseCompleted)
                 .map_err(|e| e.to_string()),
         ),
         "response.failed" | "response.incomplete" => Some(
-            serde_json::from_str::<CreateResponseResponse>(data)
+            lifecycle_response(data)
                 .map(TypedStreamEvent::ResponseFailed)
                 .map_err(|e| e.to_string()),
         ),
@@ -562,5 +583,39 @@ mod input_file_tests {
         assert_eq!(v["file_url"], "https://example.com/d.pdf");
         assert!(v.get("file_data").is_none());
         assert!(v.get("filename").is_none());
+    }
+}
+
+#[cfg(test)]
+mod response_event_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn completed_envelope_retains_usage_with_reasoning_output() {
+        let data = json!({"type":"response.completed","response":{
+            "id":"resp_1","status":"completed","output":[
+                {"type":"reasoning","id":"rs_1","summary":[]},
+                {"type":"function_call","id":"fc_1","call_id":"call_1","name":"final","arguments":"{}"}
+            ],"usage":{"input_tokens":123,"output_tokens":45,"total_tokens":168}
+        }}).to_string();
+        let event = parse_typed_event("response.completed", &data).unwrap().unwrap();
+        let TypedStreamEvent::ResponseCompleted(response) = event else {panic!("wrong event")};
+        assert_eq!(response.usage.input_tokens,123);
+        assert_eq!(response.usage.output_tokens,45);
+        assert_eq!(response.usage.total_tokens,168);
+        assert!(matches!(&response.output[1], OutputItem::FunctionCall(call) if call.name == "final"));
+    }
+
+    #[test]
+    fn created_null_usage_and_failed_envelopes_are_not_dropped() {
+        let created = json!({"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[],"usage":null}}).to_string();
+        assert!(matches!(parse_typed_event("response.created", &created).unwrap().unwrap(), TypedStreamEvent::ResponseCreated(_)));
+        for status in ["failed","incomplete"] {
+            let event_type = format!("response.{status}");
+            let data = json!({"type":event_type,"response":{"id":"resp_1","status":status,"output":[],"usage":null}}).to_string();
+            let parsed = parse_typed_event(&event_type,&data).unwrap().unwrap();
+            assert!(matches!(parsed,TypedStreamEvent::ResponseFailed(response) if response.status == status));
+        }
     }
 }

@@ -169,6 +169,41 @@ pub trait AgentTaskCoordinator: Send + Sync + 'static {
         let _ = channel_id;
         Ok(())
     }
+
+    /// Record a background subtask's completion-notification obligation.
+    /// `child_task_id` is the key; `payload_json` is an opaque,
+    /// caller-defined JSON blob — this trait doesn't know or care what a
+    /// "subtask callback" is (distri-cloud's channel-only `execute_sandbox`
+    /// tool / `SubtaskWatcher` is the only caller today). Ephemeral
+    /// coordination state, same class as `set_channel_task` — ok to lose on
+    /// restart for the in-process impl; the Redis impl should TTL it rather
+    /// than keep it forever. No-op by default.
+    async fn set_subtask_callback(&self, child_task_id: &str, payload_json: &str) -> anyhow::Result<()> {
+        let _ = (child_task_id, payload_json);
+        Ok(())
+    }
+
+    /// Look up a previously-set subtask callback payload by id.
+    async fn get_subtask_callback(&self, child_task_id: &str) -> anyhow::Result<Option<String>> {
+        let _ = child_task_id;
+        Ok(None)
+    }
+
+    /// Atomically mark a subtask callback as notified. Returns `true` the
+    /// first time (the caller should act on it), `false` on every
+    /// subsequent call for the same id (already handled) — the
+    /// idempotency point that keeps a duplicate wake (e.g. a live watch
+    /// racing startup reconciliation) from double-firing.
+    async fn mark_subtask_notified(&self, child_task_id: &str) -> anyhow::Result<bool> {
+        let _ = child_task_id;
+        Ok(false)
+    }
+
+    /// Every callback still awaiting notification. Used for startup
+    /// reconciliation after a process restart — re-subscribe to each one.
+    async fn list_pending_subtask_callbacks(&self) -> anyhow::Result<Vec<String>> {
+        Ok(vec![])
+    }
 }
 
 // ── AgentRuntime ───────────────────────────────────────────────────

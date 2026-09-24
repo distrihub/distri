@@ -1,22 +1,21 @@
 use async_trait::async_trait;
-use distri_types::RuntimeMode;
 
-pub mod local_process;
-pub use local_process::LocalProcessRemoteRunner;
+use crate::RuntimeMode;
 
-/// Trait for running agent execution in the background.
+/// Trait for running agent execution in the background, outside this
+/// process's own runtime.
 ///
 /// When `spawn()` is called, the implementation starts agent execution
 /// and returns immediately. The caller monitors progress by subscribing
 /// to the `AgentEventBroadcaster` for the given task_id.
 ///
-/// Implementations:
-/// - [`LocalProcessRemoteRunner`] (this crate): runs tasks via the
-///   `distri` client library against the same server process. Used by both
-///   cloud (`LOCAL_SANDBOX_MODE=true`) and OSS distri-server when no
-///   sandboxed runtime is configured.
-/// - `cloud::runner::SandboxLauncher`: production path — spawns a browsr
-///   container with distri-cli and lets the container drive the A2A service.
+/// `distri-types` only defines this trait — it has no concrete
+/// implementation and no knowledge of sandboxes/containers. The concrete
+/// implementation (spawning a browsr container running `distri-cli`)
+/// lives in `distri-cloud` (`cloud::runner::SandboxLauncher`), scoped to
+/// the specific tool that needs it (e.g. a channel-only "run this in the
+/// background" tool) rather than wired as an automatic fallback for every
+/// runtime mismatch.
 #[async_trait]
 pub trait RemoteTaskRunner: Send + Sync + 'static {
     /// Spawn agent execution in the background. Returns immediately.
@@ -36,12 +35,8 @@ pub trait RemoteTaskRunner: Send + Sync + 'static {
 
     /// The runtime that tasks dispatched to this runner will execute under.
     ///
-    /// Used by the orchestrator when an agent declares a runtime constraint
-    /// that doesn't match the current runtime — the orchestrator dispatches
-    /// remote only when this matches the agent's required runtime.
-    ///
-    /// Default: `RuntimeMode::Cli`. `SandboxLauncher` runs `distri-cli` inside
-    /// a browsr container, which executes in CLI runtime.
+    /// Default: `RuntimeMode::Cli` — a sandboxed runner typically runs
+    /// `distri-cli` inside a container, which executes in CLI runtime.
     fn provided_runtime(&self) -> RuntimeMode {
         RuntimeMode::Cli
     }
