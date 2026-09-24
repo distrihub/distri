@@ -1066,7 +1066,8 @@ impl LLMExecutor {
             || model.contains("o3")
             || model.contains("o4")
             || model.contains("gpt-4.1")
-            || model.contains("gpt-5");
+            || model.contains("gpt-5")
+            || model.contains("gpt-6");
 
         let (legacy_max_tokens, new_max_completion_tokens) = if uses_max_completion_tokens {
             (None, settings.inner.max_tokens)
