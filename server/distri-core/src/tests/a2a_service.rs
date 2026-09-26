@@ -113,7 +113,13 @@ async fn build_executor_context_populates_load_skills_from_metadata() {
     let req = make_request("message/stream", params);
 
     let ctx = service
-        .build_executor_context(&req, "zippy_browser".to_string(), "u-1".to_string(), None, false)
+        .build_executor_context(
+            &req,
+            "zippy_browser".to_string(),
+            "u-1".to_string(),
+            None,
+            false,
+        )
         .await
         .expect("build_executor_context should succeed for a valid request");
 

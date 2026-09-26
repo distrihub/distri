@@ -611,6 +611,8 @@ impl ClaudeLLMExecutor {
                 user_id: Some(self.context.user_id.clone()),
             }),
             tool_choice,
+            thinking: None,
+            stop_sequences: None,
         };
 
         let client = self.build_client().await?;
@@ -708,6 +710,11 @@ impl ClaudeLLMExecutor {
                         input: input.clone(),
                     });
                 }
+                // Extended-thinking blocks are round-tripped by the cloud
+                // gateway ingress but carry no tool call or assistant text,
+                // so the agent loop has nothing to do with them.
+                ResponseContentBlock::Thinking { .. }
+                | ResponseContentBlock::RedactedThinking { .. } => {}
             }
         }
 
@@ -887,6 +894,8 @@ impl ClaudeLLMExecutor {
                 user_id: Some(self.context.user_id.clone()),
             }),
             tool_choice,
+            thinking: None,
+            stop_sequences: None,
         };
 
         let client = self.build_client().await?;
@@ -941,12 +950,15 @@ impl ClaudeLLMExecutor {
                             StreamContentBlock::Text { .. } => {
                                 // Text block starting
                             }
-                            StreamContentBlock::ToolUse { id, name } => {
+                            StreamContentBlock::ToolUse { id, name, .. } => {
                                 current_tool = Some(PartialToolUse {
                                     id,
                                     name,
                                     json_accum: String::new(),
                                 });
+                            }
+                            StreamContentBlock::Thinking { .. } => {
+                                // Thinking block starting — nothing to emit.
                             }
                         }
                     }
@@ -1041,6 +1053,9 @@ impl ClaudeLLMExecutor {
                                 tool.json_accum.push_str(&partial_json);
                             }
                         }
+                        // Thinking deltas are not assistant text and must not
+                        // be fed to the tool-call parser.
+                        StreamDelta::ThinkingDelta { .. } | StreamDelta::SignatureDelta { .. } => {}
                     },
                     StreamEvent::ContentBlockStop { .. } => {
                         // Finalize any in-progress tool use

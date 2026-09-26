@@ -149,7 +149,10 @@ async fn preload_forks_fork_skill_as_child_task() {
     assert!(
         child.is_some(),
         "fork-type skill should have spawned a child task under the parent; tasks: {:?}",
-        tasks.iter().map(|t| (&t.id, &t.parent_task_id)).collect::<Vec<_>>()
+        tasks
+            .iter()
+            .map(|t| (&t.id, &t.parent_task_id))
+            .collect::<Vec<_>>()
     );
 
     // And no inline skill body leaked into the parent's scratchpad.
