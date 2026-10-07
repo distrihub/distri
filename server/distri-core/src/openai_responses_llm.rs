@@ -168,9 +168,12 @@ impl OpenAIResponsesLLMExecutor {
                 (base_url.clone(), key)
             }
             other => {
+                // Name only: the Debug form includes the provider's api_key.
+                let name = format!("{:?}", other);
+                let name = name.split([' ', '{', '(']).next().unwrap_or("this");
                 return Err(AgentError::InvalidConfiguration(format!(
-                    "OpenAI Responses API format is not supported for {:?} provider",
-                    other
+                    "OpenAI Responses API format is not supported for the {} provider",
+                    name
                 )));
             }
         };
