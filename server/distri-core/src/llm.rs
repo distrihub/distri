@@ -1548,7 +1548,38 @@ async fn completion_stream(
                 .unwrap_or_else(|| "unknown".into()),
         ))
     })?;
+    // Azure OpenAI interleaves content-filter annotation chunks
+    // (`{"choices":[{"content_filter_offsets":…,"content_filter_results":…}]}`) that carry no
+    // `delta`. async-openai can't deserialize them and the error aborted the whole turn. They hold
+    // no content, so drop them; the stream keeps going after a deserialize error.
+    let stream = stream.filter(|item| {
+        let skip = matches!(
+            item,
+            Err(async_openai::error::OpenAIError::JSONDeserialize(_, body))
+                if is_content_filter_annotation(body)
+        );
+        if skip {
+            tracing::debug!(target: "llm.stream", "skipping Azure content-filter annotation chunk");
+        }
+        futures::future::ready(!skip)
+    });
     Ok(stream)
+}
+
+/// A streamed chunk whose choices carry only Azure content-filter metadata (no `delta`).
+fn is_content_filter_annotation(body: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    let Some(choices) = v.get("choices").and_then(|c| c.as_array()) else {
+        return false;
+    };
+    !choices.is_empty()
+        && choices.iter().all(|c| {
+            c.get("delta").is_none()
+                && (c.get("content_filter_results").is_some()
+                    || c.get("content_filter_offsets").is_some())
+        })
 }
 
 /// Get the secret store from the executor context
@@ -1843,5 +1874,25 @@ mod chat_file_tests {
         });
         assert!(bc2.contains("application/pdf"));
         assert!(bc2.contains("https://example.com/d.pdf"));
+    }
+}
+
+#[cfg(test)]
+mod content_filter_chunk_tests {
+    use super::is_content_filter_annotation;
+
+    #[test]
+    fn azure_annotation_chunk_is_skipped() {
+        let chunk = r#"{"choices":[{"content_filter_offsets":{"check_offset":15236,"start_offset":14997,"end_offset":15236},"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"finish_reason":null,"index":0}],"created":0,"id":"","model":"","object":""}"#;
+        assert!(is_content_filter_annotation(chunk));
+    }
+
+    #[test]
+    fn real_content_and_other_errors_are_kept() {
+        let delta = r#"{"choices":[{"delta":{"content":"hi"},"content_filter_results":{},"index":0}],"id":"x","object":"chat.completion.chunk"}"#;
+        assert!(!is_content_filter_annotation(delta));
+        assert!(!is_content_filter_annotation(r#"{"choices":[]}"#));
+        assert!(!is_content_filter_annotation(r#"{"error":{"message":"bad"}}"#));
+        assert!(!is_content_filter_annotation("not json"));
     }
 }
