@@ -4,7 +4,8 @@
 //!
 //! `decisions_against_live_llama_server` runs only when
 //! `DISTRI_DECISION_LIVE_URL` points at a llama-server ≥ b11361 serving a
-//! decision model (e.g. `http://127.0.0.1:8080/v1`).
+//! decision model (e.g. `https://decisions-dev.distri.dev/v1`), with its key
+//! in `DISTRI_DECISION_LIVE_KEY` when the server requires one.
 
 #[cfg(test)]
 mod tests {
@@ -161,6 +162,108 @@ mod tests {
         ));
     }
 
+    /// `llamacpp` is a built-in provider: its base URL and key are ordinary
+    /// provider settings (what the Models UI saves), no custom provider needed.
+    async fn configure_llamacpp(
+        orchestrator: &distri_core::agent::AgentOrchestrator,
+        base_url: &str,
+        api_key: Option<&str>,
+    ) {
+        let mut secrets = HashMap::from([("LLAMACPP_BASE_URL".to_string(), base_url.to_string())]);
+        if let Some(k) = api_key {
+            secrets.insert("LLAMACPP_API_KEY".to_string(), k.to_string());
+        }
+        orchestrator
+            .stores
+            .provider_store
+            .as_ref()
+            .expect("provider store")
+            .upsert_provider(UpsertProviderRequest {
+                provider_id: "llamacpp".into(),
+                secrets,
+                config: None,
+                custom_models: None,
+                default_model: None,
+                connection_provider: None,
+            })
+            .await
+            .expect("configure llamacpp");
+    }
+
+    #[actix_web::test]
+    async fn llamacpp_provider_is_configured_like_any_other() {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .and(bearer_token("dev-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "model": "kev",
+                "answers": {
+                    "route": {"type": "choice", "choice": "finance_ops",
+                              "probabilities": {"support": 0.04, "finance_ops": 0.93, "research": 0.02, "scheduler": 0.01},
+                              "confidence": 0.9},
+                    "needs_approval": {"type": "noul", "noul": 0.46}
+                },
+                "usage": {"input_tokens": 120, "output_tokens": 0}
+            })))
+            // one decision + one provider test probe
+            .expect(2)
+            .mount(&upstream)
+            .await;
+
+        let orchestrator = make_orchestrator().await;
+        configure_llamacpp(
+            &orchestrator,
+            &format!("{}/v1", upstream.uri()),
+            Some("dev-key"),
+        )
+        .await;
+        let app = app!(orchestrator);
+
+        // Listed with its two settings, so the UI renders a form for it.
+        let req = test::TestRequest::get().uri("/v1/providers").to_request();
+        let providers: Value = test::read_body_json(test::call_service(&app, req).await).await;
+        let llama = providers
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == "llamacpp")
+            .expect("llamacpp listed");
+        let keys: Vec<&str> = llama["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k["key"].as_str().unwrap())
+            .collect();
+        assert_eq!(keys, ["LLAMACPP_BASE_URL", "LLAMACPP_API_KEY"]);
+
+        let req = test::TestRequest::post()
+            .uri("/v1/decisions")
+            .set_json(body("llamacpp/kev"))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let res: DecisionResponse = test::read_body_json(resp).await;
+        assert!(
+            matches!(&res.answers["route"], DecisionAnswer::Choice { choice, .. } if choice == "finance_ops")
+        );
+
+        // The UI's "Test" button: POSTs a one-question decision to the server.
+        let req = test::TestRequest::post()
+            .uri("/v1/providers/test")
+            .set_json(json!({"provider_id": "llamacpp"}))
+            .to_request();
+        let probe: Value = test::read_body_json(test::call_service(&app, req).await).await;
+        assert_eq!(probe["ok"], true, "{probe}");
+    }
+
+    #[actix_web::test]
+    async fn llamacpp_without_base_url_is_400_naming_the_setting() {
+        let (status, error) = error_for("llamacpp/kev", None).await;
+        assert_eq!(status, 400);
+        assert!(error.contains("LLAMACPP_BASE_URL"), "{error}");
+    }
+
     async fn error_for(model: &str, body_override: Option<Value>) -> (u16, String) {
         let orchestrator = make_orchestrator().await;
         let app = app!(orchestrator);
@@ -231,12 +334,17 @@ mod tests {
             return;
         };
         let orchestrator = make_orchestrator().await;
-        register_custom_provider(&orchestrator, &base_url, None).await;
+        configure_llamacpp(
+            &orchestrator,
+            &base_url,
+            std::env::var("DISTRI_DECISION_LIVE_KEY").ok().as_deref(),
+        )
+        .await;
         let app = app!(orchestrator);
 
         let req = test::TestRequest::post()
             .uri("/v1/decisions")
-            .set_json(body("custom_llama/kev"))
+            .set_json(body("llamacpp/kev"))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200);

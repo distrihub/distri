@@ -6,8 +6,8 @@
 //!
 //! `live_llama_server_conformance` runs the same request against a real
 //! server when `DISTRI_DECISION_LIVE_URL` is set (e.g.
-//! `http://127.0.0.1:8080/v1`); without it there is nothing to talk to and the
-//! test returns early.
+//! `https://decisions-dev.distri.dev/v1`, key in `DISTRI_DECISION_LIVE_KEY`);
+//! without it there is nothing to talk to and the test returns early.
 
 use distri_types::decision::{
     systemone_url, DecisionAnswer, DecisionError, DecisionRequest, DecisionWire,
@@ -233,10 +233,15 @@ async fn live_llama_server_conformance() {
         eprintln!("DISTRI_DECISION_LIVE_URL not set; skipping live llama-server conformance");
         return;
     };
-    let res = provider(systemone_url(&base_url), None, DecisionWire::Systemone)
-        .decide(&request("local/kev"))
-        .await
-        .unwrap();
+    let key = std::env::var("DISTRI_DECISION_LIVE_KEY").ok();
+    let res = provider(
+        systemone_url(&base_url),
+        key.as_deref(),
+        DecisionWire::Systemone,
+    )
+    .decide(&request("local/kev"))
+    .await
+    .unwrap();
 
     assert_eq!(res.usage.output_tokens, 0);
     assert!(res.usage.input_tokens > 0);

@@ -20,9 +20,9 @@
           "context_window": 1050000,
           "pricing": {
             "type": "completion",
-            "input": 10.00,
-            "output": 50.00,
-            "cached_input": 1.00
+            "input": 10.0,
+            "output": 50.0,
+            "cached_input": 1.0
           }
         },
         {
@@ -32,9 +32,9 @@
           "context_window": 1050000,
           "pricing": {
             "type": "completion",
-            "input": 2.00,
-            "output": 10.00,
-            "cached_input": 0.20
+            "input": 2.0,
+            "output": 10.0,
+            "cached_input": 0.2
           }
         },
         {
@@ -44,8 +44,8 @@
           "context_window": 1050000,
           "pricing": {
             "type": "completion",
-            "input": 0.10,
-            "output": 0.50,
+            "input": 0.1,
+            "output": 0.5,
             "cached_input": 0.01
           }
         },
@@ -56,9 +56,9 @@
           "context_window": 1050000,
           "pricing": {
             "type": "completion",
-            "input": 4.00,
-            "output": 20.00,
-            "cached_input": 0.40
+            "input": 4.0,
+            "output": 20.0,
+            "cached_input": 0.4
           }
         },
         {
@@ -68,9 +68,9 @@
           "context_window": 1050000,
           "pricing": {
             "type": "completion",
-            "input": 2.00,
-            "output": 12.00,
-            "cached_input": 0.20
+            "input": 2.0,
+            "output": 12.0,
+            "cached_input": 0.2
           }
         },
         {
@@ -80,8 +80,8 @@
           "context_window": 1050000,
           "pricing": {
             "type": "completion",
-            "input": 0.20,
-            "output": 1.20,
+            "input": 0.2,
+            "output": 1.2,
             "cached_input": 0.02
           }
         },
@@ -92,9 +92,9 @@
           "context_window": 1050000,
           "pricing": {
             "type": "completion",
-            "input": 5.00,
-            "output": 30.00,
-            "cached_input": 0.50
+            "input": 5.0,
+            "output": 30.0,
+            "cached_input": 0.5
           }
         },
         {
@@ -104,8 +104,8 @@
           "context_window": 1050000,
           "pricing": {
             "type": "completion",
-            "input": 2.50,
-            "output": 15.00,
+            "input": 2.5,
+            "output": 15.0,
             "cached_input": 0.25
           }
         },
@@ -117,7 +117,7 @@
           "pricing": {
             "type": "completion",
             "input": 0.75,
-            "output": 4.50,
+            "output": 4.5,
             "cached_input": 0.075
           }
         },
@@ -128,7 +128,7 @@
           "context_window": 400000,
           "pricing": {
             "type": "completion",
-            "input": 0.20,
+            "input": 0.2,
             "output": 1.25,
             "cached_input": 0.02
           }
@@ -141,7 +141,7 @@
           "pricing": {
             "type": "completion",
             "input": 0.25,
-            "output": 2.00,
+            "output": 2.0,
             "cached_input": 0.025
           }
         },
@@ -153,7 +153,7 @@
           "pricing": {
             "type": "completion",
             "input": 0.05,
-            "output": 0.40,
+            "output": 0.4,
             "cached_input": 0.005
           }
         },
@@ -164,9 +164,9 @@
           "context_window": 1047576,
           "pricing": {
             "type": "completion",
-            "input": 2.00,
-            "output": 8.00,
-            "cached_input": 0.50
+            "input": 2.0,
+            "output": 8.0,
+            "cached_input": 0.5
           }
         },
         {
@@ -176,9 +176,9 @@
           "context_window": 1047576,
           "pricing": {
             "type": "completion",
-            "input": 0.40,
-            "output": 1.60,
-            "cached_input": 0.10
+            "input": 0.4,
+            "output": 1.6,
+            "cached_input": 0.1
           }
         },
         {
@@ -188,8 +188,8 @@
           "context_window": 1047576,
           "pricing": {
             "type": "completion",
-            "input": 0.10,
-            "output": 0.40,
+            "input": 0.1,
+            "output": 0.4,
             "cached_input": 0.025
           }
         },
@@ -200,8 +200,8 @@
           "context_window": 128000,
           "pricing": {
             "type": "completion",
-            "input": 2.50,
-            "output": 10.00,
+            "input": 2.5,
+            "output": 10.0,
             "cached_input": 1.25
           }
         },
@@ -213,7 +213,7 @@
           "pricing": {
             "type": "completion",
             "input": 0.15,
-            "output": 0.60,
+            "output": 0.6,
             "cached_input": 0.075
           }
         },
@@ -224,8 +224,8 @@
           "context_window": 200000,
           "pricing": {
             "type": "completion",
-            "input": 1.10,
-            "output": 4.40,
+            "input": 1.1,
+            "output": 4.4,
             "cached_input": 0.55
           }
         },
@@ -236,9 +236,9 @@
           "context_window": 200000,
           "pricing": {
             "type": "completion",
-            "input": 2.00,
-            "output": 8.00,
-            "cached_input": 0.50
+            "input": 2.0,
+            "output": 8.0,
+            "cached_input": 0.5
           }
         },
         {
@@ -248,8 +248,8 @@
           "context_window": 200000,
           "pricing": {
             "type": "completion",
-            "input": 1.10,
-            "output": 4.40,
+            "input": 1.1,
+            "output": 4.4,
             "cached_input": 0.55
           }
         },
@@ -259,19 +259,259 @@
           "capability": "tts",
           "pricing": {
             "type": "tts",
-            "per_1m_chars": 12.00
+            "per_1m_chars": 12.0
           },
           "voices": [
-            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "ash", "name": "Ash", "description": "Warm and confident", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "ballad", "name": "Ballad", "description": "Expressive and melodic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "coral", "name": "Coral", "description": "Clear and friendly", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "sage", "name": "Sage", "description": "Calm and measured", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
+            {
+              "id": "alloy",
+              "name": "Alloy",
+              "description": "Neutral and balanced",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "ash",
+              "name": "Ash",
+              "description": "Warm and confident",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "ballad",
+              "name": "Ballad",
+              "description": "Expressive and melodic",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "coral",
+              "name": "Coral",
+              "description": "Clear and friendly",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "echo",
+              "name": "Echo",
+              "description": "Smooth and resonant",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "fable",
+              "name": "Fable",
+              "description": "Storytelling and warm",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "nova",
+              "name": "Nova",
+              "description": "Bright and energetic",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "onyx",
+              "name": "Onyx",
+              "description": "Deep and authoritative",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "sage",
+              "name": "Sage",
+              "description": "Calm and measured",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "shimmer",
+              "name": "Shimmer",
+              "description": "Light and gentle",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            }
           ],
           "formats": [
             "mp3",
@@ -288,15 +528,159 @@
           "capability": "tts",
           "pricing": {
             "type": "tts",
-            "per_1m_chars": 15.00
+            "per_1m_chars": 15.0
           },
           "voices": [
-            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
+            {
+              "id": "alloy",
+              "name": "Alloy",
+              "description": "Neutral and balanced",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "echo",
+              "name": "Echo",
+              "description": "Smooth and resonant",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "fable",
+              "name": "Fable",
+              "description": "Storytelling and warm",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "onyx",
+              "name": "Onyx",
+              "description": "Deep and authoritative",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "nova",
+              "name": "Nova",
+              "description": "Bright and energetic",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "shimmer",
+              "name": "Shimmer",
+              "description": "Light and gentle",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            }
           ],
           "formats": [
             "mp3",
@@ -313,15 +697,159 @@
           "capability": "tts",
           "pricing": {
             "type": "tts",
-            "per_1m_chars": 30.00
+            "per_1m_chars": 30.0
           },
           "voices": [
-            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
-            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
+            {
+              "id": "alloy",
+              "name": "Alloy",
+              "description": "Neutral and balanced",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "echo",
+              "name": "Echo",
+              "description": "Smooth and resonant",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "fable",
+              "name": "Fable",
+              "description": "Storytelling and warm",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "onyx",
+              "name": "Onyx",
+              "description": "Deep and authoritative",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "nova",
+              "name": "Nova",
+              "description": "Bright and energetic",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            },
+            {
+              "id": "shimmer",
+              "name": "Shimmer",
+              "description": "Light and gentle",
+              "languages": [
+                "English",
+                "Chinese",
+                "German",
+                "Spanish",
+                "French",
+                "Italian",
+                "Portuguese",
+                "Japanese",
+                "Korean",
+                "Dutch",
+                "Polish",
+                "Russian",
+                "Turkish",
+                "Ukrainian",
+                "Vietnamese",
+                "Thai",
+                "Arabic",
+                "Hindi"
+              ]
+            }
           ],
           "formats": [
             "mp3",
@@ -391,9 +919,9 @@
           "context_window": 200000,
           "pricing": {
             "type": "completion",
-            "input": 3.00,
-            "output": 15.00,
-            "cached_input": 0.30
+            "input": 3.0,
+            "output": 15.0,
+            "cached_input": 0.3
           }
         },
         {
@@ -403,9 +931,9 @@
           "context_window": 200000,
           "pricing": {
             "type": "completion",
-            "input": 15.00,
-            "output": 75.00,
-            "cached_input": 1.50
+            "input": 15.0,
+            "output": 75.0,
+            "cached_input": 1.5
           }
         },
         {
@@ -415,8 +943,8 @@
           "context_window": 200000,
           "pricing": {
             "type": "completion",
-            "input": 0.80,
-            "output": 4.00,
+            "input": 0.8,
+            "output": 4.0,
             "cached_input": 0.08
           }
         }
@@ -443,7 +971,7 @@
           "pricing": {
             "type": "completion",
             "input": 0.15,
-            "output": 0.60,
+            "output": 0.6,
             "cached_input": 0.0375
           }
         },
@@ -455,11 +983,163 @@
           "pricing": {
             "type": "completion",
             "input": 1.25,
-            "output": 10.00,
+            "output": 10.0,
             "cached_input": 0.315
           }
         }
       ]
+    },
+    {
+      "id": "typesafe",
+      "label": "TypeSafe",
+      "keys": [
+        {
+          "key": "TYPESAFE_API_KEY",
+          "label": "API key",
+          "placeholder": "ts_...",
+          "required": true,
+          "sensitive": true
+        }
+      ],
+      "models": [
+        {
+          "id": "jev-latest",
+          "name": "Jev",
+          "capability": "decision",
+          "context_window": 65536,
+          "pricing": {
+            "type": "decision",
+            "input": 0.042
+          }
+        }
+      ],
+      "test": {
+        "url": "{base_url}/systemone",
+        "method": "POST",
+        "auth": "bearer",
+        "body": {
+          "model": "jev-latest",
+          "state": "ping",
+          "questions": {
+            "ok": {
+              "type": "noul",
+              "instructions": "Is this a connectivity check?"
+            }
+          }
+        },
+        "accept_status": [
+          200
+        ]
+      }
+    },
+    {
+      "id": "workers_ai",
+      "label": "Cloudflare Workers AI",
+      "keys": [
+        {
+          "key": "CLOUDFLARE_API_TOKEN",
+          "label": "API token",
+          "placeholder": "Workers AI token",
+          "required": true,
+          "sensitive": true
+        },
+        {
+          "key": "CLOUDFLARE_ACCOUNT_ID",
+          "label": "Account ID",
+          "placeholder": "32-character account id",
+          "required": true,
+          "sensitive": false
+        }
+      ],
+      "models": [
+        {
+          "id": "clef-flash",
+          "name": "Clef-flash",
+          "capability": "decision",
+          "context_window": 65536,
+          "pricing": {
+            "type": "decision",
+            "input": 0.09
+          }
+        },
+        {
+          "id": "clef",
+          "name": "Clef",
+          "capability": "decision",
+          "context_window": 65536,
+          "pricing": {
+            "type": "decision",
+            "input": 0.24
+          }
+        }
+      ],
+      "test": {
+        "url": "{base_url}/run/@cf/cloudflare/clef-flash",
+        "method": "POST",
+        "auth": "bearer",
+        "body": {
+          "model": "clef-flash",
+          "state": "ping",
+          "questions": {
+            "ok": {
+              "type": "noul",
+              "instructions": "Is this a connectivity check?"
+            }
+          }
+        },
+        "accept_status": [
+          200
+        ]
+      }
+    },
+    {
+      "id": "llamacpp",
+      "label": "llama.cpp server",
+      "keys": [
+        {
+          "key": "LLAMACPP_BASE_URL",
+          "label": "Base URL",
+          "placeholder": "https://decisions-dev.distri.dev/v1",
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "LLAMACPP_API_KEY",
+          "label": "API key (llama-server --api-key)",
+          "placeholder": "optional",
+          "required": false,
+          "sensitive": true
+        }
+      ],
+      "models": [
+        {
+          "id": "kev",
+          "name": "Kev (whatever model the server loaded)",
+          "capability": "decision",
+          "context_window": 65536,
+          "pricing": {
+            "type": "decision",
+            "input": 0.0
+          }
+        }
+      ],
+      "test": {
+        "url": "{base_url}/systemone",
+        "method": "POST",
+        "auth": "bearer",
+        "body": {
+          "state": "ping",
+          "questions": {
+            "ok": {
+              "type": "noul",
+              "instructions": "Is this a connectivity check?"
+            }
+          }
+        },
+        "accept_status": [
+          200
+        ]
+      }
     }
   ]
 }

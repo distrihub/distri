@@ -3,8 +3,10 @@
 //!
 //! Resolution:
 //! - A built-in decision provider (`typesafe`, `openrouter`, `aimlapi`,
-//!   `workers_ai`) takes its bearer token (and, for Workers AI, the account
-//!   id) from the secret store.
+//!   `workers_ai`, `llamacpp`) takes its provider settings from the secret
+//!   store: the bearer token, and the base URL setting where it has one (the
+//!   Workers AI account id, a llama-server's `LLAMACPP_BASE_URL`). These are
+//!   the same settings the Models UI edits.
 //! - A `custom_*` provider resolves through
 //!   [`ProviderStore::resolve_provider_endpoint`] — the same `base_url` +
 //!   `{ID}_API_KEY` a custom completion provider uses — and is called at
@@ -57,14 +59,23 @@ impl DecisionService {
         let (provider_id, model) = req.provider_and_model()?;
 
         if let Some(kind) = DecisionProviderKind::from_id(provider_id) {
-            let api_key = self.required_secret(kind, kind.api_key_secret()).await?;
-            let account = match kind.account_secret() {
+            let api_key = match kind.api_key_required() {
+                true => Some(self.required_secret(kind, kind.api_key_secret()).await?),
+                false => self.secret(kind.api_key_secret()).await?,
+            };
+            let setting = match kind.base_url_secret() {
                 Some(secret) => Some(self.required_secret(kind, secret).await?),
                 None => None,
             };
+            let base_url =
+                kind.base_url(setting.as_deref())
+                    .ok_or_else(|| DecisionError::MissingSecret {
+                        provider: kind.display_name().to_string(),
+                        secret: kind.base_url_secret().unwrap_or(kind.api_key_secret()),
+                    })?;
             return Ok(DecisionEndpoint {
-                url: kind.endpoint_url(model, account.as_deref()),
-                api_key: Some(api_key),
+                url: kind.endpoint_url(&base_url, model),
+                api_key,
                 wire: kind.wire(),
             });
         }
@@ -90,19 +101,23 @@ impl DecisionService {
         })
     }
 
+    /// A provider setting, `None` when unset or empty. Store failures surface.
+    async fn secret(&self, key: &str) -> Result<Option<String>, DecisionError> {
+        let record = self
+            .secret_store
+            .get(key)
+            .await
+            .map_err(|e| DecisionError::Store(e.to_string()))?;
+        Ok(record.map(|r| r.value).filter(|v| !v.trim().is_empty()))
+    }
+
     async fn required_secret(
         &self,
         kind: DecisionProviderKind,
         secret: &'static str,
     ) -> Result<String, DecisionError> {
-        let record = self
-            .secret_store
-            .get(secret)
-            .await
-            .map_err(|e| DecisionError::Store(e.to_string()))?;
-        record
-            .map(|r| r.value)
-            .filter(|v| !v.is_empty())
+        self.secret(secret)
+            .await?
             .ok_or_else(|| DecisionError::MissingSecret {
                 provider: kind.display_name().to_string(),
                 secret,
