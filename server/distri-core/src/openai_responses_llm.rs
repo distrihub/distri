@@ -559,7 +559,6 @@ impl OpenAIResponsesLLMExecutor {
             .emit(AgentEventType::TextMessageStart {
                 message_id: message_id.clone(),
                 role: crate::types::MessageRole::Assistant,
-                is_final: Some(true),
                 step_id: step_id.clone(),
             })
             .await;
@@ -815,7 +814,6 @@ impl OpenAIResponsesLLMExecutor {
                                 .emit(AgentEventType::TextMessageStart {
                                     message_id: message_id.clone(),
                                     role: crate::types::MessageRole::Assistant,
-                                    is_final: None,
                                     step_id: message_id.clone(),
                                 })
                                 .await;

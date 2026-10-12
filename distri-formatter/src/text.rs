@@ -347,7 +347,6 @@ mod tests {
             message_id: "m1".into(),
             step_id: "s1".into(),
             role: MessageRole::Assistant,
-            is_final: None,
         }));
         fmt.handle_event(&make_event(AgentEventType::TextMessageContent {
             message_id: "m1".into(),
