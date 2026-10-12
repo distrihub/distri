@@ -39,6 +39,7 @@ mod llm_helpers;
 pub mod models;
 pub mod notes;
 pub mod prompt_templates;
+pub mod decisions;
 pub mod providers;
 pub mod secrets;
 pub mod session;
@@ -140,6 +141,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .service(web::resource(Route::Request.path()).route(web::post().to(proxy_request_handler)))
     .configure(secrets::configure_secret_routes)
     .configure(providers::configure_provider_routes)
+    .configure(decisions::configure_decision_routes)
     .configure(skills::configure_skill_routes)
     .configure(models::configure_model_routes)
     // Connection management endpoints

@@ -1088,6 +1088,22 @@ pub async fn resolve_provider_test_endpoint(
     custom_providers: &[CustomProviderConfig],
 ) -> anyhow::Result<ResolvedProviderEndpoint> {
     use crate::agent::ModelSettings;
+    // A configured custom provider wins. It must be checked first: every
+    // `custom_*` id also parses as a built-in `OpenAICompatible` with an empty
+    // base_url, so the built-in branch would otherwise shadow it and report
+    // "no endpoint configured".
+    if let Some(cp) = custom_providers.iter().find(|p| p.id == provider_id) {
+        let api_key = secret_store
+            .get(&format!("{}_API_KEY", provider_id.to_uppercase()))
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?
+            .map(|s| s.value)
+            .unwrap_or_default();
+        return Ok(ResolvedProviderEndpoint {
+            base_url: cp.base_url.clone(),
+            api_key,
+        });
+    }
     // Built-in provider: build its ModelProvider and hydrate from secrets.
     if let Ok(Some(mut ms)) = ModelSettings::from_provider_model_str(&format!("{provider_id}/_")) {
         ms.hydrate_creds(secret_store)
@@ -1102,21 +1118,7 @@ pub async fn resolve_provider_test_endpoint(
             api_key: api_key.unwrap_or_default(),
         });
     }
-    // Custom OpenAI-compatible provider.
-    let cp = custom_providers
-        .iter()
-        .find(|p| p.id == provider_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider '{provider_id}'"))?;
-    let api_key = secret_store
-        .get(&format!("{}_API_KEY", provider_id.to_uppercase()))
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?
-        .map(|s| s.value)
-        .unwrap_or_default();
-    Ok(ResolvedProviderEndpoint {
-        base_url: cp.base_url.clone(),
-        api_key,
-    })
+    Err(anyhow::anyhow!("unknown provider '{provider_id}'"))
 }
 
 /// Provider-related settings for the single-tenant standalone server.
@@ -2114,6 +2116,32 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         )
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_resolves_configured_custom_provider() {
+        let custom = vec![custom_provider("custom_llama", "http://127.0.0.1:8080/v1")];
+        let ep = resolve_provider_test_endpoint(
+            "custom_llama",
+            &secrets(&[("CUSTOM_LLAMA_API_KEY", "sk-local")]),
+            &custom,
+        )
+        .await
+        .unwrap();
+        assert_eq!(ep.base_url, "http://127.0.0.1:8080/v1");
+        assert_eq!(ep.api_key, "sk-local");
+
+        // No key stored: still resolves, with an empty key.
+        let ep = resolve_provider_test_endpoint("custom_llama", &secrets(&[]), &custom)
+            .await
+            .unwrap();
+        assert_eq!(ep.api_key, "");
+
+        // Not configured at all: a named error, not "no endpoint configured".
+        let err = resolve_provider_test_endpoint("custom_missing", &secrets(&[]), &custom)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("custom_missing"), "{err}");
     }
 
     #[tokio::test]

@@ -98,6 +98,8 @@ use utoipa::OpenApi;
         crate::routes::providers::delete_provider,
         crate::routes::providers::get_default_model,
         crate::routes::providers::test_provider,
+        // Decisions
+        crate::routes::decisions::decide,
         // Models
         crate::routes::models::list_models,
         // Prompt Templates
@@ -128,6 +130,8 @@ use utoipa::OpenApi;
     ),
     components(schemas(
         // Route-level types
+        distri_types::decision::DecisionRequest,
+        distri_types::decision::DecisionResponse,
         crate::routes::AgentWithStats,
         crate::routes::DeviceResponse,
         crate::routes::DeviceMetadata,
