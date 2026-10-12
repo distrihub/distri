@@ -1088,6 +1088,49 @@ pub async fn resolve_provider_test_endpoint(
     custom_providers: &[CustomProviderConfig],
 ) -> anyhow::Result<ResolvedProviderEndpoint> {
     use crate::agent::ModelSettings;
+    // A configured custom provider wins. It must be checked first: every
+    // `custom_*` id also parses as a built-in `OpenAICompatible` with an empty
+    // base_url, so the built-in branch would otherwise shadow it and report
+    // "no endpoint configured".
+    if let Some(cp) = custom_providers.iter().find(|p| p.id == provider_id) {
+        let api_key = secret_store
+            .get(&format!("{}_API_KEY", provider_id.to_uppercase()))
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?
+            .map(|s| s.value)
+            .unwrap_or_default();
+        return Ok(ResolvedProviderEndpoint {
+            base_url: cp.base_url.clone(),
+            api_key,
+        });
+    }
+    // A decision provider: its base URL is fixed or built from one setting
+    // (the Workers AI account id, a llama-server's DECISIONS_BASE_URL). Its
+    // catalog entry carries a `test` block that POSTs a one-question decision
+    // to `{base_url}`, so the probe proves the key and the System One route.
+    if let Some(kind) = crate::decision::DecisionProviderKind::from_id(provider_id) {
+        let get = |key: &'static str| async move {
+            secret_store
+                .get(key)
+                .await
+                .map(|s| s.map(|s| s.value).filter(|v| !v.trim().is_empty()))
+                .map_err(|e| anyhow::anyhow!(e))
+        };
+        let setting = match kind.base_url_secret() {
+            Some(key) => get(key).await?,
+            None => None,
+        };
+        let base_url = kind.base_url(setting.as_deref()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "provider '{provider_id}' needs {}",
+                kind.base_url_secret().unwrap_or("a base URL")
+            )
+        })?;
+        return Ok(ResolvedProviderEndpoint {
+            base_url,
+            api_key: get(kind.api_key_secret()).await?.unwrap_or_default(),
+        });
+    }
     // Built-in provider: build its ModelProvider and hydrate from secrets.
     if let Ok(Some(mut ms)) = ModelSettings::from_provider_model_str(&format!("{provider_id}/_")) {
         ms.hydrate_creds(secret_store)
@@ -1102,21 +1145,7 @@ pub async fn resolve_provider_test_endpoint(
             api_key: api_key.unwrap_or_default(),
         });
     }
-    // Custom OpenAI-compatible provider.
-    let cp = custom_providers
-        .iter()
-        .find(|p| p.id == provider_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider '{provider_id}'"))?;
-    let api_key = secret_store
-        .get(&format!("{}_API_KEY", provider_id.to_uppercase()))
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?
-        .map(|s| s.value)
-        .unwrap_or_default();
-    Ok(ResolvedProviderEndpoint {
-        base_url: cp.base_url.clone(),
-        api_key,
-    })
+    Err(anyhow::anyhow!("unknown provider '{provider_id}'"))
 }
 
 /// Provider-related settings for the single-tenant standalone server.
@@ -2114,6 +2143,105 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         )
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_resolves_decision_providers() {
+        let ep = resolve_provider_test_endpoint(
+            "decisions",
+            &secrets(&[
+                ("DECISIONS_BASE_URL", "https://decisions-dev.distri.dev/v1/"),
+                ("DECISIONS_API_KEY", "k"),
+            ]),
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(ep.base_url, "https://decisions-dev.distri.dev/v1");
+        assert_eq!(ep.api_key, "k");
+
+        let err = resolve_provider_test_endpoint("decisions", &secrets(&[]), &[])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("DECISIONS_BASE_URL"), "{err}");
+
+        let ep = resolve_provider_test_endpoint(
+            "typesafe",
+            &secrets(&[("TYPESAFE_API_KEY", "ts")]),
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(ep.base_url, "https://api.typesafe.ai/v1");
+    }
+
+    /// Decision providers ship in the shared catalog, so the standalone
+    /// server and the cloud both list them and the UI can configure them.
+    #[test]
+    fn default_catalog_carries_decision_providers() {
+        use crate::decision::DecisionProviderKind;
+        use crate::models::ModelCapability;
+        let models = crate::ModelProvider::well_known_models();
+        for id in ["typesafe", "workers_ai", "decisions"] {
+            assert!(DecisionProviderKind::from_id(id).is_some(), "{id}");
+            let group = models
+                .iter()
+                .find(|g| g.provider_id == id)
+                .unwrap_or_else(|| panic!("{id} missing from the default catalog"));
+            assert!(!group.models.is_empty());
+            assert!(
+                group
+                    .models
+                    .iter()
+                    .all(|m| m.capability == ModelCapability::Decision)
+            );
+            let test = crate::lookup_provider_test_config(id)
+                .expect("decision providers carry a test block");
+            assert!(test.url.starts_with("{base_url}"), "{id}: {}", test.url);
+            assert_eq!(test.accept_status, vec![200]);
+        }
+        let defs = crate::ModelProvider::all_provider_definitions();
+        let generic = defs.iter().find(|d| d.id == "decisions").unwrap();
+        let base = generic
+            .keys
+            .iter()
+            .find(|k| k.key == "DECISIONS_BASE_URL")
+            .unwrap();
+        assert!(base.required && !base.sensitive);
+        assert!(
+            !generic
+                .keys
+                .iter()
+                .find(|k| k.key == "DECISIONS_API_KEY")
+                .unwrap()
+                .required
+        );
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_resolves_configured_custom_provider() {
+        let custom = vec![custom_provider("custom_llama", "http://127.0.0.1:8080/v1")];
+        let ep = resolve_provider_test_endpoint(
+            "custom_llama",
+            &secrets(&[("CUSTOM_LLAMA_API_KEY", "sk-local")]),
+            &custom,
+        )
+        .await
+        .unwrap();
+        assert_eq!(ep.base_url, "http://127.0.0.1:8080/v1");
+        assert_eq!(ep.api_key, "sk-local");
+
+        // No key stored: still resolves, with an empty key.
+        let ep = resolve_provider_test_endpoint("custom_llama", &secrets(&[]), &custom)
+            .await
+            .unwrap();
+        assert_eq!(ep.api_key, "");
+
+        // Not configured at all: a named error, not "no endpoint configured".
+        let err = resolve_provider_test_endpoint("custom_missing", &secrets(&[]), &custom)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("custom_missing"), "{err}");
     }
 
     #[tokio::test]

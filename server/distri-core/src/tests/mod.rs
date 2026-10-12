@@ -3,6 +3,7 @@ mod agent_loop;
 mod agent_loop_store_integration;
 mod browser_sessions;
 mod cancel_cascade;
+mod decision_service;
 mod compaction_in_loop;
 mod compaction_integration;
 mod coordinator_integration;

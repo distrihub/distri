@@ -91,6 +91,8 @@ pub struct ProviderCatalogEntry {
     pub stt: Vec<CatalogModel>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image: Vec<CatalogModel>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision: Vec<CatalogModel>,
     /// Per-provider override of the `/v1/providers/test` probe — see
     /// [`ProviderTestConfig`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -126,6 +128,11 @@ impl ProviderCatalogEntry {
                 .into_iter()
                 .map(|m| m.into_model(ModelCapability::Image)),
         );
+        models.extend(
+            self.decision
+                .into_iter()
+                .map(|m| m.into_model(ModelCapability::Decision)),
+        );
         ModelProviderDefinition {
             id: self.id,
             label: self.label,
@@ -156,6 +163,7 @@ impl ProviderCatalogEntry {
             tts: section(ModelCapability::Tts),
             stt: section(ModelCapability::Stt),
             image: section(ModelCapability::Image),
+            decision: section(ModelCapability::Decision),
             test: def.test.clone(),
             category: def.category.clone(),
         }

@@ -79,3 +79,4 @@ actix-web = { workspace = true, features = ["macros"] }
 actix-rt = { workspace = true }
 reqwest = { workspace = true }
 uuid = { workspace = true }
+wiremock = "0.6"

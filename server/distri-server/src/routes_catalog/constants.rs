@@ -132,6 +132,7 @@ define_routes! {
     Build             => "/build" { POST: Execute },
     BrowserSession    => "/browser/session" { POST: Execute },
     LlmExecute        => "/llm/execute" { POST: Execute },
+    Decisions         => "/decisions" { POST: Execute },
     Request           => "/request" { POST: Execute },
 
     // ── Deployment tokens ───────────────────────────────────────────────────

@@ -92,6 +92,8 @@ pub enum ModelCapability {
     Tts,
     Stt,
     Image,
+    /// Typed decisions (System One) — see [`crate::decision`].
+    Decision,
 }
 
 /// Pricing varies by capability type.
@@ -117,6 +119,9 @@ pub enum ModelPricing {
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
         per_quality: std::collections::BTreeMap<String, f64>,
     },
+    /// Decision model pricing — per 1M input tokens (USD). Decision models
+    /// generate no output tokens.
+    Decision { input: f64 },
 }
 
 /// A model with its capability, pricing, and metadata.

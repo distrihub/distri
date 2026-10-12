@@ -1,4 +1,5 @@
 pub mod claude_client;
+mod decision;
 pub mod gateway_config;
 mod image;
 mod image_types;
@@ -9,6 +10,7 @@ mod providers_builder;
 mod tts;
 mod tts_types;
 
+pub use decision::{DecisionEndpoint, DecisionProvider, HttpDecisionProvider};
 pub use gateway_config::{GatewayConfig, GatewayContext};
 pub use image::call_image_generation;
 pub use image_types::*;

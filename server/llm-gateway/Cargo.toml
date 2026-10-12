@@ -6,6 +6,7 @@ description = "LLM gateway — unified provider definitions, TTS synthesis, STT 
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wiremock = "0.6"
 
 [dependencies]
 distri-types = { path = "../../distri-types", version = "0.4.6" }
