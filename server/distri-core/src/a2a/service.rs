@@ -765,15 +765,13 @@ pub async fn build_final_message(
     if text.is_empty() {
         return None;
     }
-    Some(distri_a2a::Message {
-        kind: distri_a2a::EventKind::Message,
-        message_id: Uuid::new_v4().to_string(),
-        role: distri_a2a::Role::Agent,
-        parts: vec![distri_a2a::Part::Text(distri_a2a::TextPart { text })],
-        context_id: Some(executor_context.thread_id.clone()),
-        task_id: Some(executor_context.task_id.clone()),
-        reference_task_ids: vec![],
-        extensions: vec![],
-        metadata: None,
-    })
+    // Same id and metadata as the persisted final answer (see `a2a/stream.rs`),
+    // so a reload replays exactly what the live stream showed.
+    let message = distri_types::Message::final_answer(&executor_context.task_id, text);
+    Some(crate::a2a::to_a2a_message_parts(
+        &message,
+        &executor_context.task_id,
+        &executor_context.thread_id,
+        executor_context.parent_task_id.as_deref(),
+    ))
 }

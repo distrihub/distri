@@ -113,7 +113,13 @@ async fn build_executor_context_populates_load_skills_from_metadata() {
     let req = make_request("message/stream", params);
 
     let ctx = service
-        .build_executor_context(&req, "zippy_browser".to_string(), "u-1".to_string(), None, false)
+        .build_executor_context(
+            &req,
+            "zippy_browser".to_string(),
+            "u-1".to_string(),
+            None,
+            false,
+        )
         .await
         .expect("build_executor_context should succeed for a valid request");
 
@@ -477,6 +483,15 @@ async fn build_final_message_returns_none_when_no_final_result() {
     }
     assert_eq!(msg.task_id, Some(ctx.task_id.clone()));
     assert_eq!(msg.context_id, Some(ctx.thread_id.clone()));
+    // Same id as the persisted final answer, so live and history converge.
+    assert_eq!(
+        msg.message_id,
+        distri_types::Message::final_answer_id(&ctx.task_id)
+    );
+    assert_eq!(
+        msg.metadata.as_ref().and_then(|m| m.get("is_final")),
+        Some(&json!(true))
+    );
 
     // Empty string → None (semantic: no-content final counts as no final).
     let ctx2 = ExecutorContext::default();
@@ -508,5 +523,40 @@ async fn sse_message_success_and_error_frames_parse() {
     assert_eq!(
         parsed.pointer("/error/code").and_then(|v| v.as_i64()),
         Some(-32602)
+    );
+}
+
+#[test]
+fn history_message_carries_final_flag_and_parts_metadata() {
+    let task = distri_types::Task {
+        id: "task-1".into(),
+        thread_id: "thread-1".into(),
+        ..Default::default()
+    };
+
+    let final_answer = distri_types::Message::final_answer(&task.id, "the answer".into());
+    let mapped = crate::a2a::to_a2a_message(&final_answer, &task);
+    assert_eq!(mapped.message_id, final_answer.id);
+    assert_eq!(
+        mapped.metadata.as_ref().and_then(|m| m.get("is_final")),
+        Some(&json!(true))
+    );
+
+    let mut user = distri_types::Message::user("[app context]".into(), None);
+    user.parts_metadata = Some(distri_types::PartsMetadata::from([(
+        0,
+        distri_types::PartMetadata {
+            save: true,
+            developer: true,
+        },
+    )]));
+    let mapped = crate::a2a::to_a2a_message(&user, &task);
+    let metadata = mapped.metadata.unwrap();
+    assert_eq!(metadata.get("is_final"), None);
+    // Round-trips through the same converter the server uses for inbound
+    // messages, so clients read it exactly as they sent it.
+    assert_eq!(
+        metadata.get("parts"),
+        Some(&json!({ "0": { "save": true, "developer": true } }))
     );
 }
