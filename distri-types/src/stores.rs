@@ -1104,6 +1104,33 @@ pub async fn resolve_provider_test_endpoint(
             api_key,
         });
     }
+    // A decision provider: its base URL is fixed or built from one setting
+    // (the Workers AI account id, a llama-server's LLAMACPP_BASE_URL). Its
+    // catalog entry carries a `test` block that POSTs a one-question decision
+    // to `{base_url}`, so the probe proves the key and the System One route.
+    if let Some(kind) = crate::decision::DecisionProviderKind::from_id(provider_id) {
+        let get = |key: &'static str| async move {
+            secret_store
+                .get(key)
+                .await
+                .map(|s| s.map(|s| s.value).filter(|v| !v.trim().is_empty()))
+                .map_err(|e| anyhow::anyhow!(e))
+        };
+        let setting = match kind.base_url_secret() {
+            Some(key) => get(key).await?,
+            None => None,
+        };
+        let base_url = kind.base_url(setting.as_deref()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "provider '{provider_id}' needs {}",
+                kind.base_url_secret().unwrap_or("a base URL")
+            )
+        })?;
+        return Ok(ResolvedProviderEndpoint {
+            base_url,
+            api_key: get(kind.api_key_secret()).await?.unwrap_or_default(),
+        });
+    }
     // Built-in provider: build its ModelProvider and hydrate from secrets.
     if let Ok(Some(mut ms)) = ModelSettings::from_provider_model_str(&format!("{provider_id}/_")) {
         ms.hydrate_creds(secret_store)
@@ -2116,6 +2143,79 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         )
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_resolves_decision_providers() {
+        let ep = resolve_provider_test_endpoint(
+            "llamacpp",
+            &secrets(&[
+                ("LLAMACPP_BASE_URL", "https://decisions-dev.distri.dev/v1/"),
+                ("LLAMACPP_API_KEY", "k"),
+            ]),
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(ep.base_url, "https://decisions-dev.distri.dev/v1");
+        assert_eq!(ep.api_key, "k");
+
+        let err = resolve_provider_test_endpoint("llamacpp", &secrets(&[]), &[])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("LLAMACPP_BASE_URL"), "{err}");
+
+        let ep = resolve_provider_test_endpoint(
+            "typesafe",
+            &secrets(&[("TYPESAFE_API_KEY", "ts")]),
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(ep.base_url, "https://api.typesafe.ai/v1");
+    }
+
+    /// Decision providers ship in the shared catalog, so the standalone
+    /// server and the cloud both list them and the UI can configure them.
+    #[test]
+    fn default_catalog_carries_decision_providers() {
+        use crate::decision::DecisionProviderKind;
+        use crate::models::ModelCapability;
+        let models = crate::ModelProvider::well_known_models();
+        for id in ["typesafe", "workers_ai", "llamacpp"] {
+            assert!(DecisionProviderKind::from_id(id).is_some(), "{id}");
+            let group = models
+                .iter()
+                .find(|g| g.provider_id == id)
+                .unwrap_or_else(|| panic!("{id} missing from the default catalog"));
+            assert!(!group.models.is_empty());
+            assert!(
+                group
+                    .models
+                    .iter()
+                    .all(|m| m.capability == ModelCapability::Decision)
+            );
+            let test = crate::lookup_provider_test_config(id)
+                .expect("decision providers carry a test block");
+            assert!(test.url.starts_with("{base_url}"), "{id}: {}", test.url);
+            assert_eq!(test.accept_status, vec![200]);
+        }
+        let defs = crate::ModelProvider::all_provider_definitions();
+        let llama = defs.iter().find(|d| d.id == "llamacpp").unwrap();
+        let base = llama
+            .keys
+            .iter()
+            .find(|k| k.key == "LLAMACPP_BASE_URL")
+            .unwrap();
+        assert!(base.required && !base.sensitive);
+        assert!(
+            !llama
+                .keys
+                .iter()
+                .find(|k| k.key == "LLAMACPP_API_KEY")
+                .unwrap()
+                .required
+        );
     }
 
     #[tokio::test]

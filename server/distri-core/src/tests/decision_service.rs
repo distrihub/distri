@@ -217,6 +217,51 @@ async fn non_decision_providers_are_rejected() {
 }
 
 #[tokio::test]
+async fn llamacpp_provider_reads_base_url_and_optional_key_from_settings() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(bearer_token("dev-key"))
+        .and(body_partial_json(serde_json::json!({"model": "kev"})))
+        .respond_with(ResponseTemplate::new(200).set_body_string(ANSWER))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let svc = DecisionService::new(
+        reqwest::Client::new(),
+        secrets(&[
+            ("LLAMACPP_BASE_URL", &format!("{}/v1/", server.uri())),
+            ("LLAMACPP_API_KEY", "dev-key"),
+        ]),
+        None,
+    );
+    let res = svc.decide(&request("llamacpp/kev")).await.unwrap();
+    assert_eq!(res.answers.len(), 2);
+
+    // No key: allowed (a llama-server may run without --api-key), no bearer.
+    let no_key = DecisionService::new(
+        reqwest::Client::new(),
+        secrets(&[("LLAMACPP_BASE_URL", "http://127.0.0.1:8090/v1")]),
+        None,
+    );
+    let ep = no_key
+        .resolve_endpoint(&request("llamacpp/kev"))
+        .await
+        .unwrap();
+    assert_eq!(ep.url, "http://127.0.0.1:8090/v1/systemone");
+    assert_eq!(ep.api_key, None);
+}
+
+#[tokio::test]
+async fn llamacpp_without_base_url_names_the_setting() {
+    let svc = DecisionService::new(reqwest::Client::new(), secrets(&[]), None);
+    let err = svc.decide(&request("llamacpp/kev")).await.unwrap_err();
+    assert!(err.to_string().contains("LLAMACPP_BASE_URL"), "{err}");
+    assert_eq!(distri_types::ApiError::from(err).status(), 400);
+}
+
+#[tokio::test]
 async fn custom_provider_is_called_at_systemone_under_its_base_url() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
