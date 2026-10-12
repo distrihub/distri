@@ -1,0 +1,8 @@
+{"model": "kev",
+ "state": {"channel": "telegram", "user_message": "can you pull last month invoices from stripe and email the totals to finance@acme.com"},
+ "questions": {
+   "route": {"type": "choice", "instructions": "Which agent should handle this message?",
+     "criteria": {"support": "Product questions, bugs, account help", "finance_ops": "Billing, invoices, payments, Stripe, accounting", "research": "Web research, summarising sources", "scheduler": "Calendar, meetings, reminders"}},
+   "needs_approval": {"type": "noul", "instructions": "Does this request send data outside the workspace and need human approval?"},
+   "urgency": {"type": "score", "instructions": "How urgent is this request?", "criteria": ["not urgent", "normal", "urgent", "critical"]}
+ }}
