@@ -120,6 +120,23 @@ pub fn agent_error_to_jsonrpc(e: AgentError) -> distri_a2a::JsonRpcError {
 }
 
 pub fn to_a2a_message(message: &distri_types::Message, task: &distri_types::Task) -> Message {
+    to_a2a_message_parts(
+        message,
+        &task.id,
+        &task.thread_id,
+        task.parent_task_id.as_deref(),
+    )
+}
+
+/// Map a stored message onto the A2A wire. Shared by thread history
+/// (`to_a2a_message`) and the live final-answer frame (`build_final_message`)
+/// so both carry the same id and metadata.
+pub fn to_a2a_message_parts(
+    message: &distri_types::Message,
+    task_id: &str,
+    thread_id: &str,
+    parent_task_id: Option<&str>,
+) -> Message {
     let content = &message.parts.clone();
 
     // Build metadata with message type and optional agent info
@@ -137,8 +154,19 @@ pub fn to_a2a_message(message: &distri_types::Message, task: &distri_types::Task
     // Carry the task's parent task hint so the chat store can place sub-
     // agent messages under their parent in the rendered tree. Matches the
     // routing convention used by status-update envelopes.
-    if let Some(parent_task_id) = &task.parent_task_id {
+    if let Some(parent_task_id) = parent_task_id {
         metadata["parent_task_id"] = serde_json::json!(parent_task_id);
+    }
+
+    // Same `metadata.parts` shape the client sends, so developer-only parts
+    // stay hidden when history is replayed.
+    if let Some(parts_metadata) = &message.parts_metadata {
+        metadata["parts"] = serde_json::to_value(parts_metadata).unwrap_or_default();
+    }
+
+    // The turn's final answer; earlier same-turn assistant text is a draft.
+    if message.is_final {
+        metadata["is_final"] = serde_json::json!(true);
     }
 
     Message {
@@ -149,8 +177,8 @@ pub fn to_a2a_message(message: &distri_types::Message, task: &distri_types::Task
             _ => Role::Agent,
         },
         parts: content.into_iter().map(|c| c.clone().into()).collect(),
-        context_id: Some(task.thread_id.clone()),
-        task_id: Some(task.id.clone()),
+        context_id: Some(thread_id.to_string()),
+        task_id: Some(task_id.to_string()),
         kind: EventKind::Message,
         message_id: message.id.clone(),
         metadata: Some(metadata),

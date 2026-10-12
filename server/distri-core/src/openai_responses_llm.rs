@@ -12,7 +12,8 @@ use crate::{
     openai_responses_client::{
         CreateResponseRequest, InputContent, InputContentPart, InputFunctionCall,
         InputFunctionCallOutput, InputItem, InputMessage, OpenAIResponsesClient, OutputContentPart,
-        OutputFunctionCall, OutputItem, OutputMessage, ResponseUsage, ResponsesTool, TypedStreamEvent,
+        OutputFunctionCall, OutputItem, OutputMessage, ResponseUsage, ResponsesTool,
+        TypedStreamEvent,
     },
     tools::Tool,
     types::{Message, MessageRole, Part, ToolCall},
@@ -37,7 +38,10 @@ struct StreamUsage {
 
 impl StreamUsage {
     fn observe(&mut self, usage: &ResponseUsage) -> (u32, u32) {
-        let delta = (usage.input_tokens.saturating_sub(self.input), usage.output_tokens.saturating_sub(self.output));
+        let delta = (
+            usage.input_tokens.saturating_sub(self.input),
+            usage.output_tokens.saturating_sub(self.output),
+        );
         self.input = self.input.max(usage.input_tokens);
         self.output = self.output.max(usage.output_tokens);
         delta
@@ -166,6 +170,21 @@ impl OpenAIResponsesLLMExecutor {
                     secret_resolver.resolve_or_empty("DASHSCOPE_API_KEY").await
                 };
                 (base_url.clone(), key)
+            }
+            provider @ ModelProvider::AzureAiFoundry { api_key, .. } => {
+                let base_url = azure_ai_foundry_responses_base_url(provider)?;
+                let key = if let Some(key) = api_key {
+                    key.clone()
+                } else {
+                    secret_resolver
+                        .resolve_or_empty(provider.api_key_secret())
+                        .await
+                };
+                // Same auth as the completions path: `api-key` header plus Bearer.
+                if !key.is_empty() {
+                    headers.insert("api-key".to_string(), key.clone());
+                }
+                (base_url, key)
             }
             other => {
                 // Name only: the Debug form includes the provider's api_key.
@@ -540,7 +559,6 @@ impl OpenAIResponsesLLMExecutor {
             .emit(AgentEventType::TextMessageStart {
                 message_id: message_id.clone(),
                 role: crate::types::MessageRole::Assistant,
-                is_final: Some(true),
                 step_id: step_id.clone(),
             })
             .await;
@@ -618,7 +636,7 @@ impl OpenAIResponsesLLMExecutor {
 
         for item in output {
             match item {
-                OutputItem::Unknown => {},
+                OutputItem::Unknown => {}
                 OutputItem::Message(OutputMessage { content: parts, .. }) => {
                     for part in parts {
                         match part {
@@ -763,7 +781,8 @@ impl OpenAIResponsesLLMExecutor {
         while let Some(event_result) = stream.next().await {
             match event_result {
                 Ok(event) => match event {
-                    TypedStreamEvent::ResponseCreated(resp) | TypedStreamEvent::ResponseCompleted(resp) => {
+                    TypedStreamEvent::ResponseCreated(resp)
+                    | TypedStreamEvent::ResponseCompleted(resp) => {
                         let (input, output) = stream_usage.observe(&resp.usage);
                         self.context.increment_usage(input, output).await;
                     }
@@ -795,7 +814,6 @@ impl OpenAIResponsesLLMExecutor {
                                 .emit(AgentEventType::TextMessageStart {
                                     message_id: message_id.clone(),
                                     role: crate::types::MessageRole::Assistant,
-                                    is_final: None,
                                     step_id: message_id.clone(),
                                 })
                                 .await;
@@ -1032,6 +1050,17 @@ fn get_secret_store(
         .and_then(|o| o.stores.secret_store.clone())
 }
 
+/// Responses API base URL for an Azure AI Foundry provider. Foundry's OpenAI
+/// v1 endpoint serves `/responses` next to `/chat/completions`, so this is the
+/// same derived URL the completions path uses.
+fn azure_ai_foundry_responses_base_url(provider: &ModelProvider) -> Result<String, AgentError> {
+    provider.completion_url().ok_or_else(|| {
+        AgentError::InvalidConfiguration(
+            "Azure AI Foundry resource is not configured (AZURE_AI_FOUNDRY_RESOURCE)".to_string(),
+        )
+    })
+}
+
 fn file_type_to_input_file(file: &FileType) -> InputContentPart {
     match file {
         FileType::Bytes { bytes, name, .. } => InputContentPart::InputFile {
@@ -1054,13 +1083,38 @@ mod tests {
     #[test]
     fn stream_usage_applies_cumulative_deltas_once() {
         let mut seen = StreamUsage::default();
-        let report = |input_tokens, output_tokens| ResponseUsage { input_tokens, output_tokens, total_tokens: input_tokens + output_tokens };
+        let report = |input_tokens, output_tokens| ResponseUsage {
+            input_tokens,
+            output_tokens,
+            total_tokens: input_tokens + output_tokens,
+        };
         assert_eq!(seen.observe(&report(10, 0)), (10, 0));
         assert_eq!(seen.observe(&report(10, 0)), (0, 0));
         assert_eq!(seen.observe(&report(123, 45)), (113, 45));
         assert_eq!(seen.observe(&report(123, 45)), (0, 0));
         assert_eq!(seen.observe(&report(0, 0)), (0, 0));
         assert_eq!((seen.input, seen.output), (123, 45));
+    }
+
+    #[test]
+    fn azure_ai_foundry_resolves_responses_base_url() {
+        let provider = ModelProvider::AzureAiFoundry {
+            resource: "my-res".to_string(),
+            api_key: None,
+        };
+        assert_eq!(
+            azure_ai_foundry_responses_base_url(&provider).unwrap(),
+            "https://my-res.openai.azure.com/openai/v1"
+        );
+
+        let unconfigured = ModelProvider::AzureAiFoundry {
+            resource: "  ".to_string(),
+            api_key: None,
+        };
+        assert!(matches!(
+            azure_ai_foundry_responses_base_url(&unconfigured),
+            Err(AgentError::InvalidConfiguration(_))
+        ));
     }
 
     #[test]

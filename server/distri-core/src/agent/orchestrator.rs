@@ -1200,6 +1200,7 @@ impl AgentOrchestrator {
             created_at: chrono::Utc::now().timestamp_millis(),
             agent_id: None,
             parts_metadata: None,
+            is_final: false,
         };
         agent.invoke_stream(message, context).await
     }

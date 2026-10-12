@@ -443,13 +443,11 @@ impl WorkflowAgent {
 
         let summary_text = serde_json::to_string_pretty(&summary).unwrap_or_default();
 
-        // Save summary as agent message to thread
-        let summary_message = crate::types::Message {
-            role: distri_types::MessageRole::Assistant,
-            parts: vec![distri_types::Part::Text(summary_text.clone())],
-            ..Default::default()
-        };
-        context.save_message(&summary_message).await;
+        // The summary is the run's final answer: the A2A layer persists it once
+        // as the `is_final` message and sends it as the live trailing frame.
+        context
+            .set_final_result(Some(serde_json::Value::String(summary_text.clone())))
+            .await;
 
         Ok(InvokeResult {
             content: Some(summary_text),

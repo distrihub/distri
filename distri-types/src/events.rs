@@ -187,7 +187,6 @@ pub enum AgentEventType {
         message_id: String,
         step_id: String,
         role: MessageRole,
-        is_final: Option<bool>,
     },
     TextMessageContent {
         message_id: String,

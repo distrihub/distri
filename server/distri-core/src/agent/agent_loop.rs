@@ -138,8 +138,8 @@ impl AgentLoop {
 
         if !non_tool_parts.is_empty() {
             context.store_task(&non_tool_parts).await;
-            let mut new_message = message.clone();
-            new_message.parts = non_tool_parts;
+            // Re-indexes parts_metadata so save/developer flags follow their parts.
+            let new_message = message.retain_parts(|_, part| !matches!(part, Part::ToolResult(_)));
             context.save_message(&new_message).await;
         }
         if !tool_parts.is_empty() {

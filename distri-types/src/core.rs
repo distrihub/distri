@@ -236,6 +236,13 @@ pub struct PartMetadata {
     pub developer: bool,
 }
 
+impl PartMetadata {
+    /// True when this entry carries no information: saved, not developer-only.
+    pub fn is_default(&self) -> bool {
+        self.save && !self.developer
+    }
+}
+
 fn default_save() -> bool {
     true
 }
@@ -269,11 +276,16 @@ pub struct Message {
     /// The ID of the agent that generated this message (for Assistant messages)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
-    /// Per-part metadata used to control part behavior during save.
-    /// Parts with `save: false` will be filtered out before saving to the database.
-    /// This field is used for processing only and is not persisted.
+    /// Per-part metadata, keyed by part index.
+    /// Parts with `save: false` are filtered out before saving to the database;
+    /// the remaining non-default entries (e.g. `developer: true`) are persisted,
+    /// re-indexed to the saved parts, so history replays them like the live turn.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub parts_metadata: Option<PartsMetadata>,
+    /// True on the one assistant message that carries the turn's final answer
+    /// (the `final` tool's result). Earlier same-turn assistant text is a draft.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub is_final: bool,
 }
 
 impl Default for Message {
@@ -286,6 +298,7 @@ impl Default for Message {
             created_at: chrono::Utc::now().timestamp_millis(),
             agent_id: None,
             parts_metadata: None,
+            is_final: false,
         }
     }
 }
@@ -314,6 +327,26 @@ impl Message {
             parts: vec![Part::Text(task)],
             ..Default::default()
         }
+    }
+
+    /// The turn's final answer. Its id is derived from the task id, so the
+    /// persisted message and the live SSE trailing frame share one id.
+    pub fn final_answer(task_id: &str, text: String) -> Self {
+        Self {
+            id: Self::final_answer_id(task_id),
+            role: MessageRole::Assistant,
+            parts: vec![Part::Text(text)],
+            is_final: true,
+            ..Default::default()
+        }
+    }
+
+    pub fn final_answer_id(task_id: &str) -> String {
+        uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_OID,
+            format!("{task_id}:final").as_bytes(),
+        )
+        .to_string()
     }
 
     pub fn developer(task: String, name: Option<String>) -> Self {
@@ -385,32 +418,41 @@ impl Message {
     /// Parts with `save: false` in the parts_metadata will be filtered out.
     /// If parts_metadata is None, all parts are included.
     pub fn filter_for_save(&self, parts_metadata: Option<&PartsMetadata>) -> Self {
-        let parts_metadata = match parts_metadata {
-            Some(meta) => meta,
-            None => return self.clone(),
-        };
+        let mut message = self.clone();
+        message.parts_metadata = parts_metadata.cloned();
+        message.retain_parts(|index, _| {
+            parts_metadata
+                .and_then(|meta| meta.get(&index))
+                .map(|meta| meta.save)
+                .unwrap_or(true) // Default to save=true if not specified
+        })
+    }
 
-        let filtered_parts: Vec<Part> = self
-            .parts
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| {
-                parts_metadata
-                    .get(index)
-                    .map(|meta| meta.save)
-                    .unwrap_or(true) // Default to save=true if not specified
-            })
-            .map(|(_, part)| part.clone())
-            .collect();
+    /// Keep only the parts matching `keep`, re-indexing `parts_metadata` to
+    /// the kept parts. Entries left at their defaults are dropped, and an
+    /// empty map becomes `None`.
+    pub fn retain_parts(&self, keep: impl Fn(usize, &Part) -> bool) -> Self {
+        let mut parts = Vec::new();
+        let mut parts_metadata = PartsMetadata::new();
+        for (index, part) in self.parts.iter().enumerate() {
+            if !keep(index, part) {
+                continue;
+            }
+            if let Some(meta) = self
+                .parts_metadata
+                .as_ref()
+                .and_then(|m| m.get(&index))
+                .filter(|meta| !meta.is_default())
+            {
+                parts_metadata.insert(parts.len(), meta.clone());
+            }
+            parts.push(part.clone());
+        }
 
         Self {
-            id: self.id.clone(),
-            name: self.name.clone(),
-            role: self.role.clone(),
-            parts: filtered_parts,
-            created_at: self.created_at,
-            agent_id: self.agent_id.clone(),
-            parts_metadata: None, // Don't persist parts_metadata
+            parts,
+            parts_metadata: (!parts_metadata.is_empty()).then_some(parts_metadata),
+            ..self.clone()
         }
     }
 }
