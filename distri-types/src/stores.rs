@@ -1105,7 +1105,7 @@ pub async fn resolve_provider_test_endpoint(
         });
     }
     // A decision provider: its base URL is fixed or built from one setting
-    // (the Workers AI account id, a llama-server's LLAMACPP_BASE_URL). Its
+    // (the Workers AI account id, a llama-server's DECISIONS_BASE_URL). Its
     // catalog entry carries a `test` block that POSTs a one-question decision
     // to `{base_url}`, so the probe proves the key and the System One route.
     if let Some(kind) = crate::decision::DecisionProviderKind::from_id(provider_id) {
@@ -2148,10 +2148,10 @@ mod tests {
     #[tokio::test]
     async fn test_endpoint_resolves_decision_providers() {
         let ep = resolve_provider_test_endpoint(
-            "llamacpp",
+            "decisions",
             &secrets(&[
-                ("LLAMACPP_BASE_URL", "https://decisions-dev.distri.dev/v1/"),
-                ("LLAMACPP_API_KEY", "k"),
+                ("DECISIONS_BASE_URL", "https://decisions-dev.distri.dev/v1/"),
+                ("DECISIONS_API_KEY", "k"),
             ]),
             &[],
         )
@@ -2160,10 +2160,10 @@ mod tests {
         assert_eq!(ep.base_url, "https://decisions-dev.distri.dev/v1");
         assert_eq!(ep.api_key, "k");
 
-        let err = resolve_provider_test_endpoint("llamacpp", &secrets(&[]), &[])
+        let err = resolve_provider_test_endpoint("decisions", &secrets(&[]), &[])
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("LLAMACPP_BASE_URL"), "{err}");
+        assert!(err.to_string().contains("DECISIONS_BASE_URL"), "{err}");
 
         let ep = resolve_provider_test_endpoint(
             "typesafe",
@@ -2182,7 +2182,7 @@ mod tests {
         use crate::decision::DecisionProviderKind;
         use crate::models::ModelCapability;
         let models = crate::ModelProvider::well_known_models();
-        for id in ["typesafe", "workers_ai", "llamacpp"] {
+        for id in ["typesafe", "workers_ai", "decisions"] {
             assert!(DecisionProviderKind::from_id(id).is_some(), "{id}");
             let group = models
                 .iter()
@@ -2201,18 +2201,18 @@ mod tests {
             assert_eq!(test.accept_status, vec![200]);
         }
         let defs = crate::ModelProvider::all_provider_definitions();
-        let llama = defs.iter().find(|d| d.id == "llamacpp").unwrap();
-        let base = llama
+        let generic = defs.iter().find(|d| d.id == "decisions").unwrap();
+        let base = generic
             .keys
             .iter()
-            .find(|k| k.key == "LLAMACPP_BASE_URL")
+            .find(|k| k.key == "DECISIONS_BASE_URL")
             .unwrap();
         assert!(base.required && !base.sensitive);
         assert!(
-            !llama
+            !generic
                 .keys
                 .iter()
-                .find(|k| k.key == "LLAMACPP_API_KEY")
+                .find(|k| k.key == "DECISIONS_API_KEY")
                 .unwrap()
                 .required
         );

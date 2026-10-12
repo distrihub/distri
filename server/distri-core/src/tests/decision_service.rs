@@ -217,7 +217,7 @@ async fn non_decision_providers_are_rejected() {
 }
 
 #[tokio::test]
-async fn llamacpp_provider_reads_base_url_and_optional_key_from_settings() {
+async fn decisions_provider_provider_reads_base_url_and_optional_key_from_settings() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/systemone"))
@@ -231,22 +231,22 @@ async fn llamacpp_provider_reads_base_url_and_optional_key_from_settings() {
     let svc = DecisionService::new(
         reqwest::Client::new(),
         secrets(&[
-            ("LLAMACPP_BASE_URL", &format!("{}/v1/", server.uri())),
-            ("LLAMACPP_API_KEY", "dev-key"),
+            ("DECISIONS_BASE_URL", &format!("{}/v1/", server.uri())),
+            ("DECISIONS_API_KEY", "dev-key"),
         ]),
         None,
     );
-    let res = svc.decide(&request("llamacpp/kev")).await.unwrap();
+    let res = svc.decide(&request("decisions/kev")).await.unwrap();
     assert_eq!(res.answers.len(), 2);
 
     // No key: allowed (a llama-server may run without --api-key), no bearer.
     let no_key = DecisionService::new(
         reqwest::Client::new(),
-        secrets(&[("LLAMACPP_BASE_URL", "http://127.0.0.1:8090/v1")]),
+        secrets(&[("DECISIONS_BASE_URL", "http://127.0.0.1:8090/v1")]),
         None,
     );
     let ep = no_key
-        .resolve_endpoint(&request("llamacpp/kev"))
+        .resolve_endpoint(&request("decisions/kev"))
         .await
         .unwrap();
     assert_eq!(ep.url, "http://127.0.0.1:8090/v1/systemone");
@@ -254,10 +254,10 @@ async fn llamacpp_provider_reads_base_url_and_optional_key_from_settings() {
 }
 
 #[tokio::test]
-async fn llamacpp_without_base_url_names_the_setting() {
+async fn decisions_provider_without_base_url_names_the_setting() {
     let svc = DecisionService::new(reqwest::Client::new(), secrets(&[]), None);
-    let err = svc.decide(&request("llamacpp/kev")).await.unwrap_err();
-    assert!(err.to_string().contains("LLAMACPP_BASE_URL"), "{err}");
+    let err = svc.decide(&request("decisions/kev")).await.unwrap_err();
+    assert!(err.to_string().contains("DECISIONS_BASE_URL"), "{err}");
     assert_eq!(distri_types::ApiError::from(err).status(), 400);
 }
 

@@ -162,16 +162,16 @@ mod tests {
         ));
     }
 
-    /// `llamacpp` is a built-in provider: its base URL and key are ordinary
+    /// `decisions` is a built-in provider: its base URL and key are ordinary
     /// provider settings (what the Models UI saves), no custom provider needed.
-    async fn configure_llamacpp(
+    async fn configure_decisions_provider(
         orchestrator: &distri_core::agent::AgentOrchestrator,
         base_url: &str,
         api_key: Option<&str>,
     ) {
-        let mut secrets = HashMap::from([("LLAMACPP_BASE_URL".to_string(), base_url.to_string())]);
+        let mut secrets = HashMap::from([("DECISIONS_BASE_URL".to_string(), base_url.to_string())]);
         if let Some(k) = api_key {
-            secrets.insert("LLAMACPP_API_KEY".to_string(), k.to_string());
+            secrets.insert("DECISIONS_API_KEY".to_string(), k.to_string());
         }
         orchestrator
             .stores
@@ -179,7 +179,7 @@ mod tests {
             .as_ref()
             .expect("provider store")
             .upsert_provider(UpsertProviderRequest {
-                provider_id: "llamacpp".into(),
+                provider_id: "decisions".into(),
                 secrets,
                 config: None,
                 custom_models: None,
@@ -187,11 +187,11 @@ mod tests {
                 connection_provider: None,
             })
             .await
-            .expect("configure llamacpp");
+            .expect("configure the decisions provider");
     }
 
     #[actix_web::test]
-    async fn llamacpp_provider_is_configured_like_any_other() {
+    async fn decisions_provider_provider_is_configured_like_any_other() {
         let upstream = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/systemone"))
@@ -212,7 +212,7 @@ mod tests {
             .await;
 
         let orchestrator = make_orchestrator().await;
-        configure_llamacpp(
+        configure_decisions_provider(
             &orchestrator,
             &format!("{}/v1", upstream.uri()),
             Some("dev-key"),
@@ -223,23 +223,23 @@ mod tests {
         // Listed with its two settings, so the UI renders a form for it.
         let req = test::TestRequest::get().uri("/v1/providers").to_request();
         let providers: Value = test::read_body_json(test::call_service(&app, req).await).await;
-        let llama = providers
+        let decisions = providers
             .as_array()
             .unwrap()
             .iter()
-            .find(|p| p["id"] == "llamacpp")
-            .expect("llamacpp listed");
-        let keys: Vec<&str> = llama["keys"]
+            .find(|p| p["id"] == "decisions")
+            .expect("decisions listed");
+        let keys: Vec<&str> = decisions["keys"]
             .as_array()
             .unwrap()
             .iter()
             .map(|k| k["key"].as_str().unwrap())
             .collect();
-        assert_eq!(keys, ["LLAMACPP_BASE_URL", "LLAMACPP_API_KEY"]);
+        assert_eq!(keys, ["DECISIONS_BASE_URL", "DECISIONS_API_KEY"]);
 
         let req = test::TestRequest::post()
             .uri("/v1/decisions")
-            .set_json(body("llamacpp/kev"))
+            .set_json(body("decisions/kev"))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200);
@@ -251,17 +251,17 @@ mod tests {
         // The UI's "Test" button: POSTs a one-question decision to the server.
         let req = test::TestRequest::post()
             .uri("/v1/providers/test")
-            .set_json(json!({"provider_id": "llamacpp"}))
+            .set_json(json!({"provider_id": "decisions"}))
             .to_request();
         let probe: Value = test::read_body_json(test::call_service(&app, req).await).await;
         assert_eq!(probe["ok"], true, "{probe}");
     }
 
     #[actix_web::test]
-    async fn llamacpp_without_base_url_is_400_naming_the_setting() {
-        let (status, error) = error_for("llamacpp/kev", None).await;
+    async fn decisions_provider_without_base_url_is_400_naming_the_setting() {
+        let (status, error) = error_for("decisions/kev", None).await;
         assert_eq!(status, 400);
-        assert!(error.contains("LLAMACPP_BASE_URL"), "{error}");
+        assert!(error.contains("DECISIONS_BASE_URL"), "{error}");
     }
 
     async fn error_for(model: &str, body_override: Option<Value>) -> (u16, String) {
@@ -334,7 +334,7 @@ mod tests {
             return;
         };
         let orchestrator = make_orchestrator().await;
-        configure_llamacpp(
+        configure_decisions_provider(
             &orchestrator,
             &base_url,
             std::env::var("DISTRI_DECISION_LIVE_KEY").ok().as_deref(),
@@ -344,7 +344,7 @@ mod tests {
 
         let req = test::TestRequest::post()
             .uri("/v1/decisions")
-            .set_json(body("llamacpp/kev"))
+            .set_json(body("decisions/kev"))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200);
