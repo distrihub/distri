@@ -9,6 +9,7 @@ pub mod api_error;
 pub use api_error::{ApiError, ApiResult};
 pub mod browser;
 pub mod configuration;
+pub mod decision;
 mod orchestrator;
 pub mod tenant_context;
 pub use agent::*;
