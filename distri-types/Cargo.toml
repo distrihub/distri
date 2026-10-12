@@ -31,7 +31,7 @@ jsonschema = { workspace = true }
 schemars = { workspace = true }
 utoipa = { workspace = true }
 secrecy = { version = "0.10.3", features = ["serde"] }
-uuid = { version = "1.13.1", features = ["serde"] }
+uuid = { version = "1.13.1", features = ["serde", "v5"] }
 chrono = { version = "0.4", features = ["serde"] }
 comfy-table = "7.0"
 futures-util = "0.3"

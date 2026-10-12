@@ -183,7 +183,6 @@ impl MockLLM {
                 message_id: "1".into(),
                 step_id: "1".into(),
                 role: MessageRole::Assistant,
-                is_final: None,
             })
             .await;
 

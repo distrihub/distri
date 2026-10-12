@@ -32,7 +32,6 @@ use tokio::sync::Mutex;
 use crate::agent::types::AgentEvent;
 use crate::agent::ExecutorContext;
 use crate::broadcast::{in_process::InProcessBroadcaster, AgentEventBroadcaster};
-use distri_types::RemoteTaskRunner;
 use crate::tests::helpers::test_store_config;
 use crate::AgentOrchestratorBuilder;
 use distri_types::invocation::{
@@ -41,6 +40,7 @@ use distri_types::invocation::{
 };
 #[allow(unused_imports)]
 use distri_types::stores::TaskStore;
+use distri_types::RemoteTaskRunner;
 use distri_types::{
     AgentEventType, Message, MessageRole, Part, RuntimeMode, StandardDefinition, TaskStatus,
 };
@@ -54,6 +54,7 @@ fn user_msg(text: &str) -> Message {
         created_at: chrono::Utc::now().timestamp_millis(),
         agent_id: None,
         parts_metadata: None,
+        is_final: false,
     }
 }
 

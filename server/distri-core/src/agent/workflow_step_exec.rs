@@ -39,7 +39,6 @@ async fn emit_text(context: &Arc<ExecutorContext>, text: &str) {
             message_id: message_id.clone(),
             step_id: step_id.clone(),
             role: MessageRole::Assistant,
-            is_final: Some(false),
         })
         .await;
     context

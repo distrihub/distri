@@ -250,9 +250,12 @@ pub(crate) fn spawn_background_execution(
 
         match exec_result {
             Ok(result) => {
-                // Save final result as assistant message
-                if let Some(content) = &result.content {
-                    let final_message = distri_types::Message::assistant(content.clone(), None);
+                // Save the final result as the turn's one final-answer message.
+                // Its id matches the live SSE trailing frame (`build_final_message`),
+                // so history and live streams converge on the same message.
+                if let Some(content) = result.content.as_ref().filter(|c| !c.is_empty()) {
+                    let final_message =
+                        distri_types::Message::final_answer(&task_id, content.clone());
                     executor_context.save_message(&final_message).await;
                 }
                 // Note: RunFinished event is already emitted by the agent loop.
