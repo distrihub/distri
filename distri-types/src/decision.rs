@@ -180,11 +180,18 @@ impl DecisionRequest {
     }
 }
 
-/// Built-in decision providers — the hosted APIs plus `llamacpp`, a
-/// self-hosted llama.cpp `llama-server` (>= b11361) configured like any other
-/// provider: its base URL and optional key are provider settings, set in the
-/// UI or through `POST /v1/providers`. Any other `custom_*` provider id is
-/// resolved through the workspace's custom providers instead.
+/// Built-in decision providers. They all speak one wire format, the TypeSafe
+/// System One API, at different addresses:
+///
+/// - [`Self::SystemOne`] is the generic **`decisions`** provider: any System One
+///   endpoint at a configured `DECISIONS_BASE_URL` (llama.cpp `llama-server`
+///   >= b11361 serving Kev/Laya/Clef, TypeSafe, OpenRouter, …), with an optional
+///   `DECISIONS_API_KEY`. Its settings are edited like any other provider's.
+/// - The rest are presets for hosted endpoints whose address is known, or
+///   whose path/envelope differs (AI/ML API, Workers AI).
+///
+/// A `custom_*` provider id is resolved through the workspace's custom
+/// providers instead, for a second System One endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecisionProviderKind {
     /// TypeSafe — Jev.
@@ -196,8 +203,8 @@ pub enum DecisionProviderKind {
     /// Cloudflare Workers AI — Clef / Clef-flash.
     WorkersAi,
     /// A self-hosted llama.cpp `llama-server` serving a decision model
-    /// (Kev, Laya, Clef, …) at `LLAMACPP_BASE_URL`.
-    Llamacpp,
+    /// (Kev, Laya, Clef, …) at `DECISIONS_BASE_URL`.
+    SystemOne,
 }
 
 /// How a provider's HTTP response wraps the [`DecisionResponse`].
@@ -215,7 +222,7 @@ impl DecisionProviderKind {
         Self::Openrouter,
         Self::Aimlapi,
         Self::WorkersAi,
-        Self::Llamacpp,
+        Self::SystemOne,
     ];
 
     pub fn from_id(id: &str) -> Option<Self> {
@@ -228,7 +235,7 @@ impl DecisionProviderKind {
             Self::Openrouter => "openrouter",
             Self::Aimlapi => "aimlapi",
             Self::WorkersAi => "workers_ai",
-            Self::Llamacpp => "llamacpp",
+            Self::SystemOne => "decisions",
         }
     }
 
@@ -238,7 +245,7 @@ impl DecisionProviderKind {
             Self::Openrouter => "OpenRouter",
             Self::Aimlapi => "AI/ML API",
             Self::WorkersAi => "Cloudflare Workers AI",
-            Self::Llamacpp => "llama.cpp server",
+            Self::SystemOne => "Decisions",
         }
     }
 
@@ -249,22 +256,22 @@ impl DecisionProviderKind {
             Self::Openrouter => "OPENROUTER_API_KEY",
             Self::Aimlapi => "AIMLAPI_API_KEY",
             Self::WorkersAi => "CLOUDFLARE_API_TOKEN",
-            Self::Llamacpp => "LLAMACPP_API_KEY",
+            Self::SystemOne => "DECISIONS_API_KEY",
         }
     }
 
-    /// Whether a call without the key is a configuration error. A
-    /// self-hosted server may run without `--api-key`.
+    /// Whether a call without the key is a configuration error. A generic
+    /// System One endpoint (e.g. a llama-server without `--api-key`) may be open.
     pub fn api_key_required(&self) -> bool {
-        !matches!(self, Self::Llamacpp)
+        !matches!(self, Self::SystemOne)
     }
 
     /// Provider setting the base URL is built from, if any: the Workers AI
-    /// account id, or a llama-server's base URL.
+    /// account id, or the generic provider's `DECISIONS_BASE_URL`.
     pub fn base_url_secret(&self) -> Option<&'static str> {
         match self {
             Self::WorkersAi => Some("CLOUDFLARE_ACCOUNT_ID"),
-            Self::Llamacpp => Some("LLAMACPP_BASE_URL"),
+            Self::SystemOne => Some("DECISIONS_BASE_URL"),
             _ => None,
         }
     }
@@ -280,7 +287,7 @@ impl DecisionProviderKind {
             Self::WorkersAi => setting.map(|account| {
                 format!("https://api.cloudflare.com/client/v4/accounts/{account}/ai")
             }),
-            Self::Llamacpp => setting.map(|url| url.trim_end_matches('/').to_string()),
+            Self::SystemOne => setting.map(|url| url.trim_end_matches('/').to_string()),
         }
     }
 
@@ -290,7 +297,7 @@ impl DecisionProviderKind {
         match self {
             Self::Aimlapi => format!("{base}/decisions"),
             Self::WorkersAi => format!("{base}/run/@cf/cloudflare/{model}"),
-            Self::Typesafe | Self::Openrouter | Self::Llamacpp => systemone_url(base),
+            Self::Typesafe | Self::Openrouter | Self::SystemOne => systemone_url(base),
         }
     }
 
@@ -533,13 +540,13 @@ mod tests {
             workers.endpoint_url(&workers.base_url(Some("acc123")).unwrap(), "clef-flash"),
             "https://api.cloudflare.com/client/v4/accounts/acc123/ai/run/@cf/cloudflare/clef-flash"
         );
-        let llama = DecisionProviderKind::Llamacpp;
-        assert_eq!(DecisionProviderKind::from_id("llamacpp"), Some(llama));
-        assert!(!llama.api_key_required());
-        assert_eq!(llama.base_url(Some("  ")), None);
+        let generic = DecisionProviderKind::SystemOne;
+        assert_eq!(DecisionProviderKind::from_id("decisions"), Some(generic));
+        assert!(!generic.api_key_required());
+        assert_eq!(generic.base_url(Some("  ")), None);
         assert_eq!(
-            llama.endpoint_url(
-                &llama
+            generic.endpoint_url(
+                &generic
                     .base_url(Some("https://decisions-dev.distri.dev/v1/"))
                     .unwrap(),
                 "kev"

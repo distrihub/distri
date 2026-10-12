@@ -1093,19 +1093,19 @@
       }
     },
     {
-      "id": "llamacpp",
-      "label": "llama.cpp server",
+      "id": "decisions",
+      "label": "Decisions (System One API)",
       "keys": [
         {
-          "key": "LLAMACPP_BASE_URL",
-          "label": "Base URL",
+          "key": "DECISIONS_BASE_URL",
+          "label": "Base URL (serves /systemone)",
           "placeholder": "https://decisions-dev.distri.dev/v1",
           "required": true,
           "sensitive": false
         },
         {
-          "key": "LLAMACPP_API_KEY",
-          "label": "API key (llama-server --api-key)",
+          "key": "DECISIONS_API_KEY",
+          "label": "API key",
           "placeholder": "optional",
           "required": false,
           "sensitive": true
@@ -1114,7 +1114,7 @@
       "models": [
         {
           "id": "kev",
-          "name": "Kev (whatever model the server loaded)",
+          "name": "Kev (whatever model the endpoint serves)",
           "capability": "decision",
           "context_window": 65536,
           "pricing": {

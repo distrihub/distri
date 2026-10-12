@@ -3,9 +3,10 @@
 //!
 //! Resolution:
 //! - A built-in decision provider (`typesafe`, `openrouter`, `aimlapi`,
-//!   `workers_ai`, `llamacpp`) takes its provider settings from the secret
-//!   store: the bearer token, and the base URL setting where it has one (the
-//!   Workers AI account id, a llama-server's `LLAMACPP_BASE_URL`). These are
+//!   `workers_ai`, and the generic `decisions` provider for any System One
+//!   endpoint) takes its provider settings from the secret store: the bearer
+//!   token, and the base URL setting where it has one (the Workers AI account
+//!   id, the generic provider's `DECISIONS_BASE_URL`). These are
 //!   the same settings the Models UI edits.
 //! - A `custom_*` provider resolves through
 //!   [`ProviderStore::resolve_provider_endpoint`] — the same `base_url` +
