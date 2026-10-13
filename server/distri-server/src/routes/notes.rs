@@ -9,9 +9,7 @@
 
 use actix_web::{web, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
-use distri_types::api::notes::{
-    CreateNoteRequest, ListNotesQuery, NoteRecord, UpdateNoteRequest,
-};
+use distri_types::api::notes::{CreateNoteRequest, ListNotesQuery, NoteRecord, UpdateNoteRequest};
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;

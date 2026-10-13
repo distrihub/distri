@@ -2407,9 +2407,7 @@ impl Distri {
 
     /// List all available models as a flat list — one entry per model, each
     /// denormalized with its provider's id/label and configuration status.
-    pub async fn list_models(
-        &self,
-    ) -> Result<Vec<distri_types::ModelWithProvider>, ClientError> {
+    pub async fn list_models(&self) -> Result<Vec<distri_types::ModelWithProvider>, ClientError> {
         let url = format!("{}/models", self.base_url);
         let resp = self.http.get(&url).send().await?;
         if resp.status().is_success() {

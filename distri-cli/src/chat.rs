@@ -270,7 +270,10 @@ pub async fn handle_slash_command(
                         Err(err) => eprintln!("Compact failed: {}", err),
                     }
                 }
-                Ok(_) => println!("{}No task on this thread yet — send a message first.{}", COLOR_GRAY, COLOR_RESET),
+                Ok(_) => println!(
+                    "{}No task on this thread yet — send a message first.{}",
+                    COLOR_GRAY, COLOR_RESET
+                ),
                 Err(err) => eprintln!("Failed to list tasks: {}", err),
             }
             Ok(SlashCommandResult::Continue)
@@ -338,11 +341,7 @@ pub async fn handle_slash_command(
                             } else {
                                 "\x1b[90m"
                             },
-                            if *configured {
-                                ""
-                            } else {
-                                "(not configured)"
-                            },
+                            if *configured { "" } else { "(not configured)" },
                             COLOR_RESET,
                         );
                         for id in model_ids {

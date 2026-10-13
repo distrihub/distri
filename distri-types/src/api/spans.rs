@@ -7,7 +7,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
@@ -297,7 +297,10 @@ mod tests {
             .get("scopeSpans")
             .and_then(|s| s.as_array())
             .unwrap();
-        let spans = scope_spans[0].get("spans").and_then(|s| s.as_array()).unwrap();
+        let spans = scope_spans[0]
+            .get("spans")
+            .and_then(|s| s.as_array())
+            .unwrap();
         assert_eq!(spans[0].get("traceId").and_then(|t| t.as_str()), Some("t1"));
         assert_eq!(
             spans[0].get("startTimeUnixNano").and_then(|t| t.as_str()),
@@ -309,7 +312,9 @@ mod tests {
     fn spans_to_otlp_empty_is_empty_resource_spans() {
         let v = spans_to_otlp(&[]);
         assert_eq!(
-            v.get("resourceSpans").and_then(|r| r.as_array()).map(|a| a.len()),
+            v.get("resourceSpans")
+                .and_then(|r| r.as_array())
+                .map(|a| a.len()),
             Some(0)
         );
     }

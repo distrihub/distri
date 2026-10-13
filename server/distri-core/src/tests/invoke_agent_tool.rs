@@ -426,7 +426,10 @@ async fn invoke_agent_tool_background_returns_task_ids_and_persists_child() {
     let distri_types::Part::Data(v) = &parts[0] else {
         panic!("expected Part::Data; got {parts:?}");
     };
-    assert_eq!(v["kind"], "task_ids", "background join returns task_ids: {v}");
+    assert_eq!(
+        v["kind"], "task_ids",
+        "background join returns task_ids: {v}"
+    );
     let ids = v["task_ids"].as_array().expect("task_ids array");
     assert_eq!(ids.len(), 1, "one target → one task id: {v}");
     let child_id = ids[0].as_str().unwrap().to_string();
@@ -475,8 +478,17 @@ async fn default_agent_tools_include_supervisors_alongside_invoke_agent() {
         .await
         .expect("resolve tools");
     let names: Vec<String> = resolved.all_tools.iter().map(|t| t.get_name()).collect();
-    assert!(names.iter().any(|n| n == "invoke_agent"), "tools: {names:?}");
-    for expected in ["get_task", "wait_task", "cancel_task", "list_my_tasks", "get_task_result"] {
+    assert!(
+        names.iter().any(|n| n == "invoke_agent"),
+        "tools: {names:?}"
+    );
+    for expected in [
+        "get_task",
+        "wait_task",
+        "cancel_task",
+        "list_my_tasks",
+        "get_task_result",
+    ] {
         assert!(
             names.iter().any(|n| n == expected),
             "`{expected}` must be bundled with invoke_agent; tools: {names:?}"
