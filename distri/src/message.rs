@@ -153,13 +153,5 @@ mod tests {
         );
         let metadata = parse_metadata(&params);
         assert_eq!(metadata.runtime_mode, RuntimeMode::Cli);
-        assert!(
-            metadata
-                .definition_overrides
-                .as_ref()
-                .and_then(|o| o.runtime.as_ref())
-                .is_none(),
-            "definition_overrides.runtime must be unset"
-        );
     }
 }

@@ -177,8 +177,9 @@ pub struct AgentWithStats {
 #[derive(Debug, Deserialize)]
 pub struct ListAgentsQuery {
     /// Filter by caller runtime: `cli`, `cloud`, or `browser`. When set, each
-    /// returned agent gets a `runnable: bool` field indicating whether it
-    /// can execute in that runtime (directly or via remote dispatch).
+    /// returned agent gets a `runnable: bool` field indicating whether a
+    /// caller in that runtime may call it (see
+    /// `StandardDefinition::resolve_request_runtime`).
     #[serde(default)]
     runtime: Option<distri_types::RuntimeMode>,
 }
@@ -207,10 +208,6 @@ async fn list_agents(
         .await
         .unwrap_or_default();
 
-    let runner_provides = executor
-        .remote_task_runner
-        .as_ref()
-        .map(|r| r.provided_runtime());
     let caller_runtime = query.runtime.clone();
 
     let agents_with_stats: Vec<AgentWithStats> = agents_with_metadata
@@ -222,7 +219,7 @@ async fn list_agents(
             let runnable = caller_runtime.as_ref().map(|current| {
                 match &config {
                     distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                        def.is_runnable_in(current, runner_provides.as_ref())
+                        def.resolve_request_runtime(current).is_ok()
                     }
                     // Non-standard agents (workflows etc.) have no runtime constraint;
                     // they run wherever they're called.
@@ -763,8 +760,6 @@ async fn a2a_handler(
         .map(|v| v.is_verbose())
         .unwrap_or(false);
 
-    let handler = A2AHandler::new(executor.clone());
-
     let (user_id, workspace_id) = http_request
         .extensions()
         .get::<UserContext>()
@@ -777,16 +772,23 @@ async fn a2a_handler(
         .get::<distri_types::ModelSettings>()
         .cloned();
 
-    let result = handler
-        .handle_jsonrpc(
+    // Who is calling, injected by cloud's auth middleware.
+    let caller = http_request
+        .extensions()
+        .get::<distri_types::RequestCaller>()
+        .cloned();
+
+    let result = distri_core::a2a::A2AService::new(executor.clone())
+        .handle(distri_core::a2a::ServiceRequest {
             agent_id,
             user_id,
             workspace_id,
             req,
-            None,
+            executor_context: None,
             verbose,
             workspace_model_settings,
-        )
+            caller,
+        })
         .await;
     match result {
         futures_util::future::Either::Left(stream) => {
@@ -1744,7 +1746,7 @@ async fn create_agent(
                 Err(e) => {
                     return HttpResponse::BadRequest().json(json!({
                         "error": format!("Invalid UTF-8 body: {}", e)
-                    }))
+                    }));
                 }
             };
             match parse_agent_markdown_content(&content).await {
@@ -1795,6 +1797,13 @@ async fn create_agent(
                 }));
             }
         }
+    }
+
+    // One environment per agent: fill in a missing environment and check
+    // tools, sub-agents and workflow steps against it.
+    let mut agent_config = agent_config;
+    if let Err(e) = executor.prepare_agent_for_save(&mut agent_config).await {
+        return HttpResponse::UnprocessableEntity().json(json!({ "error": e }));
     }
 
     let agent_name = agent_config.get_name().to_string();
@@ -1896,7 +1905,7 @@ async fn update_agent(
                 Err(e) => {
                     return HttpResponse::BadRequest().json(json!({
                         "error": format!("Invalid UTF-8 body: {}", e)
-                    }))
+                    }));
                 }
             };
             parse_agent_markdown_content(&content).await
@@ -1907,7 +1916,7 @@ async fn update_agent(
         Err(e) => {
             return HttpResponse::BadRequest().json(json!({
                 "error": format!("Failed to parse agent definition: {}", e)
-            }))
+            }));
         }
     };
 
@@ -1932,6 +1941,19 @@ async fn update_agent(
             }
         }
     }
+
+    // One environment per agent (same rules as create).
+    let mut agent_config = distri_types::configuration::AgentConfig::StandardAgent(definition);
+    if let Err(e) = executor.prepare_agent_for_save(&mut agent_config).await {
+        return HttpResponse::UnprocessableEntity().json(json!({ "error": e }));
+    }
+    let definition = match agent_config {
+        distri_types::configuration::AgentConfig::StandardAgent(def) => def,
+        _ => {
+            return HttpResponse::InternalServerError()
+                .json(json!({ "error": "agent changed type while being saved" }));
+        }
+    };
 
     if let Err(e) = executor.update_agent_definition(definition.clone()).await {
         return HttpResponse::BadRequest().json(json!({

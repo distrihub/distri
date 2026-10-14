@@ -56,6 +56,11 @@ pub struct AgentOrchestrator {
     /// is no automatic fallback that uses this for a plain runtime
     /// mismatch.
     pub remote_task_runner: Option<Arc<dyn distri_types::RemoteTaskRunner>>,
+    /// Optional hook that sees every top-level agent request after its
+    /// runtime is resolved, and may refuse it. Wired by distri-cloud to
+    /// enforce caller rules and record integration health; `None` in
+    /// standalone servers.
+    pub request_observer: Option<Arc<dyn distri_types::AgentRequestObserver>>,
     /// Unified runtime for event broadcasting + task coordination.
     /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
     pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
@@ -124,6 +129,7 @@ pub struct AgentOrchestratorBuilder {
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
     remote_task_runner: Option<Arc<dyn distri_types::RemoteTaskRunner>>,
+    request_observer: Option<Arc<dyn distri_types::AgentRequestObserver>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
     workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
@@ -230,6 +236,16 @@ impl AgentOrchestratorBuilder {
         runner: Arc<dyn distri_types::RemoteTaskRunner>,
     ) -> Self {
         self.remote_task_runner = Some(runner);
+        self
+    }
+
+    /// Attach an [`AgentRequestObserver`](distri_types::AgentRequestObserver)
+    /// that sees every top-level agent request before it runs.
+    pub fn with_request_observer(
+        mut self,
+        observer: Arc<dyn distri_types::AgentRequestObserver>,
+    ) -> Self {
+        self.request_observer = Some(observer);
         self
     }
 
@@ -349,6 +365,7 @@ impl AgentOrchestratorBuilder {
             hook_registry: HookRegistry::new(),
             runtime,
             remote_task_runner: self.remote_task_runner,
+            request_observer: self.request_observer,
             oauth_handler: self.oauth_handler,
             mcp_pool_provider: self.mcp_pool_provider,
             workflow_store: self.workflow_store,
@@ -465,6 +482,78 @@ impl AgentOrchestrator {
             .register(config)
             .await
             .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Apply the one-environment-per-agent rules to an agent about to be
+    /// saved (spec `docs/specs/2026-10-14-agent-environments.md` §3–§4):
+    ///
+    /// - a standard agent with no environment gets the inferred one written
+    ///   into its definition, so every saved row carries an environment;
+    /// - its tools must fit that environment;
+    /// - each sub-agent that already exists must be able to run under it;
+    /// - every `AgentRun` step of a workflow must call a server agent.
+    ///
+    /// Agents referenced but not yet pushed are skipped; the request-time
+    /// check in `decide_dispatch` still applies to them.
+    pub async fn prepare_agent_for_save(
+        &self,
+        config: &mut distri_types::configuration::AgentConfig,
+    ) -> Result<(), String> {
+        use distri_types::configuration::AgentConfig;
+        match config {
+            AgentConfig::StandardAgent(def) => {
+                if def.runtime.is_none() {
+                    def.runtime = Some(def.inferred_environment());
+                }
+                def.validate_environment()?;
+                let env = def.inferred_environment();
+                for sub in &def.sub_agents {
+                    if sub == "*" {
+                        continue;
+                    }
+                    if let Some(AgentConfig::StandardAgent(child)) = self.get_agent(sub).await {
+                        if !child.can_run_under(&env) {
+                            return Err(format!(
+                                "{} agent '{}' cannot call {} agent '{}' as a sub-agent; a sub-agent \
+                                 must be in the same environment or be a server agent",
+                                env.display_name(),
+                                def.name,
+                                child.inferred_environment().display_name(),
+                                child.name
+                            ));
+                        }
+                    }
+                }
+                Ok(())
+            }
+            AgentConfig::WorkflowAgent(wf) => {
+                let Ok(definition) = serde_json::from_value::<distri_workflow::WorkflowDefinition>(
+                    wf.definition.clone(),
+                ) else {
+                    // The caller validates the definition's shape separately.
+                    return Ok(());
+                };
+                for step in &definition.steps {
+                    if let distri_workflow::StepKind::AgentRun { agent_id, .. } = &step.kind {
+                        if let Some(AgentConfig::StandardAgent(agent)) =
+                            self.get_agent(agent_id).await
+                        {
+                            let env = agent.inferred_environment();
+                            if env != distri_types::RuntimeMode::Cloud {
+                                return Err(format!(
+                                    "workflow step '{}' runs '{}', which is a {} agent; workflows \
+                                     can only run server agents",
+                                    step.id,
+                                    agent.name,
+                                    env.display_name()
+                                ));
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 
     pub async fn register_tool(&self, agent_id: &str, tool: Arc<dyn Tool>) {

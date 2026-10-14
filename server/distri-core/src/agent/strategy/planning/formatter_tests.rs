@@ -567,11 +567,85 @@ async fn lazy_partial_resolution_from_db() {
         "template structure should be preserved"
     );
 
-    // 7. Verify the partial is now registered (cached for subsequent renders)
+    // 7. The partial is NOT written into the shared registry: it belongs to
+    // the caller's workspace and is resolved per render.
     let known_after = registry.partial_names().await;
     assert!(
-        known_after.contains("my_tool_instructions"),
-        "partial should be registered after first render"
+        !known_after.contains("my_tool_instructions"),
+        "a workspace partial must not be cached in the process-wide registry"
+    );
+}
+
+/// An edited workspace partial is picked up on the next render. Before the
+/// fix the first render registered the DB partial into the process-wide
+/// registry, so every later render (in any workspace) kept the first
+/// content and edits never loaded.
+#[tokio::test]
+async fn edited_db_partial_is_picked_up_on_next_render() {
+    use crate::AgentOrchestratorBuilder;
+    use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
+    use distri_types::stores::{NewPromptTemplate, UpdatePromptTemplate};
+
+    let db_url = format!("file:{}?mode=memory&cache=shared", uuid::Uuid::new_v4());
+    let store_config = StoreConfig {
+        metadata: MetadataStoreConfig {
+            db_config: Some(DbConnectionConfig {
+                database_url: db_url,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let orchestrator = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(store_config)
+            .build()
+            .await
+            .unwrap(),
+    );
+    let store = orchestrator
+        .stores
+        .prompt_template_store
+        .as_ref()
+        .expect("prompt_template_store should exist")
+        .clone();
+    let created = store
+        .create(NewPromptTemplate {
+            name: "shared_role".to_string(),
+            template: "You are version one.".to_string(),
+            description: None,
+            version: None,
+            is_system: false,
+        })
+        .await
+        .unwrap();
+
+    let mut context = ExecutorContext::default();
+    context.orchestrator = Some(orchestrator.clone());
+    let context = Arc::new(context);
+    let template = "{{> shared_role}}";
+    let data = crate::agent::prompt_registry::TemplateData::default();
+
+    let first = render_prompt(&context, template, &data).await.unwrap();
+    assert!(first.contains("version one"), "got: {first}");
+
+    store
+        .update(
+            &created.id,
+            UpdatePromptTemplate {
+                name: "shared_role".to_string(),
+                template: "You are version two.".to_string(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let second = render_prompt(&context, template, &data).await.unwrap();
+    assert!(
+        second.contains("version two"),
+        "the edited partial must be used on the next render, got: {second}"
     );
 }
 

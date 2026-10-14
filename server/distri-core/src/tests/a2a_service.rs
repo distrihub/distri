@@ -329,6 +329,7 @@ async fn unimplemented_methods_return_method_not_found() {
                 executor_context: None,
                 verbose: false,
                 workspace_model_settings: None,
+                caller: None,
             })
             .await;
         match resp {
@@ -405,6 +406,7 @@ fn make_service_request(method: &str, params: serde_json::Value) -> ServiceReque
         executor_context: None,
         verbose: false,
         workspace_model_settings: None,
+        caller: None,
     }
 }
 

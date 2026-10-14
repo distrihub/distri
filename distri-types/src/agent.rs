@@ -417,10 +417,14 @@ impl LlmDefinition {
 pub enum RuntimeMode {
     /// Running from distri-cli with local filesystem access
     Cli,
-    /// Running on distri-cloud server (browsr sandbox for code execution)
+    /// Running on distri-cloud server (browsr sandbox for code execution).
+    /// User-facing name: **server**.
     #[default]
+    #[serde(alias = "server")]
     Cloud,
-    /// Running in browser with IndexedDB filesystem
+    /// Running in browser with IndexedDB filesystem.
+    /// User-facing name: **web**.
+    #[serde(alias = "web")]
     Browser,
 }
 
@@ -438,6 +442,25 @@ impl RuntimeMode {
             Self::Cli => "cli",
             Self::Cloud => "cloud",
             Self::Browser => "browser",
+        }
+    }
+
+    /// User-facing environment name: web, server or cli.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Cli => "cli",
+            Self::Cloud => "server",
+            Self::Browser => "web",
+        }
+    }
+
+    fn caller_description(&self) -> &'static str {
+        match self {
+            Self::Cli => "the distri CLI",
+            Self::Cloud => "anywhere",
+            Self::Browser => {
+                "a browser client that supplies its tools (embed, @distri/react, dashboard)"
+            }
         }
     }
 }
@@ -592,34 +615,33 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionConfig>,
 
-    /// Runtime constraint for this agent. Like Docker's `platforms` field:
+    /// The one environment this agent belongs to: `web` (browser),
+    /// `server` (cloud) or `cli`. See
+    /// `docs/decisions/2026-10-14-one-environment-per-agent.md`.
     ///
-    /// - empty / omitted → runs in any runtime (default).
-    /// - `["cli"]` → only runs when `ExecutorContext.runtime_mode == Cli`,
-    ///   i.e. driven by the distri CLI, which executes tool calls locally
-    ///   on the user's own machine.
-    /// - `["cli", "cloud"]` → runs in either Cli or Cloud, but not Browser.
+    /// - `web`: called from a browser client that supplies its external
+    ///   tools (embed, `@distri/react`, the dashboard).
+    /// - `server`: called by bots, workflows, schedules and the API; runs
+    ///   code only in the sandbox; may not declare external tools.
+    /// - `cli`: driven by the distri CLI, which runs tools locally.
     ///
-    /// Every agent executes in-process against the caller's own runtime by
-    /// default — there is no automatic remote/sandbox fallback. When the
-    /// current runtime doesn't match any allowed value, the orchestrator
-    /// fails fast at request entry with a clear error, UNLESS the caller
-    /// explicitly requested remote dispatch (`ExecutorHint::Force(Remote)`)
-    /// and a `RemoteTaskRunner` providing one of the allowed runtimes is
-    /// configured (see [`is_runnable_in`](StandardDefinition::is_runnable_in)).
-    ///
-    /// Accepts both scalar (`runtime = "cli"`) and array (`runtime = ["cli"]`)
-    /// syntax in TOML/JSON for ergonomics.
+    /// `None` only for rows saved before environments existed; the save
+    /// path fills it in with [`StandardDefinition::inferred_environment`].
+    /// Accepts a scalar or a one-element list; two or more entries are
+    /// rejected, because an agent cannot be in two environments.
     #[serde(
         default,
-        deserialize_with = "deserialize_runtime_modes",
-        skip_serializing_if = "Vec::is_empty"
+        deserialize_with = "deserialize_environment",
+        skip_serializing_if = "Option::is_none"
     )]
-    pub runtime: Vec<RuntimeMode>,
+    pub runtime: Option<RuntimeMode>,
 }
 
-/// Accept either a single `RuntimeMode` string or an array of them.
-fn deserialize_runtime_modes<'de, D>(deserializer: D) -> Result<Vec<RuntimeMode>, D::Error>
+pub const ONE_ENVIRONMENT_ERROR: &str = "pick one environment (web, server or cli); share instructions between agents with a {{> partial}}";
+
+/// Accept a single `RuntimeMode`, a one-element list, or an empty list
+/// (legacy "no constraint"). Two or more entries are an error.
+fn deserialize_environment<'de, D>(deserializer: D) -> Result<Option<RuntimeMode>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -633,22 +655,13 @@ where
     }
 
     match Option::<OneOrMany>::deserialize(deserializer)? {
-        None => Ok(Vec::new()),
-        Some(OneOrMany::One(rt)) => Ok(vec![rt]),
-        Some(OneOrMany::Many(v)) => {
-            // Reject duplicates so authors notice typos like ["cli", "cli"].
-            let mut seen = std::collections::HashSet::new();
-            for rt in &v {
-                let key = format!("{:?}", rt);
-                if !seen.insert(key) {
-                    return Err(de::Error::custom(format!(
-                        "duplicate runtime entry: {:?}",
-                        rt
-                    )));
-                }
-            }
-            Ok(v)
-        }
+        None => Ok(None),
+        Some(OneOrMany::One(rt)) => Ok(Some(rt)),
+        Some(OneOrMany::Many(mut v)) => match v.len() {
+            0 => Ok(None),
+            1 => Ok(v.pop()),
+            _ => Err(de::Error::custom(ONE_ENVIRONMENT_ERROR)),
+        },
     }
 }
 fn default_append_default_instructions() -> Option<bool> {
@@ -670,40 +683,111 @@ fn is_default_tool_delivery_mode(v: &ToolDeliveryMode) -> bool {
     *v == ToolDeliveryMode::default()
 }
 impl StandardDefinition {
-    /// The set of runtimes this agent is allowed to run in.
-    ///
-    /// Empty result = no constraint = runs anywhere.
-    pub fn allowed_runtimes(&self) -> Vec<RuntimeMode> {
+    /// The environment declared on the agent, if any.
+    pub fn environment(&self) -> Option<RuntimeMode> {
         self.runtime.clone()
     }
 
-    /// Whether this agent can execute given the caller's `current` runtime,
-    /// optionally with a `RemoteTaskRunner` providing an alternative runtime
-    /// via explicit remote dispatch.
+    /// The declared environment, or the one implied by the tools for a
+    /// legacy agent that never declared one: external tools mean the agent
+    /// needs a browser client (web); anything else runs on the server.
+    pub fn inferred_environment(&self) -> RuntimeMode {
+        if let Some(env) = &self.runtime {
+            return env.clone();
+        }
+        let has_external = self
+            .tools
+            .as_ref()
+            .and_then(|t| t.external.as_ref())
+            .is_some_and(|ext| !ext.is_empty());
+        if has_external {
+            RuntimeMode::Browser
+        } else {
+            RuntimeMode::Cloud
+        }
+    }
+
+    /// Check the agent's tools against its environment (spec §3). Uses the
+    /// inferred environment, so call it after filling in `runtime`.
+    pub fn validate_environment(&self) -> Result<(), String> {
+        let env = self.inferred_environment();
+        let Some(tools) = self.tools.as_ref() else {
+            return Ok(());
+        };
+        let external = tools.external.as_deref().unwrap_or_default();
+        match env {
+            RuntimeMode::Cloud => {
+                if !external.is_empty() {
+                    return Err(format!(
+                        "server agent '{}' cannot declare external tools ({}); nothing on the \
+                         server side can answer them. Make it a web agent, or move the tools \
+                         into a web agent that calls this one",
+                        self.name,
+                        external.join(", ")
+                    ));
+                }
+            }
+            RuntimeMode::Browser | RuntimeMode::Cli => {
+                let sandbox: Vec<&str> = tools
+                    .builtin
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|t| SANDBOX_BUILTIN_TOOLS.contains(t))
+                    .collect();
+                if !sandbox.is_empty() {
+                    let place = if env == RuntimeMode::Browser {
+                        "web agents run code in the page (exec_js)"
+                    } else {
+                        "cli agents run code with the CLI's local tools"
+                    };
+                    return Err(format!(
+                        "{} agent '{}' cannot use sandbox tools ({}); {}. Code in the sandbox \
+                         is for server agents",
+                        env.display_name(),
+                        self.name,
+                        sandbox.join(", "),
+                        place
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Work out the runtime a top-level request runs in. The server decides
+    /// from the agent's environment; the caller's claim is only checked.
     ///
-    /// Returns true when:
-    /// - the agent has no runtime constraint, OR
-    /// - the current runtime matches one of the allowed runtimes, OR
-    /// - a runner is available whose `provided_runtime` matches one of the
-    ///   allowed runtimes (i.e. remote dispatch could satisfy it, even
-    ///   though nothing here forces that dispatch to happen automatically —
-    ///   see `decide_dispatch` in distri-core, which still requires an
-    ///   explicit `ExecutorHint::Force(Remote)` to actually use it).
-    pub fn is_runnable_in(
-        &self,
-        current: &RuntimeMode,
-        runner_provides: Option<&RuntimeMode>,
-    ) -> bool {
-        let allowed = self.allowed_runtimes();
-        if allowed.is_empty() {
-            return true;
+    /// - server agents always run as `Cloud`, whoever calls them;
+    /// - web agents need a browser client, because it supplies their tools;
+    /// - cli agents need the CLI.
+    ///
+    /// Legacy agents with no environment keep the old behaviour and run in
+    /// the caller's runtime.
+    pub fn resolve_request_runtime(&self, claimed: &RuntimeMode) -> Result<RuntimeMode, String> {
+        match &self.runtime {
+            None => Ok(claimed.clone()),
+            Some(RuntimeMode::Cloud) => Ok(RuntimeMode::Cloud),
+            Some(env) if env == claimed => Ok(env.clone()),
+            Some(env) => Err(format!(
+                "agent '{}' is a {} agent and can only be called from {}; this request came \
+                 from a {} caller",
+                self.name,
+                env.display_name(),
+                env.caller_description(),
+                claimed.display_name()
+            )),
         }
-        if allowed.iter().any(|rt| rt == current) {
-            return true;
-        }
-        match runner_provides {
-            Some(p) => allowed.iter().any(|rt| rt == p),
-            None => false,
+    }
+
+    /// Whether this agent may run as a sub-agent of a parent running in
+    /// `parent_runtime`: same environment, or a server agent (which needs
+    /// no client and so runs under any parent). Legacy agents with no
+    /// environment run anywhere.
+    pub fn can_run_under(&self, parent_runtime: &RuntimeMode) -> bool {
+        match &self.runtime {
+            None => true,
+            Some(RuntimeMode::Cloud) => true,
+            Some(env) => env == parent_runtime,
         }
     }
 
@@ -826,10 +910,6 @@ impl StandardDefinition {
             }
         }
 
-        if let Some(runtime) = overrides.runtime {
-            self.runtime = runtime;
-        }
-
         if let Some(description) = overrides.description {
             self.description = description;
         }
@@ -866,6 +946,15 @@ impl StandardDefinition {
 /// Includes both server-executed tools (search, start_shell, etc.) and
 /// client-executed tools (http_request). Agent definitions reference these
 /// by name in `tools.builtin = [...]`.
+/// Builtins that run code in the browsr-cloud sandbox. Only server agents
+/// may declare them.
+pub const SANDBOX_BUILTIN_TOOLS: &[&str] = &[
+    "start_shell",
+    "execute_shell",
+    "stop_shell",
+    "distri_execute_code",
+];
+
 pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     // Agent control
     "final",
@@ -2715,6 +2804,165 @@ tool_format = "json_l"
         assert_eq!(RuntimeMode::default(), RuntimeMode::Cloud);
         let json = serde_json::to_string(&RuntimeMode::Cli).unwrap();
         assert_eq!(json, "\"cli\"");
+    }
+
+    // ── One environment per agent ────────────────────────────────────────────
+
+    fn agent_with(
+        runtime: Option<RuntimeMode>,
+        builtin: &[&str],
+        external: &[&str],
+    ) -> StandardDefinition {
+        StandardDefinition {
+            name: "a".into(),
+            runtime,
+            tools: Some(ToolsConfig {
+                builtin: builtin.iter().map(|s| s.to_string()).collect(),
+                external: if external.is_empty() {
+                    None
+                } else {
+                    Some(external.iter().map(|s| s.to_string()).collect())
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn environment_aliases_parse() {
+        let web: RuntimeMode = serde_json::from_str("\"web\"").unwrap();
+        assert_eq!(web, RuntimeMode::Browser);
+        let server: RuntimeMode = serde_json::from_str("\"server\"").unwrap();
+        assert_eq!(server, RuntimeMode::Cloud);
+        // Canonical names still serialize as before.
+        assert_eq!(
+            serde_json::to_string(&RuntimeMode::Browser).unwrap(),
+            "\"browser\""
+        );
+    }
+
+    #[test]
+    fn runtime_accepts_scalar_and_single_list_rejects_two() {
+        let one: StandardDefinition =
+            serde_json::from_value(serde_json::json!({"name": "a", "runtime": "server"})).unwrap();
+        assert_eq!(one.runtime, Some(RuntimeMode::Cloud));
+        let list: StandardDefinition =
+            serde_json::from_value(serde_json::json!({"name": "a", "runtime": ["cli"]})).unwrap();
+        assert_eq!(list.runtime, Some(RuntimeMode::Cli));
+        let empty: StandardDefinition =
+            serde_json::from_value(serde_json::json!({"name": "a", "runtime": []})).unwrap();
+        assert_eq!(empty.runtime, None);
+        let err = serde_json::from_value::<StandardDefinition>(
+            serde_json::json!({"name": "a", "runtime": ["cli", "cloud"]}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("pick one environment"), "{err}");
+    }
+
+    #[test]
+    fn inferred_environment_follows_external_tools() {
+        assert_eq!(
+            agent_with(None, &[], &["get_cart"]).inferred_environment(),
+            RuntimeMode::Browser
+        );
+        assert_eq!(
+            agent_with(None, &["search"], &[]).inferred_environment(),
+            RuntimeMode::Cloud
+        );
+        assert_eq!(
+            agent_with(Some(RuntimeMode::Cli), &[], &["Bash"]).inferred_environment(),
+            RuntimeMode::Cli
+        );
+    }
+
+    #[test]
+    fn server_agent_rejects_external_tools() {
+        let err = agent_with(Some(RuntimeMode::Cloud), &[], &["get_cart"])
+            .validate_environment()
+            .unwrap_err();
+        assert!(
+            err.contains("server agent 'a' cannot declare external tools"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn web_and_cli_agents_reject_sandbox_tools() {
+        let err = agent_with(Some(RuntimeMode::Browser), &["execute_shell"], &["*"])
+            .validate_environment()
+            .unwrap_err();
+        assert!(
+            err.contains("web agent 'a' cannot use sandbox tools (execute_shell)"),
+            "{err}"
+        );
+        assert!(
+            agent_with(Some(RuntimeMode::Cli), &["distri_execute_code"], &[])
+                .validate_environment()
+                .is_err()
+        );
+        assert!(
+            agent_with(
+                Some(RuntimeMode::Cloud),
+                &["distri_execute_code", "search"],
+                &[]
+            )
+            .validate_environment()
+            .is_ok()
+        );
+        assert!(
+            agent_with(Some(RuntimeMode::Browser), &["search"], &["*"])
+                .validate_environment()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn request_runtime_is_decided_by_the_agent() {
+        let server = agent_with(Some(RuntimeMode::Cloud), &[], &[]);
+        assert_eq!(
+            server.resolve_request_runtime(&RuntimeMode::Browser),
+            Ok(RuntimeMode::Cloud)
+        );
+        assert_eq!(
+            server.resolve_request_runtime(&RuntimeMode::Cli),
+            Ok(RuntimeMode::Cloud)
+        );
+
+        let web = agent_with(Some(RuntimeMode::Browser), &[], &["*"]);
+        assert_eq!(
+            web.resolve_request_runtime(&RuntimeMode::Browser),
+            Ok(RuntimeMode::Browser)
+        );
+        let err = web
+            .resolve_request_runtime(&RuntimeMode::Cloud)
+            .unwrap_err();
+        assert!(err.contains("is a web agent"), "{err}");
+
+        let cli = agent_with(Some(RuntimeMode::Cli), &[], &[]);
+        assert!(cli.resolve_request_runtime(&RuntimeMode::Browser).is_err());
+
+        let legacy = agent_with(None, &[], &[]);
+        assert_eq!(
+            legacy.resolve_request_runtime(&RuntimeMode::Browser),
+            Ok(RuntimeMode::Browser)
+        );
+    }
+
+    #[test]
+    fn sub_agent_rules() {
+        let server = agent_with(Some(RuntimeMode::Cloud), &[], &[]);
+        let web = agent_with(Some(RuntimeMode::Browser), &[], &["*"]);
+        let cli = agent_with(Some(RuntimeMode::Cli), &[], &[]);
+        // A server child runs under any parent.
+        assert!(server.can_run_under(&RuntimeMode::Browser));
+        assert!(server.can_run_under(&RuntimeMode::Cli));
+        assert!(server.can_run_under(&RuntimeMode::Cloud));
+        // Web and cli children only under their own environment.
+        assert!(web.can_run_under(&RuntimeMode::Browser));
+        assert!(!web.can_run_under(&RuntimeMode::Cloud));
+        assert!(!cli.can_run_under(&RuntimeMode::Cloud));
+        assert!(!cli.can_run_under(&RuntimeMode::Browser));
     }
 
     // ── ModelSettings::merge tests ──────────────────────────────────────────

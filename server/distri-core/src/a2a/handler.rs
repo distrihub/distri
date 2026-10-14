@@ -84,6 +84,7 @@ impl A2AHandler {
                 executor_context,
                 verbose,
                 workspace_model_settings,
+                caller: None,
             })
             .await
     }

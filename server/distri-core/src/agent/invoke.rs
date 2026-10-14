@@ -60,8 +60,10 @@ pub(crate) enum DispatchPlan {
 ///   2. `ExecutorHint::Force(Remote { .. })` → `DispatchPlan::Remote`
 ///      (errors if no runner configured).
 ///   3. `ExecutorHint::Auto`:
-///      - Agent has no runtime constraint, OR the caller's own runtime is
-///        already in the allowed list → `Local`.
+///      - The agent may run under the caller's runtime → `Local`. That is:
+///        same environment, a server agent (needs no client, runs under any
+///        caller), or a legacy agent with no environment. See
+///        `StandardDefinition::can_run_under`.
 ///      - Otherwise: fails fast with a clear error. **`Auto` never falls
 ///        back to `Remote`** — remote/sandboxed execution only happens
 ///        when a caller explicitly asks for it via `Force(Remote)` (e.g.
@@ -90,17 +92,19 @@ pub(crate) fn decide_dispatch(
             })
         }
         ExecutorHint::Auto => {
-            let allowed = agent_def.allowed_runtimes();
-            if allowed.is_empty() || allowed.iter().any(|r| r == parent_runtime) {
+            if agent_def.can_run_under(parent_runtime) {
                 return Ok(DispatchPlan::Local);
             }
+            let env = agent_def.inferred_environment();
             Err(AgentError::Session(format!(
-                "Agent '{}' requires runtime {:?} but the caller's runtime is {:?}. Only a \
-                 client that natively provides one of the required runtimes (the CLI for \
-                 Cli, a browser tab for Browser) can run this agent in-process — remote/\
-                 sandboxed execution must be requested explicitly via \
-                 Executor::Force(Remote), it is never an automatic fallback.",
-                agent_def.name, allowed, parent_runtime
+                "Agent '{}' is a {} agent and cannot run under a {} caller. Web agents need a \
+                 browser client and cli agents need the CLI, because those clients supply \
+                 their tools; only server agents run under any caller. Remote/sandboxed \
+                 execution must be requested explicitly via Executor::Force(Remote), it is \
+                 never an automatic fallback.",
+                agent_def.name,
+                env.display_name(),
+                parent_runtime.display_name()
             )))
         }
     }
@@ -598,7 +602,16 @@ impl AgentOrchestrator {
         invocation_blob: &serde_json::Value,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<Arc<ExecutorContext>, AgentError> {
-        let child_ctx = Arc::new(parent_ctx.new_task(&resolved.agent_id).await);
+        let mut child = parent_ctx.new_task(&resolved.agent_id).await;
+        // A child runs in its own environment, not the parent's: a server
+        // agent dispatched from a web parent runs as Cloud (its prompt and its
+        // own default sub-agents follow). Legacy agents inherit the parent's.
+        if let Ok(def) = self.standard_definition(&resolved.agent_id).await {
+            if let Some(env) = def.environment() {
+                child.runtime_mode = env;
+            }
+        }
+        let child_ctx = Arc::new(child);
 
         self.stores
             .task_store

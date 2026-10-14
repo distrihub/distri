@@ -839,8 +839,12 @@ pub(crate) async fn render_prompt(
     if let Some(orchestrator) = &context.orchestrator {
         let prompt_registry = orchestrator.get_prompt_registry();
 
-        // Lazily resolve {{> partial}} references from the DB.
-        // Only fetches partials that are referenced AND not already registered (built-in).
+        // Resolve {{> partial}} references the registry doesn't know (the
+        // built-in and file partials) from the caller's workspace, for this
+        // render only. Registering them into the shared registry would pin
+        // the first workspace's content for every workspace, and never pick
+        // up an edit.
+        let mut workspace_partials = std::collections::HashMap::new();
         if let Some(ref store) = orchestrator.stores.prompt_template_store {
             let referenced = extract_partial_names(template);
             let known = prompt_registry.partial_names().await;
@@ -851,14 +855,12 @@ pub(crate) async fn render_prompt(
 
             if !missing.is_empty() {
                 match store.get_by_names(&missing).await {
-                    Ok(templates) => {
+                    Ok(mut templates) => {
+                        // System rows first, so a workspace's own partial of
+                        // the same name wins.
+                        templates.sort_by_key(|t| !t.is_system);
                         for tpl in templates {
-                            if let Err(e) = prompt_registry
-                                .register_partial(tpl.name.clone(), tpl.template.clone())
-                                .await
-                            {
-                                tracing::debug!("Failed to register partial '{}': {}", tpl.name, e);
-                            }
+                            workspace_partials.insert(tpl.name, tpl.template);
                         }
                     }
                     Err(e) => {
@@ -869,7 +871,7 @@ pub(crate) async fn render_prompt(
         }
 
         let rendered_prompt = prompt_registry
-            .render_template(template, template_data)
+            .render_template_with_partials(template, template_data, &workspace_partials)
             .await?;
         Ok(rendered_prompt)
     } else {

@@ -53,6 +53,9 @@ pub struct ServiceRequest {
     pub executor_context: Option<ExecutorContext>,
     pub verbose: bool,
     pub workspace_model_settings: Option<distri_types::ModelSettings>,
+    /// Who sent the request, as established by the server (auth middleware
+    /// or the channel gateway). `None` for callers that predate it.
+    pub caller: Option<distri_types::RequestCaller>,
 }
 
 /// Prepared state for any agent invocation — streaming OR send.
@@ -342,6 +345,7 @@ impl A2AService {
             executor_context,
             verbose,
             workspace_model_settings,
+            caller,
         } = input;
 
         let req_id = req.id.clone();
@@ -354,6 +358,10 @@ impl A2AService {
                     .await?
             }
         };
+        // Step 1b: the agent's environment decides the runtime; the caller's
+        // claim is only checked. Then let the host see (and maybe refuse) it.
+        self.apply_agent_environment(&mut executor_context, caller.as_ref())
+            .await?;
         // Injected settings (cloud middleware) win; otherwise fall back to the
         // server's own stored default model.
         if let Some(ms) = self
@@ -606,6 +614,54 @@ impl A2AService {
     }
 
     // ── helpers ────────────────────────────────────────────────────────
+
+    /// Resolve the request's runtime from the agent's environment and run
+    /// the orchestrator's request observer, if any. Workflow agents have no
+    /// environment and pass through unchanged.
+    async fn apply_agent_environment(
+        &self,
+        executor_context: &mut ExecutorContext,
+        caller: Option<&distri_types::RequestCaller>,
+    ) -> Result<(), AgentError> {
+        let Some(distri_types::configuration::AgentConfig::StandardAgent(def)) = self
+            .orchestrator
+            .get_agent(&executor_context.agent_id)
+            .await
+        else {
+            return Ok(());
+        };
+        let claimed = executor_context.runtime_mode.clone();
+        let runtime = def
+            .resolve_request_runtime(&claimed)
+            .map_err(AgentError::Validation)?;
+        executor_context.runtime_mode = runtime.clone();
+
+        if let Some(observer) = &self.orchestrator.request_observer {
+            let external_tools: Vec<distri_types::ToolDefinition> =
+                match &executor_context.dynamic_tools {
+                    Some(tools) => tools
+                        .read()
+                        .await
+                        .iter()
+                        .map(|t| t.get_tool_definition())
+                        .collect(),
+                    None => Vec::new(),
+                };
+            observer
+                .on_request(distri_types::AgentRequest {
+                    agent: &def,
+                    user_id: &executor_context.user_id,
+                    workspace_id: executor_context.workspace_id.as_deref(),
+                    caller,
+                    claimed_runtime: &claimed,
+                    runtime: &runtime,
+                    external_tools: &external_tools,
+                })
+                .await
+                .map_err(AgentError::Validation)?;
+        }
+        Ok(())
+    }
 
     /// Build an `ExecutorContext` from a JSON-RPC `message/*` request.
     /// Exposed publicly so the legacy `A2AHandler::get_executor_context` entry
