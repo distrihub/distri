@@ -65,7 +65,11 @@ fn test_resolve_code_agent_cli() {
 
 #[test]
 fn test_resolve_code_agent_cloud() {
-    assert_eq!(resolve_code_agent(&RuntimeMode::Cloud), "distri_runner");
+    // Server agents run code in the sandbox, never through the CLI runner.
+    assert_eq!(
+        resolve_code_agent(&RuntimeMode::Cloud),
+        "distri_server_runner"
+    );
 }
 
 #[test]
@@ -108,7 +112,8 @@ fn test_always_available_builtins_list() {
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"_adhoc_base"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"plan"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"explore"));
-    assert_eq!(ALWAYS_AVAILABLE_BUILTINS.len(), 6);
+    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri_server_runner"));
+    assert_eq!(ALWAYS_AVAILABLE_BUILTINS.len(), 7);
 }
 
 // ── Integration tests: get_agent_tools wiring ──────────────────────
