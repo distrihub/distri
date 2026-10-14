@@ -223,7 +223,7 @@ impl RemoteTaskRunner for RecordingRemoteRunner {
 
 async fn build_orch_with_remote_runner(
     agent_id: &str,
-    runtime: Vec<RuntimeMode>,
+    runtime: Option<RuntimeMode>,
 ) -> (Arc<crate::AgentOrchestrator>, RecordingRemoteRunner) {
     use crate::broadcast::in_process::InProcessRuntime;
     let bc = InProcessBroadcaster::new_shared();
@@ -265,7 +265,7 @@ async fn build_orch_with_remote_runner(
 /// opt in to remote/sandboxed execution — never an automatic fallback.
 #[tokio::test]
 async fn invoke_force_remote_calls_runner_spawn() {
-    let (orch, runner) = build_orch_with_remote_runner("remote_worker", vec![]).await;
+    let (orch, runner) = build_orch_with_remote_runner("remote_worker", None).await;
     let parent_ctx = build_parent_ctx(&orch, "remote_worker");
 
     let inv = Invocation::single(target_named("remote_worker", "go")).with_executor(
@@ -337,7 +337,7 @@ async fn invoke_auto_errors_when_runtime_unsatisfiable_locally() {
     let def = StandardDefinition {
         name: "cli_worker".to_string(),
         description: "cli-only test agent".to_string(),
-        runtime: vec![RuntimeMode::Cli],
+        runtime: Some(RuntimeMode::Cli),
         ..Default::default()
     };
     orch.register_agent_definition(def).await.unwrap();
@@ -358,7 +358,7 @@ async fn invoke_auto_errors_when_runtime_unsatisfiable_locally() {
         .expect_err("Auto + unsatisfiable runtime constraint must error, not dispatch remote");
     let msg = format!("{err}");
     assert!(
-        msg.contains("Cli") || msg.contains("runtime"),
+        msg.contains("is a cli agent and cannot run under a server caller"),
         "expected a runtime-constraint error; got: {msg}"
     );
 }
@@ -603,4 +603,47 @@ async fn fork_skill_accepts_model_tuple() {
             .any(|t| t.parent_task_id.as_deref() == Some(parent_task_id.as_str())),
         "fork_skill with a model tuple must still dispatch a child task"
     );
+}
+
+/// One environment per agent: `Auto` dispatch lets a server child run under
+/// any parent, and a web or cli child only under its own environment.
+#[test]
+fn decide_dispatch_follows_environment_rules() {
+    use crate::agent::invoke::{decide_dispatch, DispatchPlan};
+    use distri_types::invocation::ExecutorHint;
+
+    let def = |rt: Option<RuntimeMode>| StandardDefinition {
+        name: "child".to_string(),
+        runtime: rt,
+        ..Default::default()
+    };
+    let local = |d: &StandardDefinition, parent: RuntimeMode| {
+        matches!(
+            decide_dispatch(d, &parent, &ExecutorHint::Auto, None),
+            Ok(DispatchPlan::Local)
+        )
+    };
+
+    let server = def(Some(RuntimeMode::Cloud));
+    assert!(local(&server, RuntimeMode::Browser));
+    assert!(local(&server, RuntimeMode::Cli));
+    assert!(local(&server, RuntimeMode::Cloud));
+
+    let web = def(Some(RuntimeMode::Browser));
+    assert!(local(&web, RuntimeMode::Browser));
+    assert!(!local(&web, RuntimeMode::Cloud));
+
+    let cli = def(Some(RuntimeMode::Cli));
+    assert!(!local(&cli, RuntimeMode::Browser));
+    let err = decide_dispatch(&cli, &RuntimeMode::Cloud, &ExecutorHint::Auto, None)
+        .err()
+        .expect("cli child under a server parent must fail");
+    assert!(
+        err.to_string()
+            .contains("is a cli agent and cannot run under a server caller"),
+        "{err}"
+    );
+
+    // Legacy agents with no environment still run anywhere.
+    assert!(local(&def(None), RuntimeMode::Cloud));
 }

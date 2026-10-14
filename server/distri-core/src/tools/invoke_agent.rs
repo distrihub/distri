@@ -173,6 +173,7 @@ pub const ALWAYS_AVAILABLE_BUILTINS: &[&str] = &[
     "distri",
     "distri_runner",
     "distri_browser_runner",
+    "distri_server_runner",
     // Ad-hoc agent base: invoke_agent with AgentRef::AdHoc resolves here
     // and applies overrides at dispatch time.
     "_adhoc_base",
@@ -208,13 +209,15 @@ pub fn is_agent_accessible(agent_name: &str, sub_agents: &[String]) -> bool {
         .any(|sa| sa == agent_name || sa == stripped || strip_system_prefix(sa) == stripped)
 }
 
-/// Resolve the logical "code" alias to a concrete system agent based on the
-/// caller's runtime. Browser → `distri_browser_runner`; Cli / Cloud →
-/// `distri_runner`.
+/// Resolve the logical "code" alias to the system runner for the caller's
+/// environment: web → `distri_browser_runner` (code in the page), cli →
+/// `distri_runner` (code on the user's machine), server →
+/// `distri_server_runner` (code in the browsr-cloud sandbox).
 pub fn resolve_code_agent(runtime_mode: &RuntimeMode) -> &'static str {
     match runtime_mode {
         RuntimeMode::Browser => "distri_browser_runner",
-        RuntimeMode::Cli | RuntimeMode::Cloud => "distri_runner",
+        RuntimeMode::Cli => "distri_runner",
+        RuntimeMode::Cloud => "distri_server_runner",
     }
 }
 
