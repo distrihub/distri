@@ -58,6 +58,10 @@ pub struct RequestCaller {
 /// One top-level agent request, after its runtime has been resolved.
 pub struct AgentRequest<'a> {
     pub agent: &'a StandardDefinition,
+    /// The task this request starts, so an observer can match it to the
+    /// run's events (they carry the same `task_id`).
+    pub task_id: &'a str,
+    pub thread_id: &'a str,
     pub user_id: &'a str,
     pub workspace_id: Option<&'a str>,
     pub caller: Option<&'a RequestCaller>,
