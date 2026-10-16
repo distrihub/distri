@@ -650,6 +650,8 @@ impl A2AService {
             observer
                 .on_request(distri_types::AgentRequest {
                     agent: &def,
+                    task_id: &executor_context.task_id,
+                    thread_id: &executor_context.thread_id,
                     user_id: &executor_context.user_id,
                     workspace_id: executor_context.workspace_id.as_deref(),
                     caller,
