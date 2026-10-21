@@ -1834,6 +1834,43 @@ impl AgentOrchestrator {
         false
     }
 
+    /// One page of runs (`GET /v1/runs`): root tasks with their whole task
+    /// tree, each node carrying its state, agent and latest activity.
+    pub async fn list_runs(
+        &self,
+        query: distri_types::RunListQuery,
+    ) -> anyhow::Result<distri_types::RunListResponse> {
+        let rows = self.stores.task_store.list_run_tasks(&query).await?;
+        let activity = self.run_activity(&rows).await?;
+        Ok(distri_types::runs::into_run_list(rows, &activity, &query))
+    }
+
+    /// The run rooted at `task_id` (a child id gives that child's subtree).
+    /// `None` when the task is unknown to this tenant.
+    pub async fn get_run(&self, task_id: &str) -> anyhow::Result<Option<distri_types::RunSummary>> {
+        let rows = self.stores.task_store.get_run_tasks(task_id).await?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let activity = self.run_activity(&rows).await?;
+        Ok(distri_types::runs::build_run_tree(rows, &activity)
+            .into_iter()
+            .find(|r| r.task_id == task_id))
+    }
+
+    async fn run_activity(
+        &self,
+        rows: &[distri_types::RunTaskRow],
+    ) -> anyhow::Result<std::collections::HashMap<String, distri_types::stores::TaskActivity>> {
+        let mut activity = std::collections::HashMap::with_capacity(rows.len());
+        for row in rows {
+            if let Some(a) = self.stores.task_store.task_activity(&row.task.id).await? {
+                activity.insert(row.task.id.clone(), a);
+            }
+        }
+        Ok(activity)
+    }
+
     /// Update task status
     pub async fn update_task_status(
         &self,

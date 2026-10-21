@@ -1,0 +1,51 @@
+{
+  "runs": [
+    {
+      "task_id": "task-root",
+      "thread_id": "thread-multi-run",
+      "parent_task_id": null,
+      "agent_id": "multi_run_parent",
+      "state": "done",
+      "intent": "Prepare the Friday release",
+      "last_event": "final: started 2 background agents",
+      "last_event_at": 1792000005000,
+      "created_at": 1792000000000,
+      "updated_at": 1792000005000,
+      "child_count": 2,
+      "needs_input": true,
+      "children": [
+        {
+          "task_id": "task-asker",
+          "thread_id": "thread-multi-run",
+          "parent_task_id": "task-root",
+          "agent_id": "multi_run_asker",
+          "state": "needs_input",
+          "intent": "Ask the release owner whether to ship on Friday",
+          "last_event": "ask_human: Ship the release on Friday?",
+          "last_event_at": 1792000012000,
+          "created_at": 1792000002100,
+          "updated_at": 1792000012000,
+          "child_count": 0,
+          "needs_input": true,
+          "children": []
+        },
+        {
+          "task_id": "task-worker",
+          "thread_id": "thread-multi-run",
+          "parent_task_id": "task-root",
+          "agent_id": "multi_run_worker",
+          "state": "done",
+          "intent": "Count the open issues labelled release",
+          "last_event": "final: 4 open release issues",
+          "last_event_at": 1792000030000,
+          "created_at": 1792000002000,
+          "updated_at": 1792000030000,
+          "child_count": 0,
+          "needs_input": false,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "has_more": false
+}

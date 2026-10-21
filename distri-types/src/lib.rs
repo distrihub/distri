@@ -25,6 +25,8 @@ mod core;
 mod errors;
 pub mod events;
 pub mod invocation;
+pub mod runs;
+pub use runs::{RunListQuery, RunListResponse, RunState, RunSummary, RunTaskRow};
 
 mod mcp;
 pub use mcp::{McpServerMetadata, TransportType};

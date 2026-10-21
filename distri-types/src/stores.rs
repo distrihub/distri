@@ -394,6 +394,20 @@ pub trait TaskStore: Send + Sync {
     async fn list_running_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
     async fn list_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
 
+    /// One page of runs (`GET /v1/runs`): the root tasks matching `query`,
+    /// newest activity anywhere in the run first, `limit + 1` of them so the
+    /// caller can set `has_more`, plus every descendant of each. Each row
+    /// carries the agent that runs it. Tenant scoping is the same as
+    /// [`list_tasks`](Self::list_tasks).
+    async fn list_run_tasks(
+        &self,
+        query: &crate::runs::RunListQuery,
+    ) -> anyhow::Result<Vec<crate::runs::RunTaskRow>>;
+
+    /// One run: `task_id` and all its descendants (`task_id` may be a child).
+    /// Empty when the task is unknown or belongs to another tenant.
+    async fn get_run_tasks(&self, task_id: &str) -> anyhow::Result<Vec<crate::runs::RunTaskRow>>;
+
     async fn get_history(
         &self,
         thread_id: &str,

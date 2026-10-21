@@ -97,7 +97,19 @@ pub enum AgentRef {
     },
 }
 
+/// Agent that runs an ad-hoc (`AgentRef::AdHoc`) worker. Its body is the
+/// scaffolding the ad-hoc system prompt is appended to.
+pub const ADHOC_BASE_AGENT: &str = "_adhoc_base";
+
 impl AgentRef {
+    /// The agent this reference resolves to: the named agent, or
+    /// [`ADHOC_BASE_AGENT`] for an ad-hoc worker.
+    pub fn agent_id(&self) -> &str {
+        match self {
+            AgentRef::Named { agent_id, .. } => agent_id,
+            AgentRef::AdHoc { .. } => ADHOC_BASE_AGENT,
+        }
+    }
     /// A plain named-agent reference (no overlay).
     pub fn named(agent_id: impl Into<String>) -> Self {
         AgentRef::Named {
@@ -403,6 +415,11 @@ impl Target {
 }
 
 impl Invocation {
+    /// Agent of the first target — the agent a single-target child task runs.
+    pub fn primary_agent_id(&self) -> Option<&str> {
+        self.targets.first().map(|t| t.agent.agent_id())
+    }
+
     /// Build a `Join::Single` invocation. The simplest path; matches
     /// today's default `call_agent({agent, prompt})`.
     pub fn single(target: Target) -> Self {
