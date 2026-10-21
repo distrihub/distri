@@ -66,6 +66,8 @@ use utoipa::OpenApi;
         crate::routes::get_message_votes_handler,
         // Tasks
         crate::routes::list_tasks,
+        crate::routes::runs::list_runs,
+        crate::routes::runs::get_run,
         // Tools
         crate::routes::list_tools,
 
@@ -132,6 +134,11 @@ use utoipa::OpenApi;
         // Route-level types
         distri_types::decision::DecisionRequest,
         distri_types::decision::DecisionResponse,
+        // Run tree
+        distri_types::RunListResponse,
+        distri_types::RunSummary,
+        distri_types::RunState,
+        distri_types::RunListQuery,
         crate::routes::AgentWithStats,
         crate::routes::DeviceResponse,
         crate::routes::DeviceMetadata,

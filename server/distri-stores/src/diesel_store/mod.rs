@@ -1767,6 +1767,42 @@ where
             .await
             .context("failed to acquire diesel connection")
     }
+
+    /// Every task with the agent that runs it (typed `Invocation` target,
+    /// else the thread's agent).
+    async fn run_task_rows(&self) -> Result<Vec<distri_types::RunTaskRow>> {
+        let mut connection = self.conn().await?;
+        let models = tasks::table
+            .order(tasks::created_at.asc())
+            .load::<TaskModel>(&mut connection)
+            .await
+            .context("failed to list tasks for runs")?;
+        let thread_ids: Vec<String> = models.iter().map(|m| m.thread_id.clone()).collect();
+        let thread_agents: HashMap<String, String> = threads::table
+            .filter(threads::id.eq_any(&thread_ids))
+            .select((threads::id, threads::agent_id))
+            .load::<(String, String)>(&mut connection)
+            .await
+            .context("failed to load thread agents for runs")?
+            .into_iter()
+            .collect();
+        Ok(models
+            .into_iter()
+            .map(|m| {
+                let invocation =
+                    serde_json::from_str::<distri_types::invocation::Invocation>(&m.invocation)
+                        .ok();
+                let agent_id = distri_types::runs::task_agent_id(
+                    invocation.as_ref(),
+                    thread_agents.get(&m.thread_id).cloned(),
+                );
+                distri_types::RunTaskRow {
+                    task: to_task(m),
+                    agent_id,
+                }
+            })
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -2002,6 +2038,20 @@ where
             .context("failed to list tasks")?;
 
         Ok(rows.into_iter().map(to_task).collect())
+    }
+
+    async fn list_run_tasks(
+        &self,
+        query: &distri_types::RunListQuery,
+    ) -> Result<Vec<distri_types::RunTaskRow>> {
+        // The OSS store holds one user's tasks; page in memory.
+        let rows = self.run_task_rows().await?;
+        Ok(distri_types::runs::page_run_rows(rows, query))
+    }
+
+    async fn get_run_tasks(&self, task_id: &str) -> Result<Vec<distri_types::RunTaskRow>> {
+        let rows = self.run_task_rows().await?;
+        Ok(distri_types::runs::subtree_rows(rows, task_id))
     }
 
     async fn list_descendant_tasks(&self, root_task_id: &str) -> Result<Vec<Task>> {
