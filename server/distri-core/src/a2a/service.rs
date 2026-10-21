@@ -540,7 +540,18 @@ impl A2AService {
                 let history = task_history_frames(task_store.as_ref(), &task).await?;
                 (Some(state), task.thread_id.clone(), history)
             }
-            Ok(Some(task)) => (None, task.thread_id.clone(), Vec::new()),
+            Ok(Some(task)) => {
+                // Live task: a broadcaster without a log (in-process) starts
+                // at the subscription, so replay what was persisted so far.
+                // Events persisted between subscribing and this read can
+                // arrive twice; text deltas are never persisted.
+                let history = if self.orchestrator.broadcaster().replays_history() {
+                    Vec::new()
+                } else {
+                    task_history_frames(task_store.as_ref(), &task).await?
+                };
+                (None, task.thread_id.clone(), history)
+            }
             _ => (None, String::new(), Vec::new()),
         };
 
@@ -565,17 +576,19 @@ impl A2AService {
         } = session;
 
         let stream = async_stream::stream! {
-            // If the task was already terminal at prepare time, replay its
-            // persisted history, emit a synthesized TaskStatusUpdate and
-            // terminate — the broadcaster will not replay past events, so any
-            // further polling would block forever.
+            // Persisted history first (finished tasks, and live tasks on a
+            // broadcaster without a replay log).
+            for msg in &history {
+                yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
+                    req_id.clone(),
+                    serde_json::to_value(msg).unwrap_or_default(),
+                ));
+            }
+            // If the task was already terminal at prepare time, emit a
+            // synthesized TaskStatusUpdate and terminate — the broadcaster will
+            // not replay past events, so any further polling would block
+            // forever.
             if let Some(state) = pre_terminal_status {
-                for msg in &history {
-                    yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
-                        req_id.clone(),
-                        serde_json::to_value(msg).unwrap_or_default(),
-                    ));
-                }
                 let update = crate::a2a::mapper::create_task_status_update(
                     task_id.clone(),
                     context_id.clone(),

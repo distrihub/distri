@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "id": "multi-run-fixture",
+  "method": "message/stream",
+  "params": {
+    "message": {
+      "kind": "message",
+      "messageId": "__MESSAGE_ID__",
+      "contextId": "__THREAD_ID__",
+      "role": "user",
+      "parts": [{ "kind": "text", "text": "Prepare the Friday release." }]
+    },
+    "metadata": {
+      "external_tools": [
+        {
+          "name": "ask_human",
+          "description": "Ask the person running this a yes/no question and wait for the answer.",
+          "parameters": {
+            "type": "object",
+            "properties": { "question": { "type": "string" } },
+            "required": ["question"]
+          }
+        }
+      ]
+    }
+  }
+}

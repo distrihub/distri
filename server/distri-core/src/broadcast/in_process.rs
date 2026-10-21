@@ -352,14 +352,14 @@ impl AgentTaskCoordinator for InProcessCoordinator {
     }
 
     async fn get_subtask_callback(&self, child_task_id: &str) -> anyhow::Result<Option<String>> {
-        Ok(self
-            .subtask_callbacks
-            .get(child_task_id)
-            .map(|e| e.clone()))
+        Ok(self.subtask_callbacks.get(child_task_id).map(|e| e.clone()))
     }
 
     async fn mark_subtask_notified(&self, child_task_id: &str) -> anyhow::Result<bool> {
-        Ok(self.pending_subtask_callbacks.remove(child_task_id).is_some())
+        Ok(self
+            .pending_subtask_callbacks
+            .remove(child_task_id)
+            .is_some())
     }
 
     async fn list_pending_subtask_callbacks(&self) -> anyhow::Result<Vec<String>> {
