@@ -249,10 +249,19 @@ impl AgentTaskCoordinator for InProcessCoordinator {
     }
 
     async fn complete_task(&self, task_id: &str) -> anyhow::Result<()> {
-        // Update persistent status
-        self.task_store
-            .update_task_status(task_id, distri_types::TaskStatus::Completed)
-            .await?;
+        // Mark it completed only if the run left it open. The agent loop sets
+        // Failed / Canceled itself before its terminal event; overwriting that
+        // made failed runs read as done.
+        let still_open = self
+            .task_store
+            .get_task(task_id)
+            .await?
+            .is_some_and(|t| !t.status.is_terminal());
+        if still_open {
+            self.task_store
+                .update_task_status(task_id, distri_types::TaskStatus::Completed)
+                .await?;
+        }
         // Clean up ephemeral state
         self.cancel_signals.remove(task_id);
         self.mailbox_txs.remove(task_id);

@@ -28,7 +28,8 @@ impl Transcript {
         self.buf.lock().map(|b| b.clone()).unwrap_or_default()
     }
 
-    /// The transcript without ANSI escape sequences (tests, plain output).
+    /// The transcript without ANSI escape sequences.
+    #[cfg(test)]
     pub fn plain_text(&self) -> String {
         strip_ansi(&String::from_utf8_lossy(&self.bytes()))
     }
@@ -82,7 +83,8 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// Remove CSI escape sequences (`ESC [ … final-byte`).
-pub fn strip_ansi(s: &str) -> String {
+#[cfg(test)]
+fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {

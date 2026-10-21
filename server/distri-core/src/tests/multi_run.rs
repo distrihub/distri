@@ -423,3 +423,35 @@ async fn resubscribe_on_live_task_replays_persisted_history_first() {
         "a live task's stream stays open after the replay"
     );
 }
+
+/// The relay's end-of-run bookkeeping must not turn a failed run into a
+/// done one (it showed failed OSS runs as "done" in the run list).
+#[tokio::test]
+async fn completing_the_relay_keeps_a_failed_status() {
+    let orch = orchestrator().await;
+    let thread_id = thread(&orch, "a").await;
+    let store = &orch.stores.task_store;
+    for (id, status) in [
+        ("t-failed", TaskStatus::Failed),
+        ("t-open", TaskStatus::Running),
+    ] {
+        store
+            .create_task(
+                CreateTaskInput::local(&thread_id)
+                    .with_id(id)
+                    .with_status(TaskStatus::Running),
+            )
+            .await
+            .unwrap();
+        store.update_task_status(id, status).await.unwrap();
+        orch.coordinator().complete_task(id).await.unwrap();
+    }
+    assert_eq!(
+        store.get_task("t-failed").await.unwrap().unwrap().status,
+        TaskStatus::Failed
+    );
+    assert_eq!(
+        store.get_task("t-open").await.unwrap().unwrap().status,
+        TaskStatus::Completed
+    );
+}
