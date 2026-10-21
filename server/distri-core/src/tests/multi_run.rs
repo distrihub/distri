@@ -455,3 +455,42 @@ async fn completing_the_relay_keeps_a_failed_status() {
         TaskStatus::Completed
     );
 }
+
+/// A follower gets the run's `final` answer as the trailing message, the
+/// way `message/stream` ends — live, and when replaying a finished child.
+#[tokio::test]
+async fn resubscribe_ends_with_the_final_answer() {
+    let orch = orchestrator().await;
+    let service = A2AService::new(orch.clone());
+    let (_root, worker, _asker) = fixture_tree(&orch).await;
+    let mut e = fixture::pending_ask_events().remove(5);
+    e.task_id = worker.clone();
+    e.event = AgentEventType::ToolCalls {
+        step_id: "s".into(),
+        parent_message_id: None,
+        tool_calls: vec![ToolCall {
+            tool_call_id: "f-1".into(),
+            tool_name: "final".into(),
+            input: json!({ "input": "4 open release issues" }),
+        }],
+    };
+    orch.stores
+        .task_store
+        .add_event_to_task(&worker, e)
+        .await
+        .unwrap();
+
+    let session = service
+        .prepare_resubscribe(json!({ "id": worker }), Some(json!(1)))
+        .await
+        .unwrap();
+    let last = session.history.last().cloned().expect("history");
+    match last {
+        distri_a2a::MessageKind::Message(m) => {
+            let m = distri_types::Message::try_from(m).unwrap();
+            assert_eq!(m.id, distri_types::Message::final_answer_id(&worker));
+            assert_eq!(m.as_text().as_deref(), Some("4 open release issues"));
+        }
+        other => panic!("expected the final answer last, got {other:?}"),
+    }
+}

@@ -605,11 +605,21 @@ impl A2AService {
             }
 
             futures_util::pin_mut!(event_stream);
+            let mut answer = FinalAnswer::default();
             while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+                answer.observe(&task_id, &event);
                 let msg = map_agent_event(&event);
                 yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
                     req_id.clone(),
                     serde_json::to_value(&msg).unwrap_or_default(),
+                ));
+            }
+            // Same trailing final-answer frame `message/stream` ends with, so a
+            // follower sees the answer the way the starter did.
+            if let Some(msg) = answer.into_message(&task_id, &context_id) {
+                yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
+                    req_id.clone(),
+                    serde_json::to_value(distri_a2a::MessageKind::Message(msg)).unwrap_or_default(),
                 ));
             }
         };
@@ -788,6 +798,45 @@ pub async fn build_final_message(
     ))
 }
 
+/// The answer a run gave through its `final` tool, collected from its
+/// `ToolCalls` events while following it.
+#[derive(Default)]
+struct FinalAnswer {
+    text: Option<String>,
+    parent_task_id: Option<String>,
+}
+
+impl FinalAnswer {
+    fn observe(&mut self, task_id: &str, event: &AgentEvent) {
+        if event.task_id != task_id {
+            return;
+        }
+        if let AgentEventType::ToolCalls { tool_calls, .. } = &event.event {
+            for call in tool_calls.iter().filter(|c| c.tool_name == "final") {
+                if let Ok(value) = crate::tools::FinalTool::extract_result(&call.input) {
+                    self.text = Some(match value {
+                        serde_json::Value::String(s) => s,
+                        other => other.to_string(),
+                    });
+                    self.parent_task_id = event.parent_task_id.clone();
+                }
+            }
+        }
+    }
+
+    /// The `Message::final_answer` frame (same id as the persisted one).
+    fn into_message(self, task_id: &str, thread_id: &str) -> Option<distri_a2a::Message> {
+        let text = self.text.filter(|t| !t.is_empty())?;
+        let message = distri_types::Message::final_answer(task_id, text);
+        Some(crate::a2a::to_a2a_message_parts(
+            &message,
+            task_id,
+            thread_id,
+            self.parent_task_id.as_deref(),
+        ))
+    }
+}
+
 /// A finished task's persisted messages and events as A2A frames, oldest
 /// first. Text deltas are not persisted, so this is tool calls, results and
 /// whole messages.
@@ -800,8 +849,20 @@ async fn task_history_frames(
         .await
         .map_err(|e| AgentError::Session(format!("Failed to load task history: {e}")))?;
     let mut frames = Vec::new();
+    let final_id = distri_types::Message::final_answer_id(&task.id);
+    let mut answer = FinalAnswer::default();
+    let mut has_final = false;
     for (row, messages) in history.iter().filter(|(row, _)| row.id == task.id) {
         for message in messages {
+            match message {
+                distri_types::TaskMessage::Message(m) => has_final |= m.id == final_id,
+                distri_types::TaskMessage::Event(e) => {
+                    let mut event = AgentEvent::from_task_event(e, &task.thread_id);
+                    event.task_id = task.id.clone();
+                    event.parent_task_id = task.parent_task_id.clone();
+                    answer.observe(&task.id, &event);
+                }
+            }
             frames.push(match message {
                 distri_types::TaskMessage::Message(m) => {
                     distri_a2a::MessageKind::Message(crate::a2a::to_a2a_message(m, row))
@@ -810,6 +871,14 @@ async fn task_history_frames(
                     crate::a2a::to_a2a_task_update(e, row),
                 ),
             });
+        }
+    }
+    // Children don't persist a final-answer message (only a root's stream
+    // does); rebuild it from the run's `final` call so a replay ends the way
+    // a live follow does.
+    if task.status.is_terminal() && !has_final {
+        if let Some(msg) = answer.into_message(&task.id, &task.thread_id) {
+            frames.push(distri_a2a::MessageKind::Message(msg));
         }
     }
     Ok(frames)
