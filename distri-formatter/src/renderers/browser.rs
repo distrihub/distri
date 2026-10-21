@@ -1,35 +1,58 @@
 use super::RESULT_PREFIX;
 use crate::colors::{COLOR_CYAN, COLOR_GRAY, COLOR_RESET};
 use distri_types::{Part, ToolResponse};
+use std::io::Write;
 
 /// Render browsr_scrape / browsr_crawl results.
-pub fn render_scrape(result: &ToolResponse) {
+pub fn render_scrape(out: &mut dyn Write, result: &ToolResponse) {
     for part in &result.parts {
         match part {
             Part::Data(value) => {
                 if let Some(obj) = value.as_object() {
                     if let Some(url) = obj.get("url").and_then(|u| u.as_str()) {
-                        println!(
+                        outln!(
+                            out,
                             "{}{}scraped: {}{}",
-                            COLOR_CYAN, RESULT_PREFIX, url, COLOR_RESET
+                            COLOR_CYAN,
+                            RESULT_PREFIX,
+                            url,
+                            COLOR_RESET
                         );
                     }
                     if let Some(markdown) = obj.get("markdown").and_then(|m| m.as_str()) {
                         let total = markdown.lines().filter(|l| !l.trim().is_empty()).count();
-                        println!(
+                        outln!(
+                            out,
                             "{}{}({} lines){}",
-                            COLOR_GRAY, RESULT_PREFIX, total, COLOR_RESET
+                            COLOR_GRAY,
+                            RESULT_PREFIX,
+                            total,
+                            COLOR_RESET
                         );
                     } else if let Some(title) = obj.get("title").and_then(|t| t.as_str()) {
-                        println!("{}{}{}{}", COLOR_GRAY, RESULT_PREFIX, title, COLOR_RESET);
+                        outln!(
+                            out,
+                            "{}{}{}{}",
+                            COLOR_GRAY,
+                            RESULT_PREFIX,
+                            title,
+                            COLOR_RESET
+                        );
                     }
                 } else {
-                    crate::renderers::data::render_data_compact(value);
+                    crate::renderers::data::render_data_compact(out, value);
                 }
             }
             Part::Text(text) => {
                 let first = text.lines().next().unwrap_or("");
-                println!("{}{}{}{}", COLOR_GRAY, RESULT_PREFIX, first, COLOR_RESET);
+                outln!(
+                    out,
+                    "{}{}{}{}",
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    first,
+                    COLOR_RESET
+                );
             }
             _ => {}
         }
@@ -37,20 +60,41 @@ pub fn render_scrape(result: &ToolResponse) {
 }
 
 /// Render browsr_browser / browser_step results.
-pub fn render_browser_step(result: &ToolResponse) {
+pub fn render_browser_step(out: &mut dyn Write, result: &ToolResponse) {
     for part in &result.parts {
         match part {
             Part::Text(text) => {
                 let first = text.lines().next().unwrap_or("");
-                println!("{}{}{}{}", COLOR_GRAY, RESULT_PREFIX, first, COLOR_RESET);
+                outln!(
+                    out,
+                    "{}{}{}{}",
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    first,
+                    COLOR_RESET
+                );
             }
             Part::Data(value) => {
                 if let Some(obj) = value.as_object() {
                     if let Some(url) = obj.get("url").and_then(|u| u.as_str()) {
-                        println!("{}{}url: {}{}", COLOR_GRAY, RESULT_PREFIX, url, COLOR_RESET);
+                        outln!(
+                            out,
+                            "{}{}url: {}{}",
+                            COLOR_GRAY,
+                            RESULT_PREFIX,
+                            url,
+                            COLOR_RESET
+                        );
                     }
                     if let Some(status) = obj.get("status").and_then(|s| s.as_str()) {
-                        println!("{}{}{}{}", COLOR_GRAY, RESULT_PREFIX, status, COLOR_RESET);
+                        outln!(
+                            out,
+                            "{}{}{}{}",
+                            COLOR_GRAY,
+                            RESULT_PREFIX,
+                            status,
+                            COLOR_RESET
+                        );
                     }
                 }
             }
@@ -61,9 +105,13 @@ pub fn render_browser_step(result: &ToolResponse) {
                     }
                     distri_types::FileType::Url { url, .. } => url.clone(),
                 };
-                println!(
+                outln!(
+                    out,
                     "{}{}screenshot: {}{}",
-                    COLOR_GRAY, RESULT_PREFIX, label, COLOR_RESET
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    label,
+                    COLOR_RESET
                 );
             }
             _ => {}

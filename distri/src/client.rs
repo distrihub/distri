@@ -365,6 +365,45 @@ impl Distri {
         Ok(resp.json().await?)
     }
 
+    /// One page of runs: root tasks with their sub-agents and background
+    /// forks as a tree. `GET /v1/runs`.
+    pub async fn list_runs(
+        &self,
+        query: &distri_types::RunListQuery,
+    ) -> Result<distri_types::RunListResponse, ClientError> {
+        let url = format!("{}/runs", self.base_url);
+        let resp = self.http.get(&url).query(query).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "failed to list runs (status {status}): {text}"
+            )));
+        }
+        Ok(resp.json().await?)
+    }
+
+    /// The run rooted at `task_id` (a child id gives that child's subtree).
+    /// `GET /v1/runs/{task_id}`; `None` on 404.
+    pub async fn get_run(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<distri_types::RunSummary>, ClientError> {
+        let url = format!("{}/runs/{}", self.base_url, task_id);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "failed to get run {task_id} (status {status}): {text}"
+            )));
+        }
+        Ok(Some(resp.json().await?))
+    }
+
     pub async fn complete_tool(
         &self,
         agent: impl AsRef<str>,
@@ -2407,9 +2446,7 @@ impl Distri {
 
     /// List all available models as a flat list — one entry per model, each
     /// denormalized with its provider's id/label and configuration status.
-    pub async fn list_models(
-        &self,
-    ) -> Result<Vec<distri_types::ModelWithProvider>, ClientError> {
+    pub async fn list_models(&self) -> Result<Vec<distri_types::ModelWithProvider>, ClientError> {
         let url = format!("{}/models", self.base_url);
         let resp = self.http.get(&url).send().await?;
         if resp.status().is_success() {
