@@ -16,9 +16,9 @@ use crate::{ExternalTool, ToolDefinition};
 /// The prefix of the line `distri-tool/extract.ts` prints: `__distri_tool__ {"tool": ...}`.
 pub const EXTRACT_SENTINEL: &str = "__distri_tool__ ";
 
-/// The `export const tool = defineTool({...})` shape. Same fields as [`ExternalTool`] minus the
-/// engine-only ones, so a script with a `tool` export is an external tool for cloud agents and a
-/// builtin tool for local ones.
+/// The `export const tool = defineTool({...})` shape. Same fields as `distri_types::ExternalTool`
+/// minus the engine-only ones, so a script with a `tool` export is an external tool for cloud
+/// agents and a builtin tool for local ones.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ToolExport {
     pub name: String,
