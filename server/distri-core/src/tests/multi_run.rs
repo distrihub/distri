@@ -379,3 +379,47 @@ async fn child_events_have_their_own_topic_and_reach_the_parent() {
         .unwrap();
     assert!(matches!(got.event, AgentEventType::RunFinished { .. }));
 }
+
+/// Attaching to a live task on the in-process broadcaster (no replay log)
+/// still shows what happened before the attach, then goes live.
+#[tokio::test]
+async fn resubscribe_on_live_task_replays_persisted_history_first() {
+    let orch = orchestrator().await;
+    let service = A2AService::new(orch.clone());
+    let (_root, _worker, asker) = fixture_tree(&orch).await;
+    assert!(!orch.broadcaster().replays_history());
+    for mut e in fixture::pending_ask_events()
+        .into_iter()
+        .filter(|e| !matches!(e.event, AgentEventType::TextMessageContent { .. }))
+    {
+        e.task_id = asker.clone();
+        orch.stores
+            .task_store
+            .add_event_to_task(&asker, e)
+            .await
+            .unwrap();
+    }
+    let session = service
+        .prepare_resubscribe(json!({ "id": asker }), Some(json!(1)))
+        .await
+        .unwrap();
+    assert!(
+        session.pre_terminal_status.is_none(),
+        "asker is still waiting"
+    );
+    assert_eq!(session.history.len(), 6);
+    let mut stream = A2AService::run_resubscribe_session(session);
+    for _ in 0..6 {
+        tokio::time::timeout(Duration::from_secs(2), stream.next())
+            .await
+            .expect("history frame")
+            .expect("open stream");
+    }
+    // Then it stays open for live events.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), stream.next())
+            .await
+            .is_err(),
+        "a live task's stream stays open after the replay"
+    );
+}
