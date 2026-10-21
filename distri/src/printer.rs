@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use chrono::Local;
@@ -7,6 +8,28 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::client_stream::{AgentStreamClient, StreamError, StreamItem};
 use crate::sub_task_tracker::{SubTaskTracker, SuppressDecision};
+
+/// Where an [`EventPrinter`] writes. Stdout for `distri run` / `distri chat`;
+/// an in-memory buffer for the `distri sessions` TUI.
+pub type PrintSink = Box<dyn Write + Send>;
+
+/// `println!` into a sink. Write errors are dropped: a closed pipe must not
+/// fail a run.
+macro_rules! outln {
+    ($out:expr) => {{
+        let _ = std::io::Write::write_all(&mut *$out, b"\n");
+    }};
+    ($out:expr, $($arg:tt)*) => {{
+        let _ = std::io::Write::write_fmt(&mut *$out, format_args!("{}\n", format_args!($($arg)*)));
+    }};
+}
+
+/// `print!` into a sink.
+macro_rules! outp {
+    ($out:expr, $($arg:tt)*) => {{
+        let _ = std::io::Write::write_fmt(&mut *$out, format_args!($($arg)*));
+    }};
+}
 
 // Re-export shared color constants from the formatter
 pub use distri_formatter::colors::{
@@ -264,7 +287,7 @@ fn status_icon(s: &distri_types::todos::TodoStatus) -> &'static str {
     }
 }
 
-fn print_usage_line(u: &distri_types::RunUsage) {
+fn print_usage_line(out: &mut dyn Write, u: &distri_types::RunUsage) {
     let input = format_token_count(u.input_tokens as usize);
     let output = format_token_count(u.output_tokens as usize);
     let mut parts = vec![format!("{} in, {} out", input, output)];
@@ -280,7 +303,13 @@ fn print_usage_line(u: &distri_types::RunUsage) {
     if let Some(model) = &u.model {
         parts.push(model.clone());
     }
-    println!("{}  ↳ {}{}", COLOR_GRAY, parts.join(" · "), COLOR_RESET);
+    outln!(
+        out,
+        "{}  ↳ {}{}",
+        COLOR_GRAY,
+        parts.join(" · "),
+        COLOR_RESET
+    );
 }
 
 /// Distri brand teal — 24-bit ANSI
@@ -384,6 +413,8 @@ pub struct EventPrinter {
     /// Prints fence headers/footers around sub-agent dispatches so the
     /// user can see who owns which output. See `sub_task_tracker.rs`.
     sub_tasks: SubTaskTracker,
+    /// Where output goes (stdout unless [`EventPrinter::with_output`]).
+    out: PrintSink,
 }
 
 impl Default for EventPrinter {
@@ -403,6 +434,25 @@ impl EventPrinter {
             planning_text: None,
             spinner_frame: 0,
             sub_tasks: SubTaskTracker::new(),
+            out: Box::new(std::io::stdout()),
+        }
+    }
+
+    /// Write to `out` instead of stdout. The output is byte-for-byte what
+    /// `distri run` prints, ANSI colours included.
+    pub fn with_output(mut self, out: PrintSink) -> Self {
+        self.out = out;
+        self
+    }
+
+    /// Print the run's final assistant message (the `final` tool's answer),
+    /// as `distri run` does at the end of a stream.
+    pub fn handle_final_message(&mut self, message: &distri_types::Message) {
+        if message.role == distri_types::MessageRole::Assistant
+            && let Some(text) = message.as_text()
+            && !text.is_empty()
+        {
+            outln!(self.out, "\n{}", text);
         }
     }
 
@@ -438,11 +488,15 @@ impl EventPrinter {
     fn redraw_planning(&mut self) {
         if let Some(ref text) = self.planning_text {
             let spinner = distri_spinner_frame(self.spinner_frame);
-            print!(
+            outp!(
+                self.out,
                 "\r\x1b[2K {} {}{}{}",
-                spinner, COLOR_GRAY, text, COLOR_RESET
+                spinner,
+                COLOR_GRAY,
+                text,
+                COLOR_RESET
             );
-            let _ = std::io::Write::flush(&mut std::io::stdout());
+            let _ = self.out.flush();
             self.spinner_frame += 1;
         }
     }
@@ -450,8 +504,8 @@ impl EventPrinter {
     /// Clear the planning/spinner line completely.
     fn clear_planning_line(&mut self) {
         if self.state.is_planning || self.planning_text.is_some() {
-            print!("\r\x1b[2K");
-            let _ = std::io::Write::flush(&mut std::io::stdout());
+            outp!(self.out, "\r\x1b[2K");
+            let _ = self.out.flush();
             self.planning_text = None;
             self.state.is_planning = false;
         }
@@ -468,7 +522,7 @@ impl EventPrinter {
         // tool). In verbose mode the tracker prints fence headers/
         // footers and the body events flow through unchanged.
         if matches!(
-            self.sub_tasks.handle(event, self.verbose),
+            self.sub_tasks.handle(&mut self.out, event, self.verbose),
             SuppressDecision::Suppress
         ) {
             return;
@@ -485,9 +539,12 @@ impl EventPrinter {
             // Only print if it's not the first agent (header already shows it)
             if self.state.current_agent.is_some() {
                 self.clear_planning_line();
-                println!(
+                outln!(
+                    self.out,
                     "{}⇢ Agent: {}{}",
-                    COLOR_BRIGHT_CYAN, event.agent_id, COLOR_RESET
+                    COLOR_BRIGHT_CYAN,
+                    event.agent_id,
+                    COLOR_RESET
                 );
             }
             self.state.current_agent = Some(event.agent_id.clone());
@@ -548,7 +605,7 @@ impl EventPrinter {
                 if let Some(u) = usage {
                     self.context_health.write().await.update_from_usage(u);
                     if u.input_tokens > 0 || u.output_tokens > 0 {
-                        print_usage_line(u);
+                        print_usage_line(&mut self.out, u);
                     }
                 }
                 if let Some(step) = self.state.steps.get_mut(step_id) {
@@ -560,7 +617,8 @@ impl EventPrinter {
                     step.end_time = Some(Instant::now());
                     // Only show on failure
                     if !success {
-                        println!(
+                        outln!(
+                            self.out,
                             "{}✖ Step {} failed{}",
                             COLOR_RED,
                             step.index + 1,
@@ -624,7 +682,12 @@ impl EventPrinter {
                 }
                 drop(health);
                 if !success {
-                    println!("{}Run completed with errors{}", COLOR_RED, COLOR_RESET);
+                    outln!(
+                        self.out,
+                        "{}Run completed with errors{}",
+                        COLOR_RED,
+                        COLOR_RESET
+                    );
                 }
             }
 
@@ -638,7 +701,8 @@ impl EventPrinter {
                 drop(health);
                 // Print a warning if crossing thresholds
                 if *is_critical {
-                    println!(
+                    outln!(
+                        self.out,
                         "{}⚠ Context critical: {:.0}% used ({}/{}){}",
                         COLOR_RED,
                         budget.utilization() * 100.0,
@@ -647,7 +711,8 @@ impl EventPrinter {
                         COLOR_RESET
                     );
                 } else if *is_warning {
-                    println!(
+                    outln!(
+                        self.out,
                         "{}⚠ Context warning: {:.0}% used{}",
                         COLOR_YELLOW,
                         budget.utilization() * 100.0,
@@ -656,14 +721,16 @@ impl EventPrinter {
                 }
                 // Verbose: full breakdown of context budget components
                 if self.verbose && budget.context_window_size > 0 {
-                    println!(
+                    outln!(
+                        self.out,
                         "{}[context] {:.0}% ({}/{})",
                         COLOR_GRAY,
                         budget.utilization() * 100.0,
                         format_token_count(budget.total_tokens()),
                         format_token_count(budget.context_window_size),
                     );
-                    println!(
+                    outln!(
+                        self.out,
                         "{}  sys static: {}  dynamic: {}  tools: {}  deferred: {}  skills: {}{}",
                         COLOR_GRAY,
                         format_token_count(budget.system_prompt_static_tokens),
@@ -673,7 +740,8 @@ impl EventPrinter {
                         format_token_count(budget.skill_listing_tokens),
                         COLOR_RESET,
                     );
-                    println!(
+                    outln!(
+                        self.out,
                         "{}  convo: {}  tool_results: {}{}",
                         COLOR_GRAY,
                         format_token_count(budget.conversation_tokens),
@@ -689,21 +757,30 @@ impl EventPrinter {
                 ..
             } => {
                 let stamp = Local::now().format("%H:%M:%S").to_string();
-                println!(
+                outln!(
+                    self.out,
                     "{}{} [{}] run failed: {} ({:?}){}",
-                    COLOR_RED, stamp, event.agent_id, message, code, COLOR_RESET
+                    COLOR_RED,
+                    stamp,
+                    event.agent_id,
+                    message,
+                    code,
+                    COLOR_RESET
                 );
                 if let Some(u) = usage {
-                    print_usage_line(u);
+                    print_usage_line(&mut self.out, u);
                 }
             }
             AgentEventType::InlineHookRequested { request } => {
-                println!(
+                let input = self
+                    .format_tool_input(&serde_json::to_value(&request.message).unwrap_or_default());
+                outln!(
+                    self.out,
                     "{}Awaiting inline hook {} for {} with input {}{}",
                     COLOR_BRIGHT_CYAN,
                     request.hook_id,
                     request.hook,
-                    self.format_tool_input(&serde_json::json!(request.message)),
+                    input,
                     COLOR_RESET
                 );
             }
@@ -718,14 +795,17 @@ impl EventPrinter {
                     // server that doesn't ship `changes`. Fall back
                     // to dumping the full list — same behavior as
                     // before this field existed.
-                    println!(
+                    outln!(
+                        self.out,
                         "{}Todos updated{}:\n{}",
-                        COLOR_GRAY, COLOR_RESET, formatted_todos
+                        COLOR_GRAY,
+                        COLOR_RESET,
+                        formatted_todos
                     );
                 } else {
-                    println!("{}Todos updated{}:", COLOR_GRAY, COLOR_RESET);
+                    outln!(self.out, "{}Todos updated{}:", COLOR_GRAY, COLOR_RESET);
                     for ch in changes {
-                        println!("  {}", format_todo_change(ch));
+                        outln!(self.out, "  {}", format_todo_change(ch));
                     }
                 }
             }
@@ -738,14 +818,26 @@ impl EventPrinter {
                     .as_deref()
                     .map(|r| format!(" ({})", r))
                     .unwrap_or_default();
-                println!(
+                outln!(
+                    self.out,
                     "{}⇢ Transferring: {} → {}{}{}",
-                    COLOR_BRIGHT_CYAN, from_agent, to_agent, reason_str, COLOR_RESET
+                    COLOR_BRIGHT_CYAN,
+                    from_agent,
+                    to_agent,
+                    reason_str,
+                    COLOR_RESET
                 );
             }
             AgentEventType::LiveView { url, title, .. } => {
                 let label = title.as_deref().unwrap_or("Live view");
-                println!("{}⎔ {}: {}{}", COLOR_BRIGHT_CYAN, label, url, COLOR_RESET);
+                outln!(
+                    self.out,
+                    "{}⎔ {}: {}{}",
+                    COLOR_BRIGHT_CYAN,
+                    label,
+                    url,
+                    COLOR_RESET
+                );
             }
             AgentEventType::ContextCompaction {
                 tier,
@@ -759,7 +851,8 @@ impl EventPrinter {
                     distri_types::CompactionTier::Summarize => "Summarize",
                     distri_types::CompactionTier::Reset => "Reset",
                 };
-                println!(
+                outln!(
+                    self.out,
                     "{}[compaction] {}: {} → {} tokens ({:.0}% reduction, {} entries){}",
                     COLOR_GRAY,
                     tier_label,
@@ -776,7 +869,7 @@ impl EventPrinter {
             }
             AgentEventType::DiagnosticLog { message } => {
                 if self.verbose {
-                    println!("{}[dbg] {}{}", COLOR_GRAY, message, COLOR_RESET);
+                    outln!(self.out, "{}[dbg] {}{}", COLOR_GRAY, message, COLOR_RESET);
                 }
             }
             _ => {}
@@ -816,14 +909,14 @@ impl EventPrinter {
         }
         if let Some(msg) = self.state.messages.get_mut(message_id) {
             msg.content.push_str(delta);
-            print!("{delta}");
-            let _ = std::io::Write::flush(&mut std::io::stdout());
+            outp!(self.out, "{delta}");
+            let _ = self.out.flush();
         }
     }
 
     /// Print the `◆ <agent>: ` (assistant) or `<role>: ` (other)
     /// prefix. Lifted out of `start_message` so we can defer it.
-    fn print_message_prefix(&self, role: &MessageRole) {
+    fn print_message_prefix(&mut self, role: &MessageRole) {
         match role {
             MessageRole::Assistant => {
                 let name = self
@@ -831,7 +924,7 @@ impl EventPrinter {
                     .as_deref()
                     .or(self.state.current_agent.as_deref())
                     .unwrap_or("assistant");
-                print!("{}◆ {}:{} ", COLOR_CYAN, name, COLOR_RESET);
+                outp!(self.out, "{}◆ {}:{} ", COLOR_CYAN, name, COLOR_RESET);
             }
             _ => {
                 let role_label = match role {
@@ -841,7 +934,7 @@ impl EventPrinter {
                     MessageRole::Developer => "developer",
                     MessageRole::Assistant => unreachable!(),
                 };
-                print!("{}{}:{} ", COLOR_CYAN, role_label, COLOR_RESET);
+                outp!(self.out, "{}{}:{} ", COLOR_CYAN, role_label, COLOR_RESET);
             }
         }
     }
@@ -854,7 +947,7 @@ impl EventPrinter {
             // line for this message. Silent start→end pairs (agent
             // went straight to a tool call) leave nothing behind.
             if msg.prefix_printed {
-                println!();
+                outln!(self.out);
             }
         }
         if self
@@ -870,7 +963,8 @@ impl EventPrinter {
 
     fn tool_start(&mut self, tool_call_id: &str, name: &str, input: &serde_json::Value) {
         if self.show_tools && !distri_formatter::state::is_probe_call(name, input) {
-            println!(
+            outln!(
+                self.out,
                 "{}⏺ {}{}",
                 COLOR_YELLOW,
                 distri_formatter::state::format_tool_call(name, input),
@@ -908,11 +1002,11 @@ impl EventPrinter {
         // Suppressed — individual ToolExecutionStart events show each call
     }
 
-    fn print_tool_result(&self, result: &ToolResponse) {
+    fn print_tool_result(&mut self, result: &ToolResponse) {
         if !self.show_tools {
             return;
         }
-        crate::renderers::render_tool_output(result, self.verbose);
+        crate::renderers::render_tool_output(&mut self.out, result, self.verbose);
     }
 
     fn format_tool_input(&self, input: &serde_json::Value) -> String {
@@ -990,12 +1084,8 @@ pub async fn print_stream_with_health(
                         let mut guard = printer.lock().await;
                         guard.handle_event(&event).await;
                     }
-                    if let Some(ref msg) = item.message
-                        && msg.role == distri_types::MessageRole::Assistant
-                        && let Some(text) = msg.as_text()
-                        && !text.is_empty()
-                    {
-                        println!("\n{}", text);
+                    if let Some(ref msg) = item.message {
+                        printer.lock().await.handle_final_message(msg);
                     }
                 }
             }
