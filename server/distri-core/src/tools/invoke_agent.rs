@@ -194,7 +194,7 @@ pub const ALWAYS_AVAILABLE_BUILTINS: &[&str] = &[
     "distri_server_runner",
     // Ad-hoc agent base: invoke_agent with AgentRef::AdHoc resolves here
     // and applies overrides at dispatch time.
-    "_adhoc_base",
+    distri_types::invocation::ADHOC_BASE_AGENT,
     "plan",
     "explore",
 ];
