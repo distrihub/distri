@@ -25,6 +25,7 @@ impl DistriHelper {
             "/model".to_string(),
             "/available-tools".to_string(),
             "/resume".to_string(),
+            "/runs".to_string(),
             "/clear".to_string(),
             "/exit".to_string(),
             "/quit".to_string(),

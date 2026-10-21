@@ -17,6 +17,7 @@ mod login;
 mod manifest;
 mod push;
 mod registries;
+mod sessions;
 mod threads;
 mod tools;
 mod traces;
@@ -100,6 +101,15 @@ enum Commands {
         /// Repeatable: --header x-trace-source=cli
         #[clap(long = "header", value_name = "KEY=VALUE")]
         headers: Vec<String>,
+    },
+
+    /// Every run you have going (sub-agents and background forks as a
+    /// tree): attach to one to watch it live, answer what it is waiting
+    /// on, detach and it keeps going.
+    Sessions {
+        /// Only runs on this thread
+        #[clap(long)]
+        thread: Option<String>,
     },
 
     /// Agent-related commands (defaults to list)
@@ -796,6 +806,17 @@ async fn main() -> Result<()> {
                 true,
             )
             .await?;
+        }
+        Commands::Sessions { thread } => {
+            // The same local tools `distri run` answers with, so an attached
+            // run's external calls can be answered from here.
+            let registry = app.registry();
+            register_all(&registry, "*", &workspace);
+            let scope = match thread {
+                Some(t) => sessions::Scope::Thread(t),
+                None => sessions::Scope::All,
+            };
+            sessions::run_sessions(&config, registry, scope).await?;
         }
         Commands::Agents { command } => match command.unwrap_or(AgentsCommands::List) {
             AgentsCommands::List => {
