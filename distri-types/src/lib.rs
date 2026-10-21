@@ -75,6 +75,7 @@ pub mod dynamic_tool;
 pub mod http_request;
 pub mod mock_tool;
 pub mod resolve;
+pub mod script_tool;
 
 pub mod models;
 pub use models::*;
