@@ -277,6 +277,7 @@ mod tests {
                 timezone: None,
                 enabled: true,
                 input: None,
+                deliver_to: None,
             },
             WorkflowTrigger::Manual,
         ]);
