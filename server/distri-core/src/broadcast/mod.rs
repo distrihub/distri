@@ -48,6 +48,13 @@ pub trait AgentEventBroadcaster: Send + Sync + 'static {
     /// or the channel is exhausted.
     async fn subscribe(&self, task_id: &str) -> anyhow::Result<BoxStream<'static, AgentEvent>>;
 
+    /// Whether `subscribe` replays the events published before the
+    /// subscription (a per-task log). When it doesn't, `tasks/resubscribe`
+    /// replays the task's persisted history itself before going live.
+    fn replays_history(&self) -> bool {
+        false
+    }
+
     /// Record that inner_task_id was spawned by the run identified by outer_run_id.
     /// Used by OtelHooks to parent inner invoke_agent spans under the outer one.
     async fn set_parent_run(&self, inner_task_id: &str, outer_run_id: &str) -> anyhow::Result<()> {
@@ -178,7 +185,11 @@ pub trait AgentTaskCoordinator: Send + Sync + 'static {
     /// coordination state, same class as `set_channel_task` — ok to lose on
     /// restart for the in-process impl; the Redis impl should TTL it rather
     /// than keep it forever. No-op by default.
-    async fn set_subtask_callback(&self, child_task_id: &str, payload_json: &str) -> anyhow::Result<()> {
+    async fn set_subtask_callback(
+        &self,
+        child_task_id: &str,
+        payload_json: &str,
+    ) -> anyhow::Result<()> {
         let _ = (child_task_id, payload_json);
         Ok(())
     }
