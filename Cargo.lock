@@ -1729,6 +1729,7 @@ dependencies = [
  "sha2 0.10.9",
  "tar",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
  "toml 0.8.23",
  "tracing",
@@ -1736,6 +1737,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "warp",
+ "which",
 ]
 
 [[package]]
