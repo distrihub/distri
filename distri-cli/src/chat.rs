@@ -30,6 +30,8 @@ pub enum SlashCommandResult {
     Exit,
     ClearContext,
     Resume(String),
+    /// Open the run switcher over this conversation, then come back.
+    Runs,
 }
 
 #[derive(Clone)]
@@ -149,6 +151,7 @@ pub fn print_help_message() {
     println!("  /resume <id>        - Resume a specific thread by ID");
     println!("  /traces             - List recent traces");
     println!("  /traces <id>        - Show trace detail with Gantt chart");
+    println!("  /runs               - Switch between runs (background agents, other sessions)");
     println!("  /clear              - Clear the current session context");
     println!("  /help               - Show this help message");
     println!("  /exit               - Exit the chat");
@@ -244,6 +247,7 @@ pub async fn handle_slash_command(
             Ok(SlashCommandResult::Continue)
         }
         "/exit" | "/quit" => Ok(SlashCommandResult::Exit),
+        "/runs" => Ok(SlashCommandResult::Runs),
         "/clear" => Ok(SlashCommandResult::ClearContext),
         "/compact" => {
             let client = Distri::from_config(config.clone());
@@ -270,7 +274,10 @@ pub async fn handle_slash_command(
                         Err(err) => eprintln!("Compact failed: {}", err),
                     }
                 }
-                Ok(_) => println!("{}No task on this thread yet — send a message first.{}", COLOR_GRAY, COLOR_RESET),
+                Ok(_) => println!(
+                    "{}No task on this thread yet — send a message first.{}",
+                    COLOR_GRAY, COLOR_RESET
+                ),
                 Err(err) => eprintln!("Failed to list tasks: {}", err),
             }
             Ok(SlashCommandResult::Continue)
@@ -338,11 +345,7 @@ pub async fn handle_slash_command(
                             } else {
                                 "\x1b[90m"
                             },
-                            if *configured {
-                                ""
-                            } else {
-                                "(not configured)"
-                            },
+                            if *configured { "" } else { "(not configured)" },
                             COLOR_RESET,
                         );
                         for id in model_ids {
@@ -620,6 +623,20 @@ pub async fn run_interactive_chat(
                         "Context cleared - new conversation started (thread: {})",
                         &thread_id[..8]
                     );
+                    continue;
+                }
+                SlashCommandResult::Runs => {
+                    // Same registry the chat answers tools with; the
+                    // switcher takes the screen and hands it back.
+                    if let Err(err) = crate::sessions::run_sessions(
+                        config,
+                        app.registry(),
+                        crate::sessions::Scope::Thread(thread_id.clone()),
+                    )
+                    .await
+                    {
+                        eprintln!("Run switcher failed: {}", err);
+                    }
                     continue;
                 }
                 SlashCommandResult::Resume(tid) => {
