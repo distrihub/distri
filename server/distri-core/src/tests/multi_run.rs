@@ -336,3 +336,46 @@ async fn waiting_on_an_external_tool_marks_the_task_input_required() {
         .unwrap();
     assert_eq!(t.status, TaskStatus::Running);
 }
+
+/// A background child is followable on its own task id, and keeps being
+/// published there after its parent's stream has closed.
+#[tokio::test]
+async fn child_events_have_their_own_topic_and_reach_the_parent() {
+    let orch = orchestrator().await;
+    let (parent_tx, mut parent_rx) = tokio::sync::mpsc::channel(16);
+    let mut parent = ExecutorContext::default();
+    parent.thread_id = thread(&orch, "parent").await;
+    parent.task_id = format!("parent-{}", uuid::Uuid::new_v4());
+    parent.orchestrator = Some(orch.clone());
+    parent.event_tx = Some(Arc::new(parent_tx));
+
+    let child = orch.with_own_event_topic(parent.new_task("worker").await);
+    let child_id = child.task_id.clone();
+    let mut follow = orch.broadcaster().subscribe(&child_id).await.unwrap();
+
+    child.emit(AgentEventType::RunStarted {}).await;
+    let got = tokio::time::timeout(Duration::from_secs(2), follow.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.task_id, child_id);
+    let relayed = parent_rx.recv().await.unwrap();
+    assert_eq!(relayed.task_id, child_id, "the parent still sees the child");
+
+    // The parent's run ends; the child keeps publishing on its own topic.
+    drop(parent_rx);
+    child
+        .emit(AgentEventType::RunFinished {
+            success: true,
+            total_steps: 1,
+            failed_steps: 0,
+            usage: None,
+            context_budget: None,
+        })
+        .await;
+    let got = tokio::time::timeout(Duration::from_secs(2), follow.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(got.event, AgentEventType::RunFinished { .. }));
+}
