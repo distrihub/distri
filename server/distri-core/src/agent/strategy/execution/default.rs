@@ -591,6 +591,18 @@ pub async fn execute_tool_calls_with_timeout(
     let step_id = step_id.to_string();
     let timeout = Duration::from_secs(external_tool_timeout_secs);
 
+    // While a client (a person, a browser, a CLI) owes us an answer, the
+    // task is waiting on input: say so in the store so run lists can show
+    // "needs you" while it can still be answered. Back to running once the
+    // batch has returned; a timed-out call still ends the step as
+    // input-required in the caller.
+    let waits_on_client = !pending_receivers.is_empty() && !context.dry_run;
+    if waits_on_client {
+        context
+            .update_status(crate::types::TaskStatus::InputRequired)
+            .await;
+    }
+
     // Wrap in Arc<Mutex> so each spawned future can steal its own receiver.
     let pending_receivers = Arc::new(tokio::sync::Mutex::new(pending_receivers));
 
@@ -763,6 +775,12 @@ pub async fn execute_tool_calls_with_timeout(
         }
     }))
     .await;
+
+    if waits_on_client {
+        context
+            .update_status(crate::types::TaskStatus::Running)
+            .await;
+    }
 
     Ok(results)
 }

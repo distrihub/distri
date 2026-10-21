@@ -1,9 +1,10 @@
 use super::RESULT_PREFIX;
 use crate::colors::{COLOR_CYAN, COLOR_GRAY, COLOR_RESET};
 use distri_types::{Part, ToolResponse};
+use std::io::Write;
 
 /// Render search tool results.
-pub fn render_search(result: &ToolResponse) {
+pub fn render_search(out: &mut dyn Write, result: &ToolResponse) {
     for part in &result.parts {
         match part {
             Part::Data(value) => {
@@ -11,7 +12,8 @@ pub fn render_search(result: &ToolResponse) {
                     && let Some(serde_json::Value::Array(items)) = obj.get("data")
                 {
                     let count = items.len();
-                    println!(
+                    outln!(
+                        out,
                         "{}{}{} result{}{}",
                         COLOR_CYAN,
                         RESULT_PREFIX,
@@ -24,18 +26,31 @@ pub fn render_search(result: &ToolResponse) {
                             .get("title")
                             .and_then(|t| t.as_str())
                             .unwrap_or("(untitled)");
-                        println!("{}  {}. {}{}", COLOR_GRAY, i + 1, title, COLOR_RESET);
+                        outln!(out, "{}  {}. {}{}", COLOR_GRAY, i + 1, title, COLOR_RESET);
                     }
                     if count > 3 {
-                        println!("{}  … and {} more{}", COLOR_GRAY, count - 3, COLOR_RESET);
+                        outln!(
+                            out,
+                            "{}  … and {} more{}",
+                            COLOR_GRAY,
+                            count - 3,
+                            COLOR_RESET
+                        );
                     }
                     continue;
                 }
-                crate::renderers::data::render_data_compact(value);
+                crate::renderers::data::render_data_compact(out, value);
             }
             Part::Text(text) => {
                 let first = text.lines().next().unwrap_or("");
-                println!("{}{}{}{}", COLOR_GRAY, RESULT_PREFIX, first, COLOR_RESET);
+                outln!(
+                    out,
+                    "{}{}{}{}",
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    first,
+                    COLOR_RESET
+                );
             }
             _ => {}
         }

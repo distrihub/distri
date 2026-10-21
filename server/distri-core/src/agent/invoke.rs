@@ -588,6 +588,39 @@ impl AgentOrchestrator {
         Ok(())
     }
 
+    /// A child shares its parent's event channel, so its events reach the
+    /// parent's stream published under the *parent's* task id. Give the
+    /// child its own broadcaster topic as well, so `tasks/resubscribe` on
+    /// the child id follows it — live, and after the parent's stream has
+    /// closed (a background fork outlives its parent's run). Events are
+    /// still forwarded to the parent's channel while it is open.
+    pub(crate) fn with_own_event_topic(&self, mut child: ExecutorContext) -> ExecutorContext {
+        let parent_tx = child.event_tx.take();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<distri_types::AgentEvent>(100);
+        let broadcaster = self.runtime.broadcaster_arc();
+        let topic = child.task_id.clone();
+        tokio::spawn(async move {
+            // Runs until every sender (the child and its own children) is gone.
+            while let Some(event) = rx.recv().await {
+                if let Some(parent) = &parent_tx {
+                    // The parent's relay may have finished; that only ends
+                    // the forwarding, not the child's own topic.
+                    let _ = parent.send(event.clone()).await;
+                }
+                if let Err(e) = broadcaster.publish(&topic, event).await {
+                    tracing::warn!(
+                        target: "invoke.child_topic",
+                        task_id = %topic,
+                        error = %e,
+                        "failed to publish child event on its own topic"
+                    );
+                }
+            }
+        });
+        child.event_tx = Some(Arc::new(tx));
+        child
+    }
+
     /// Build the child ExecutorContext + persist its row with the
     /// typed Invocation blob (Local executor case). The row goes in at
     /// `status=Running`, `remote=false`; the agent loop's RunFinished
@@ -598,7 +631,8 @@ impl AgentOrchestrator {
         invocation_blob: &serde_json::Value,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<Arc<ExecutorContext>, AgentError> {
-        let child_ctx = Arc::new(parent_ctx.new_task(&resolved.agent_id).await);
+        let child_ctx =
+            Arc::new(self.with_own_event_topic(parent_ctx.new_task(&resolved.agent_id).await));
 
         self.stores
             .task_store
@@ -883,7 +917,7 @@ impl ResolvedTarget {
                     ..Default::default()
                 };
                 Self {
-                    agent_id: "_adhoc_base".to_string(),
+                    agent_id: distri_types::invocation::ADHOC_BASE_AGENT.to_string(),
                     definition_overrides: Some(overrides),
                 }
             }

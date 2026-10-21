@@ -399,7 +399,43 @@ impl AgentStreamClient {
         Ok(())
     }
 
-    /// Execute an external tool locally and send the result to the server.
+    /// Answer one pending external call by running it through this client's
+    /// `ExternalToolRegistry` and posting the result to the server — what
+    /// `stream_agent` does automatically, for a call seen on an attached
+    /// (resubscribed) run.
+    pub async fn answer_with_registry(
+        &self,
+        agent_id: &str,
+        event: &AgentEvent,
+        call: &ToolCall,
+    ) -> Result<(), StreamError> {
+        self.execute_and_complete_external_tool(&event.agent_id, agent_id, event, call)
+            .await
+    }
+
+    /// Whether this client's registry can run `tool_name` itself.
+    pub fn can_run_tool(&self, tool_name: &str) -> bool {
+        self.is_external_tool(tool_name)
+    }
+
+    /// Answer one pending external call with what a person typed (an
+    /// approval, a reply to a question).
+    pub async fn answer_with_text(
+        &self,
+        agent_id: &str,
+        call: &ToolCall,
+        text: &str,
+    ) -> Result<(), StreamError> {
+        let response = ToolResponse::from_parts(
+            call.tool_call_id.clone(),
+            call.tool_name.clone(),
+            vec![distri_types::Part::Text(text.to_string())],
+        );
+        self.complete_tool(agent_id, &call.tool_call_id, response)
+            .await
+    }
+
+    /// Execute an external tool locally and send the result to the server.    /// Execute an external tool locally and send the result to the server.
     /// The server emits ToolCalls before registering the pending call, so
     /// complete_tool retries with backoff until the server is ready.
     async fn execute_and_complete_external_tool(

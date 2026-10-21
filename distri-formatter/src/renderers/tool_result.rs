@@ -2,28 +2,41 @@ use super::RESULT_PREFIX;
 use super::data::render_data_compact;
 use crate::colors::{COLOR_GRAY, COLOR_RESET};
 use distri_types::{Part, ToolResponse};
+use std::io::Write;
 
 /// Generic part-by-part tool result rendering (fallback for unrecognized tools).
-pub fn render_tool_result(result: &ToolResponse) {
+pub fn render_tool_result(out: &mut dyn Write, result: &ToolResponse) {
     for part in &result.parts {
         match part {
             Part::Text(text) => {
                 let lines: Vec<&str> = text.lines().take(2).collect();
                 let preview = lines.join("\n       ");
                 if text.lines().count() > 2 {
-                    println!(
+                    outln!(
+                        out,
                         "{}{}{}\n       …{}",
-                        COLOR_GRAY, RESULT_PREFIX, preview, COLOR_RESET
+                        COLOR_GRAY,
+                        RESULT_PREFIX,
+                        preview,
+                        COLOR_RESET
                     );
                 } else {
-                    println!("{}{}{}{}", COLOR_GRAY, RESULT_PREFIX, preview, COLOR_RESET);
+                    outln!(
+                        out,
+                        "{}{}{}{}",
+                        COLOR_GRAY,
+                        RESULT_PREFIX,
+                        preview,
+                        COLOR_RESET
+                    );
                 }
             }
             Part::Data(value) => {
-                render_data_compact(value);
+                render_data_compact(out, value);
             }
             Part::Artifact(meta) => {
-                println!(
+                outln!(
+                    out,
                     "{}{}artifact: {} ({}){}",
                     COLOR_GRAY,
                     RESULT_PREFIX,
@@ -43,13 +56,18 @@ pub fn render_tool_result(result: &ToolResponse) {
                     }
                     distri_types::FileType::Url { url, .. } => url.clone(),
                 };
-                println!(
+                outln!(
+                    out,
                     "{}{}image: {}{}",
-                    COLOR_GRAY, RESULT_PREFIX, label, COLOR_RESET
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    label,
+                    COLOR_RESET
                 );
             }
             _ => {
-                println!(
+                outln!(
+                    out,
                     "{}{}[{}]{}",
                     COLOR_GRAY,
                     RESULT_PREFIX,

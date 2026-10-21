@@ -94,6 +94,10 @@ pub struct ResubscribeSession {
     /// stream so clients that resubscribe after completion still learn the
     /// end state.
     pub pre_terminal_status: Option<distri_a2a::TaskState>,
+    /// The task's persisted messages and events, replayed before the
+    /// synthesized terminal frame when the task had already finished. A live
+    /// task's history comes from the broadcaster's own replay instead.
+    pub history: Vec<distri_a2a::MessageKind>,
 }
 
 /// Stream wrapper that re-enters the user-scoped task-local context on every
@@ -272,25 +276,20 @@ impl A2AService {
     pub async fn cancel_task(&self, params: serde_json::Value) -> Result<Task, AgentError> {
         let params: TaskIdParams = serde_json::from_value(params)?;
 
-        // Signal abort via coordinator (sends CancellationSignal, works across nodes)
-        if let Err(e) = self
-            .orchestrator
-            .runtime
-            .coordinator()
-            .cancel(&params.id)
-            .await
-        {
-            tracing::warn!("Coordinator cancel failed for {}: {}", params.id, e);
-        }
+        // Same primitive as the supervisor's `cancel_task` tool: cancel the
+        // row and every descendant (background forks included) and signal
+        // each one. Already-terminal rows are left as they are, so this is
+        // idempotent.
+        self.orchestrator.cancel_task(&params.id).await?;
 
-        // Also update the task store record
         let task = self
             .orchestrator
             .stores
             .task_store
-            .cancel_task(&params.id)
+            .get_task(&params.id)
             .await
-            .map_err(|e| AgentError::Session(e.to_string()))?;
+            .map_err(|e| AgentError::Session(e.to_string()))?
+            .ok_or_else(|| AgentError::Session(format!("Task {} not found", params.id)))?;
 
         Ok(task.into())
     }
@@ -532,25 +531,28 @@ impl A2AService {
         // completion would otherwise hang. Fetch the current task and surface
         // the terminal state to `run_resubscribe_session`, which synthesizes a
         // final `TaskStatusUpdate` frame for them.
-        let (pre_terminal_status, context_id) = match self
-            .orchestrator
-            .stores
-            .task_store
-            .get_task(&params.id)
-            .await
+        let task_store = self.orchestrator.stores.task_store.clone();
+        let (pre_terminal_status, context_id, history) = match task_store.get_task(&params.id).await
         {
-            Ok(Some(task)) => {
-                let context_id = task.thread_id.clone();
-                let state = if task.status.is_terminal() {
-                    Some(distri_types::a2a_converters::map_task_status_to_a2a_state(
-                        &task.status,
-                    ))
-                } else {
-                    None
-                };
-                (state, context_id)
+            Ok(Some(task)) if task.status.is_terminal() => {
+                let state =
+                    distri_types::a2a_converters::map_task_status_to_a2a_state(&task.status);
+                let history = task_history_frames(task_store.as_ref(), &task).await?;
+                (Some(state), task.thread_id.clone(), history)
             }
-            _ => (None, String::new()),
+            Ok(Some(task)) => {
+                // Live task: a broadcaster without a log (in-process) starts
+                // at the subscription, so replay what was persisted so far.
+                // Events persisted between subscribing and this read can
+                // arrive twice; text deltas are never persisted.
+                let history = if self.orchestrator.broadcaster().replays_history() {
+                    Vec::new()
+                } else {
+                    task_history_frames(task_store.as_ref(), &task).await?
+                };
+                (None, task.thread_id.clone(), history)
+            }
+            _ => (None, String::new(), Vec::new()),
         };
 
         Ok(ResubscribeSession {
@@ -559,6 +561,7 @@ impl A2AService {
             context_id,
             event_stream,
             pre_terminal_status,
+            history,
         })
     }
 
@@ -569,9 +572,18 @@ impl A2AService {
             context_id,
             event_stream,
             pre_terminal_status,
+            history,
         } = session;
 
         let stream = async_stream::stream! {
+            // Persisted history first (finished tasks, and live tasks on a
+            // broadcaster without a replay log).
+            for msg in &history {
+                yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
+                    req_id.clone(),
+                    serde_json::to_value(msg).unwrap_or_default(),
+                ));
+            }
             // If the task was already terminal at prepare time, emit a
             // synthesized TaskStatusUpdate and terminate — the broadcaster will
             // not replay past events, so any further polling would block
@@ -593,11 +605,21 @@ impl A2AService {
             }
 
             futures_util::pin_mut!(event_stream);
+            let mut answer = FinalAnswer::default();
             while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+                answer.observe(&task_id, &event);
                 let msg = map_agent_event(&event);
                 yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
                     req_id.clone(),
                     serde_json::to_value(&msg).unwrap_or_default(),
+                ));
+            }
+            // Same trailing final-answer frame `message/stream` ends with, so a
+            // follower sees the answer the way the starter did.
+            if let Some(msg) = answer.into_message(&task_id, &context_id) {
+                yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
+                    req_id.clone(),
+                    serde_json::to_value(distri_a2a::MessageKind::Message(msg)).unwrap_or_default(),
                 ));
             }
         };
@@ -774,4 +796,90 @@ pub async fn build_final_message(
         &executor_context.thread_id,
         executor_context.parent_task_id.as_deref(),
     ))
+}
+
+/// The answer a run gave through its `final` tool, collected from its
+/// `ToolCalls` events while following it.
+#[derive(Default)]
+struct FinalAnswer {
+    text: Option<String>,
+    parent_task_id: Option<String>,
+}
+
+impl FinalAnswer {
+    fn observe(&mut self, task_id: &str, event: &AgentEvent) {
+        if event.task_id != task_id {
+            return;
+        }
+        if let AgentEventType::ToolCalls { tool_calls, .. } = &event.event {
+            for call in tool_calls.iter().filter(|c| c.tool_name == "final") {
+                if let Ok(value) = crate::tools::FinalTool::extract_result(&call.input) {
+                    self.text = Some(match value {
+                        serde_json::Value::String(s) => s,
+                        other => other.to_string(),
+                    });
+                    self.parent_task_id = event.parent_task_id.clone();
+                }
+            }
+        }
+    }
+
+    /// The `Message::final_answer` frame (same id as the persisted one).
+    fn into_message(self, task_id: &str, thread_id: &str) -> Option<distri_a2a::Message> {
+        let text = self.text.filter(|t| !t.is_empty())?;
+        let message = distri_types::Message::final_answer(task_id, text);
+        Some(crate::a2a::to_a2a_message_parts(
+            &message,
+            task_id,
+            thread_id,
+            self.parent_task_id.as_deref(),
+        ))
+    }
+}
+
+/// A finished task's persisted messages and events as A2A frames, oldest
+/// first. Text deltas are not persisted, so this is tool calls, results and
+/// whole messages.
+async fn task_history_frames(
+    task_store: &dyn distri_types::stores::TaskStore,
+    task: &distri_types::Task,
+) -> Result<Vec<distri_a2a::MessageKind>, AgentError> {
+    let history = task_store
+        .get_history(&task.thread_id, None)
+        .await
+        .map_err(|e| AgentError::Session(format!("Failed to load task history: {e}")))?;
+    let mut frames = Vec::new();
+    let final_id = distri_types::Message::final_answer_id(&task.id);
+    let mut answer = FinalAnswer::default();
+    let mut has_final = false;
+    for (row, messages) in history.iter().filter(|(row, _)| row.id == task.id) {
+        for message in messages {
+            match message {
+                distri_types::TaskMessage::Message(m) => has_final |= m.id == final_id,
+                distri_types::TaskMessage::Event(e) => {
+                    let mut event = AgentEvent::from_task_event(e, &task.thread_id);
+                    event.task_id = task.id.clone();
+                    event.parent_task_id = task.parent_task_id.clone();
+                    answer.observe(&task.id, &event);
+                }
+            }
+            frames.push(match message {
+                distri_types::TaskMessage::Message(m) => {
+                    distri_a2a::MessageKind::Message(crate::a2a::to_a2a_message(m, row))
+                }
+                distri_types::TaskMessage::Event(e) => distri_a2a::MessageKind::TaskStatusUpdate(
+                    crate::a2a::to_a2a_task_update(e, row),
+                ),
+            });
+        }
+    }
+    // Children don't persist a final-answer message (only a root's stream
+    // does); rebuild it from the run's `final` call so a replay ends the way
+    // a live follow does.
+    if task.status.is_terminal() && !has_final {
+        if let Some(msg) = answer.into_message(&task.id, &task.thread_id) {
+            frames.push(distri_a2a::MessageKind::Message(msg));
+        }
+    }
+    Ok(frames)
 }
