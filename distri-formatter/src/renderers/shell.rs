@@ -2,22 +2,29 @@ use super::RESULT_PREFIX;
 use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
 use crate::extract::{ToolFields, extract_fields};
 use distri_types::{Part, ToolResponse};
+use std::io::Write;
 
 /// Render shell tool results (start_shell, execute_shell, stop_shell).
-pub fn render_shell(result: &ToolResponse) {
+pub fn render_shell(out: &mut dyn Write, result: &ToolResponse) {
     let name = result.tool_name.as_str();
 
     match name {
         "start_shell" => {
-            println!(
+            outln!(
+                out,
                 "{}{}Shell started{}",
-                COLOR_GREEN, RESULT_PREFIX, COLOR_RESET
+                COLOR_GREEN,
+                RESULT_PREFIX,
+                COLOR_RESET
             );
         }
         "stop_shell" => {
-            println!(
+            outln!(
+                out,
                 "{}{}Shell stopped{}",
-                COLOR_GRAY, RESULT_PREFIX, COLOR_RESET
+                COLOR_GRAY,
+                RESULT_PREFIX,
+                COLOR_RESET
             );
         }
         "execute_shell" | "execute_command" => {
@@ -33,19 +40,29 @@ pub fn render_shell(result: &ToolResponse) {
                     let lines: Vec<&str> = stdout.lines().collect();
                     let total = lines.len();
                     for line in lines.iter().take(5) {
-                        println!("{}  {}{}", COLOR_GRAY, line, COLOR_RESET);
+                        outln!(out, "{}  {}{}", COLOR_GRAY, line, COLOR_RESET);
                     }
                     if total > 5 {
-                        println!("{}  … ({} lines total){}", COLOR_GRAY, total, COLOR_RESET);
+                        outln!(
+                            out,
+                            "{}  … ({} lines total){}",
+                            COLOR_GRAY,
+                            total,
+                            COLOR_RESET
+                        );
                     }
                 }
 
                 if has_data {
                     if !stderr.trim().is_empty() {
                         let first = stderr.lines().next().unwrap_or("");
-                        println!(
+                        outln!(
+                            out,
                             "{}{}stderr: {}{}",
-                            COLOR_RED, RESULT_PREFIX, first, COLOR_RESET
+                            COLOR_RED,
+                            RESULT_PREFIX,
+                            first,
+                            COLOR_RESET
                         );
                     }
 
@@ -54,15 +71,19 @@ pub fn render_shell(result: &ToolResponse) {
                     } else {
                         COLOR_RED
                     };
-                    println!(
+                    outln!(
+                        out,
                         "{}{}exit: {}{}",
-                        color, RESULT_PREFIX, exit_code, COLOR_RESET
+                        color,
+                        RESULT_PREFIX,
+                        exit_code,
+                        COLOR_RESET
                     );
                 }
             }
         }
         _ => {
-            crate::renderers::tool_result::render_tool_result(result);
+            crate::renderers::tool_result::render_tool_result(out, result);
         }
     }
 }
