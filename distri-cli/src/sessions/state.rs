@@ -237,6 +237,8 @@ pub struct SessionsState {
     pub mode: Mode,
     pub status: Option<String>,
     pub loaded: bool,
+    /// The cursor stays on the newest run until the person moves it.
+    moved: bool,
     can_run: Arc<dyn Fn(&str) -> bool + Send + Sync>,
 }
 
@@ -259,6 +261,7 @@ impl SessionsState {
             mode: Mode::Browse,
             status: None,
             loaded: false,
+            moved: false,
             can_run,
         }
     }
@@ -365,8 +368,10 @@ impl SessionsState {
                 })
             })
             .collect();
-        // Keep the cursor on the same run across refreshes.
+        // Keep the cursor on the same run across refreshes once the person
+        // has moved it; until then it follows the top of the list.
         self.selected = keep
+            .filter(|_| self.moved)
             .and_then(|id| self.rows.iter().position(|r| r.task_id == id))
             .unwrap_or(0)
             .min(self.rows.len().saturating_sub(1));
@@ -442,10 +447,12 @@ impl SessionsState {
     fn on_browse_key(&mut self, key: Key) -> Vec<Effect> {
         match key {
             Key::Up | Key::Char('k') => {
+                self.moved = true;
                 self.selected = self.selected.saturating_sub(1);
                 vec![]
             }
             Key::Down | Key::Char('j') => {
+                self.moved = true;
                 if self.selected + 1 < self.rows.len() {
                     self.selected += 1;
                 }
@@ -870,6 +877,26 @@ mod tests {
         assert!(
             matches!(&fx[..], [Effect::LoadRuns(q)] if q.thread_id.as_deref() == Some(fixture::THREAD_ID))
         );
+    }
+
+    #[tokio::test]
+    async fn cursor_follows_the_newest_run_until_moved() {
+        let mut s = state(&[]);
+        let mut older = fixture::multi_run();
+        older.runs[0].task_id = "older".into();
+        older.runs[0].children.clear();
+        older.runs[0].needs_input = false;
+        s.handle(Input::RunsLoaded(older.clone())).await;
+        assert_eq!(s.selected_run().unwrap().task_id, "older");
+        // A new run shows up on top: the untouched cursor goes with it.
+        let mut both = fixture::multi_run();
+        both.runs.push(older.runs[0].clone());
+        s.handle(Input::RunsLoaded(both.clone())).await;
+        assert_eq!(s.selected_run().unwrap().task_id, fixture::ROOT_TASK_ID);
+        // Once moved, refreshes keep it on the same run.
+        s.handle(Input::Key(Key::Down)).await;
+        s.handle(Input::RunsLoaded(both)).await;
+        assert_eq!(s.selected_run().unwrap().task_id, fixture::ASKER_TASK_ID);
     }
 
     #[tokio::test]

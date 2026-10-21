@@ -60,16 +60,6 @@ impl RunState {
             RunState::Canceled => &["canceled"],
         }
     }
-
-    /// Sort rank: waiting on a person first, then working, then finished.
-    fn rank(self) -> u8 {
-        match self {
-            RunState::NeedsInput => 0,
-            RunState::Working => 1,
-            RunState::Failed => 2,
-            RunState::Done | RunState::Canceled => 3,
-        }
-    }
 }
 
 /// One node of the run tree.
@@ -187,7 +177,7 @@ pub struct RunTaskRow {
 
 /// Build the ordered forest from flat rows. A row whose parent is not in the
 /// set becomes a root. Siblings and roots are ordered waiting-on-a-person
-/// first, then working, then by newest activity.
+/// first, then by newest activity.
 pub fn build_run_tree(
     rows: Vec<RunTaskRow>,
     activity: &HashMap<String, TaskActivity>,
@@ -243,13 +233,13 @@ fn build_node(
     }
 }
 
+/// Waiting on a person first; everything else newest activity first. State
+/// alone doesn't rank: a row stuck in `running` for months must not bury the
+/// run that just finished.
 fn sort_siblings(nodes: &mut [RunSummary]) {
     nodes.sort_by(|a, b| {
-        let rank = |n: &RunSummary| {
-            if n.needs_input { 0 } else { n.state.rank() }
-        };
-        rank(a)
-            .cmp(&rank(b))
+        b.needs_input
+            .cmp(&a.needs_input)
             .then_with(|| b.latest_activity().cmp(&a.latest_activity()))
             .then_with(|| a.task_id.cmp(&b.task_id))
     });
@@ -603,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn needs_input_roots_sort_first_then_by_activity() {
+    fn needs_input_roots_sort_first_then_by_newest_activity() {
         let rows = vec![
             task("new", None, TaskStatus::Running, 900),
             task("old", None, TaskStatus::Completed, 100),
@@ -612,7 +602,7 @@ mod tests {
         ];
         let forest = build_run_tree(rows, &HashMap::new());
         let order: Vec<&str> = forest.iter().map(|r| r.task_id.as_str()).collect();
-        assert_eq!(order, vec!["old", "new", "failed"]);
+        assert_eq!(order, vec!["old", "failed", "new"]);
     }
 
     #[test]
