@@ -1,0 +1,13 @@
+{
+  "name": "@distri/tool",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./mod.ts",
+    "./extract": "./extract.ts",
+    "./run": "./run.ts"
+  },
+  "tasks": {
+    "test": "deno test -A"
+  },
+  "fmt": { "lineWidth": 110 }
+}
