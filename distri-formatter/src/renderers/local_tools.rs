@@ -1,12 +1,14 @@
 //! Renderers for local CLI tools (Bash, Read, Write, Edit, Glob, Grep).
 //! Follows claude-code style: compact, informative, consistent prefix.
 
+use std::io::Write;
+
 use super::{RESULT_PREFIX, truncate_str};
 use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
 use crate::extract::{ToolFields, extract_fields};
 use distri_types::ToolResponse;
 
-pub fn render_local_tool(result: &ToolResponse) {
+pub fn render_local_tool(out: &mut dyn Write, result: &ToolResponse) {
     let fields = extract_fields(result);
     match fields {
         ToolFields::Bash {
@@ -19,17 +21,24 @@ pub fn render_local_tool(result: &ToolResponse) {
                 let lines: Vec<&str> = stdout.lines().collect();
                 let total = lines.len();
                 for line in lines.iter().take(5) {
-                    println!("{}  {}{}", COLOR_GRAY, line, COLOR_RESET);
+                    outln!(out, "{}  {}{}", COLOR_GRAY, line, COLOR_RESET);
                 }
                 if total > 5 {
-                    println!("{}  … ({} lines total){}", COLOR_GRAY, total, COLOR_RESET);
+                    outln!(
+                        out,
+                        "{}  … ({} lines total){}",
+                        COLOR_GRAY,
+                        total,
+                        COLOR_RESET
+                    );
                 }
             }
 
             // Show stderr
             if !stderr.trim().is_empty() {
                 let first = stderr.lines().next().unwrap_or("");
-                println!(
+                outln!(
+                    out,
                     "{}{}stderr: {}{}",
                     COLOR_RED,
                     RESULT_PREFIX,
@@ -40,9 +49,13 @@ pub fn render_local_tool(result: &ToolResponse) {
 
             // Show exit code if non-zero
             if exit_code != 0 {
-                println!(
+                outln!(
+                    out,
                     "{}{}exit: {}{}",
-                    COLOR_RED, RESULT_PREFIX, exit_code, COLOR_RESET
+                    COLOR_RED,
+                    RESULT_PREFIX,
+                    exit_code,
+                    COLOR_RESET
                 );
             }
         }
@@ -53,14 +66,23 @@ pub fn render_local_tool(result: &ToolResponse) {
             ..
         } => {
             if truncated {
-                println!(
+                outln!(
+                    out,
                     "{}{}Read {} lines (of {} total){}",
-                    COLOR_GRAY, RESULT_PREFIX, lines_read, total, COLOR_RESET
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    lines_read,
+                    total,
+                    COLOR_RESET
                 );
             } else {
-                println!(
+                outln!(
+                    out,
                     "{}{}Read {} lines{}",
-                    COLOR_GRAY, RESULT_PREFIX, lines_read, COLOR_RESET
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    lines_read,
+                    COLOR_RESET
                 );
             }
         }
@@ -68,9 +90,14 @@ pub fn render_local_tool(result: &ToolResponse) {
             file_path,
             bytes_written,
         } => {
-            println!(
+            outln!(
+                out,
                 "{}{}Wrote {} bytes to {}{}",
-                COLOR_GREEN, RESULT_PREFIX, bytes_written, file_path, COLOR_RESET
+                COLOR_GREEN,
+                RESULT_PREFIX,
+                bytes_written,
+                file_path,
+                COLOR_RESET
             );
         }
         ToolFields::Edit {
@@ -78,14 +105,23 @@ pub fn render_local_tool(result: &ToolResponse) {
             replacements,
         } => {
             if replacements == 1 {
-                println!(
+                outln!(
+                    out,
                     "{}{}Updated {}{}",
-                    COLOR_GREEN, RESULT_PREFIX, file_path, COLOR_RESET
+                    COLOR_GREEN,
+                    RESULT_PREFIX,
+                    file_path,
+                    COLOR_RESET
                 );
             } else {
-                println!(
+                outln!(
+                    out,
                     "{}{}Updated {} ({} replacements){}",
-                    COLOR_GREEN, RESULT_PREFIX, file_path, replacements, COLOR_RESET
+                    COLOR_GREEN,
+                    RESULT_PREFIX,
+                    file_path,
+                    replacements,
+                    COLOR_RESET
                 );
             }
         }
@@ -95,17 +131,23 @@ pub fn render_local_tool(result: &ToolResponse) {
             truncated,
         } => {
             let suffix = if truncated { " (truncated)" } else { "" };
-            println!(
+            outln!(
+                out,
                 "{}{}{} files{}{}",
-                COLOR_GRAY, RESULT_PREFIX, num_files, suffix, COLOR_RESET
+                COLOR_GRAY,
+                RESULT_PREFIX,
+                num_files,
+                suffix,
+                COLOR_RESET
             );
 
             // Show first few filenames
             for name in filenames.iter().take(5) {
-                println!("{}  {}{}", COLOR_GRAY, name, COLOR_RESET);
+                outln!(out, "{}  {}{}", COLOR_GRAY, name, COLOR_RESET);
             }
             if filenames.len() > 5 {
-                println!(
+                outln!(
+                    out,
                     "{}  … and {} more{}",
                     COLOR_GRAY,
                     filenames.len() - 5,
@@ -119,19 +161,25 @@ pub fn render_local_tool(result: &ToolResponse) {
             truncated,
         } => {
             let suffix = if truncated { " (truncated)" } else { "" };
-            println!(
+            outln!(
+                out,
                 "{}{}{} results{}{}",
-                COLOR_GRAY, RESULT_PREFIX, total_lines, suffix, COLOR_RESET
+                COLOR_GRAY,
+                RESULT_PREFIX,
+                total_lines,
+                suffix,
+                COLOR_RESET
             );
 
             // Show first few lines of output
             if !output.is_empty() {
                 let lines: Vec<&str> = output.lines().collect();
                 for line in lines.iter().take(8) {
-                    println!("{}  {}{}", COLOR_GRAY, line, COLOR_RESET);
+                    outln!(out, "{}  {}{}", COLOR_GRAY, line, COLOR_RESET);
                 }
                 if lines.len() > 8 {
-                    println!(
+                    outln!(
+                        out,
                         "{}  … and {} more lines{}",
                         COLOR_GRAY,
                         lines.len() - 8,
@@ -140,6 +188,6 @@ pub fn render_local_tool(result: &ToolResponse) {
                 }
             }
         }
-        _ => super::tool_result::render_tool_result(result),
+        _ => super::tool_result::render_tool_result(out, result),
     }
 }

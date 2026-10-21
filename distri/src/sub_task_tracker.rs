@@ -24,6 +24,7 @@
 //! no protocol changes.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::time::Instant;
 
 use distri_types::{AgentEvent, AgentEventType};
@@ -89,7 +90,12 @@ impl SubTaskTracker {
     /// Process a freshly-arrived event. Updates the task tree, emits
     /// any header/footer/status lines this transition warrants, and
     /// returns whether the caller should print the event itself.
-    pub fn handle(&mut self, event: &AgentEvent, verbose: bool) -> SuppressDecision {
+    pub fn handle(
+        &mut self,
+        out: &mut dyn Write,
+        event: &AgentEvent,
+        verbose: bool,
+    ) -> SuppressDecision {
         let task_id = event.task_id.clone();
         if task_id.is_empty() {
             return SuppressDecision::Print;
@@ -136,13 +142,13 @@ impl SubTaskTracker {
                 .map(|prev| prev != &task_id)
                 .unwrap_or(true);
             if transitioned {
-                self.print_fence_header_if_needed(&task_id);
+                self.print_fence_header_if_needed(out, &task_id);
             }
             self.last_task_id = Some(task_id.clone());
             if let AgentEventType::RunFinished { success, .. } = &event.event {
-                self.print_fence_footer(&task_id, *success);
+                self.print_fence_footer(out, &task_id, *success);
             } else if let AgentEventType::RunError { .. } = &event.event {
-                self.print_fence_footer(&task_id, false);
+                self.print_fence_footer(out, &task_id, false);
             }
             return SuppressDecision::Print;
         }
@@ -151,13 +157,13 @@ impl SubTaskTracker {
         // on lifecycle events, suppress everything else.
         match &event.event {
             AgentEventType::RunStarted {} => {
-                self.print_compact_start(&task_id);
+                self.print_compact_start(out, &task_id);
             }
             AgentEventType::RunFinished { success, .. } => {
-                self.print_compact_end(&task_id, *success);
+                self.print_compact_end(out, &task_id, *success);
             }
             AgentEventType::RunError { .. } => {
-                self.print_compact_end(&task_id, false);
+                self.print_compact_end(out, &task_id, false);
             }
             _ => {}
         }
@@ -165,7 +171,7 @@ impl SubTaskTracker {
         SuppressDecision::Suppress
     }
 
-    fn print_compact_start(&mut self, task_id: &str) {
+    fn print_compact_start(&mut self, out: &mut dyn Write, task_id: &str) {
         let Some(node) = self.tasks.get_mut(task_id) else {
             return;
         };
@@ -180,14 +186,15 @@ impl SubTaskTracker {
         } else {
             &node.agent_id
         };
-        println!(
+        let _ = writeln!(
+            out,
             "{}{}⏺ subtask({}){}",
             indent, COLOR_YELLOW, agent, COLOR_RESET
         );
         node.compact_start_printed = true;
     }
 
-    fn print_compact_end(&mut self, task_id: &str, success: bool) {
+    fn print_compact_end(&mut self, out: &mut dyn Write, task_id: &str, success: bool) {
         let Some(node) = self.tasks.get_mut(task_id) else {
             return;
         };
@@ -204,14 +211,15 @@ impl SubTaskTracker {
         } else {
             ("✖", COLOR_RED, "failed")
         };
-        println!(
+        let _ = writeln!(
+            out,
             "{}  {}⎿ {} {} ({:.1}s){}",
             indent, color, glyph, label, elapsed, COLOR_RESET
         );
         node.compact_end_printed = true;
     }
 
-    fn print_fence_header_if_needed(&mut self, task_id: &str) {
+    fn print_fence_header_if_needed(&mut self, out: &mut dyn Write, task_id: &str) {
         let Some(node) = self.tasks.get_mut(task_id) else {
             return;
         };
@@ -224,14 +232,15 @@ impl SubTaskTracker {
         } else {
             &node.agent_id
         };
-        println!(
+        let _ = writeln!(
+            out,
             "{}{}┌─ subtask · {}{}",
             indent, COLOR_BRIGHT_CYAN, agent, COLOR_RESET
         );
         node.fence_header_printed = true;
     }
 
-    fn print_fence_footer(&mut self, task_id: &str, success: bool) {
+    fn print_fence_footer(&mut self, out: &mut dyn Write, task_id: &str, success: bool) {
         let Some(node) = self.tasks.get_mut(task_id) else {
             return;
         };
@@ -250,7 +259,8 @@ impl SubTaskTracker {
         } else {
             &node.agent_id
         };
-        println!(
+        let _ = writeln!(
+            out,
             "{}{}└─ {} {} ({:.1}s){}",
             indent, color, glyph, agent, elapsed, COLOR_RESET
         );
@@ -283,6 +293,7 @@ mod tests {
     fn root_events_always_print() {
         let mut t = SubTaskTracker::new();
         let d = t.handle(
+            &mut std::io::sink(),
             &ev("root", None, "main", AgentEventType::RunStarted {}),
             false,
         );
@@ -293,16 +304,19 @@ mod tests {
     fn subtask_body_suppressed_by_default() {
         let mut t = SubTaskTracker::new();
         t.handle(
+            &mut std::io::sink(),
             &ev("root", None, "main", AgentEventType::RunStarted {}),
             false,
         );
         t.handle(
+            &mut std::io::sink(),
             &ev("a", Some("root"), "alpha", AgentEventType::RunStarted {}),
             false,
         );
         // A streamed text content event from a sub-task — should be
         // dropped on the floor in non-verbose mode.
         let d = t.handle(
+            &mut std::io::sink(),
             &ev(
                 "a",
                 Some("root"),
@@ -323,14 +337,17 @@ mod tests {
     fn subtask_body_visible_in_verbose() {
         let mut t = SubTaskTracker::new();
         t.handle(
+            &mut std::io::sink(),
             &ev("root", None, "main", AgentEventType::RunStarted {}),
             true,
         );
         t.handle(
+            &mut std::io::sink(),
             &ev("a", Some("root"), "alpha", AgentEventType::RunStarted {}),
             true,
         );
         let d = t.handle(
+            &mut std::io::sink(),
             &ev(
                 "a",
                 Some("root"),
