@@ -883,7 +883,7 @@ impl ResolvedTarget {
                     ..Default::default()
                 };
                 Self {
-                    agent_id: "_adhoc_base".to_string(),
+                    agent_id: distri_types::invocation::ADHOC_BASE_AGENT.to_string(),
                     definition_overrides: Some(overrides),
                 }
             }
