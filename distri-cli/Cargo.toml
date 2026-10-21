@@ -44,6 +44,8 @@ semver = "1.0"
 hex = "0.4"
 open = "5"
 base64 = "0.22"
+thiserror = "1"
+which = "8"
 
 [dev-dependencies]
 tempfile = "3"
@@ -53,6 +55,10 @@ distri-formatter = { path = "../distri-formatter", version = "0.4.6" }
 version = "0.10"
 features = ["vendored"]
 
+
+[lib]
+name = "distri_cli"
+path = "src/lib.rs"
 
 [[bin]]
 name = "distri"

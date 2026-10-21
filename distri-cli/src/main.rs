@@ -30,7 +30,7 @@ use commands::{
 use config::resolve_workspace;
 use distri::run::{build_run_params, resolve_agent_name, RunOptions};
 use threads::resolve_resume_arg;
-use tools::{register_all, register_approval_handler};
+use tools::{register_all, register_approval_handler, register_script_tools};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -301,6 +301,20 @@ enum ToolsCommands {
         filter: Option<String>,
         #[clap(long, help = "Agent to inspect for local tools (optional)")]
         agent: Option<String>,
+    },
+    /// Scaffold a script tool at `.distri/tools/<name>.ts` (or `~/.distri/tools/` with --user)
+    New {
+        #[clap(help = "Tool name")]
+        name: String,
+        #[clap(long, help = "Create it in ~/.distri/tools/ instead of the project")]
+        user: bool,
+    },
+    /// Run a script tool locally, without an agent
+    Test {
+        #[clap(help = "Tool name (or script file name)")]
+        name: String,
+        #[clap(help = "Tool input as JSON (default empty object)")]
+        input: Option<String>,
     },
     /// Call a tool directly via the server
     Invoke {
@@ -759,7 +773,11 @@ async fn main() -> Result<()> {
             // external tool calls the server delegates back — there is no
             // remote/sandbox mode where a container owns tool execution
             // instead.
-            let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
+            let mut tool_defs = register_all(&app.registry(), &agent_name, &workspace);
+            // Script tools: `.distri/tools/*.ts` and `~/.distri/tools/*.ts`.
+            tool_defs.extend(
+                register_script_tools(&app.registry(), &workspace, cli.config.clone()).await,
+            );
             app.add_tool_definitions(tool_defs);
 
             // Build params via the shared entry point. We split build +
@@ -866,19 +884,89 @@ async fn main() -> Result<()> {
             agent: None,
         }) {
             ToolsCommands::List { filter, agent } => {
+                let term = filter.map(|t| t.to_lowercase());
+                let matches = |name: &str, description: &str| {
+                    term.as_ref().is_none_or(|t| {
+                        name.to_lowercase().contains(t) || description.to_lowercase().contains(t)
+                    })
+                };
+
+                // Local script tools first: they need no server.
+                let host = tools::script_tool_host(&workspace, cli.config.clone())?;
+                let discovery = host.discover(&tools::builtin_tool_names()).await;
+                tools::print_discovery_problems(&discovery);
+                let scripts: Vec<_> = discovery
+                    .tools
+                    .iter()
+                    .filter(|t| matches(t.name(), &t.export.description))
+                    .collect();
+                if !scripts.is_empty() {
+                    println!("Script tools:");
+                    for t in scripts {
+                        println!(
+                            "  {} - {} [{}: {}]",
+                            t.name(),
+                            t.export.description,
+                            t.scope,
+                            t.path.display()
+                        );
+                    }
+                    println!();
+                }
+
                 if let Some(agent_id) = agent {
                     app.fetch_agent_card(&agent_id).await?;
                 }
                 let mut tools = app.list_tools().await?;
-                if let Some(term) = filter {
-                    let term = term.to_lowercase();
-                    tools.retain(|t| {
-                        t.tool_name.to_lowercase().contains(&term)
-                            || t.description.to_lowercase().contains(&term)
-                    });
-                }
+                tools.retain(|t| matches(&t.tool_name, &t.description));
                 for tool in tools {
                     println!("{} - {}", tool.tool_name, tool.description);
+                }
+            }
+            ToolsCommands::New { name, user } => {
+                let host = tools::script_tool_host(&workspace, cli.config.clone())?;
+                let dir = if user {
+                    host.config()
+                        .user_tools_dir
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("no user tools directory"))?
+                } else {
+                    host.config().project_tools_dir()
+                };
+                let path = distri_cli::script_tools::scaffold(&dir, &name)?;
+                println!("Created {}", path.display());
+                println!(
+                    "Try it: distri tools test {} '{{\"input\": \"hello\"}}'",
+                    name
+                );
+            }
+            ToolsCommands::Test { name, input } => {
+                let input: serde_json::Value = match input {
+                    Some(raw) => serde_json::from_str(&raw)
+                        .with_context(|| format!("input is not JSON: {raw}"))?,
+                    None => serde_json::Value::Object(Default::default()),
+                };
+                let host = tools::script_tool_host(&workspace, cli.config.clone())?;
+                let discovery = host.discover(&tools::builtin_tool_names()).await;
+                tools::print_discovery_problems(&discovery);
+                let Some(tool) = discovery.find(&name) else {
+                    anyhow::bail!(
+                        "no script tool '{}' in {} or ~/.distri/tools",
+                        name,
+                        host.config().project_tools_dir().display()
+                    );
+                };
+                match host.call(tool, &input).await {
+                    Ok(out) => {
+                        if !out.stderr.trim().is_empty() {
+                            eprintln!("{}", out.stderr.trim_end());
+                        }
+                        println!("{}", serde_json::to_string_pretty(&out.value)?);
+                    }
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        std::process::exit(1);
+                    }
                 }
             }
             ToolsCommands::Invoke {
