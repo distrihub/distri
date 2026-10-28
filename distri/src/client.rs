@@ -2407,9 +2407,7 @@ impl Distri {
 
     /// List all available models as a flat list — one entry per model, each
     /// denormalized with its provider's id/label and configuration status.
-    pub async fn list_models(
-        &self,
-    ) -> Result<Vec<distri_types::ModelWithProvider>, ClientError> {
+    pub async fn list_models(&self) -> Result<Vec<distri_types::ModelWithProvider>, ClientError> {
         let url = format!("{}/models", self.base_url);
         let resp = self.http.get(&url).send().await?;
         if resp.status().is_success() {
@@ -2864,6 +2862,60 @@ impl Distri {
         }
         let response: TracesResponse = resp.json().await?;
         Ok(response.traces)
+    }
+
+    /// Follow an agent's calls as they happen (`GET /agents/{name}/live`, a
+    /// server-sent event stream). Recent events come first. `on_event` gets each
+    /// event's JSON; return `false` to stop.
+    pub async fn watch_agent_live<F>(
+        &self,
+        agent: &str,
+        replay: usize,
+        mut on_event: F,
+    ) -> Result<(), ClientError>
+    where
+        F: FnMut(serde_json::Value) -> bool,
+    {
+        use futures_util::StreamExt;
+        let url = format!(
+            "{}/agents/{}/live?replay={}",
+            self.base_url,
+            urlencoding::encode(agent),
+            replay
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .header("accept", "text/event-stream")
+            // A watch stays open; don't let the client's request timeout end it.
+            .timeout(std::time::Duration::from_secs(60 * 60 * 24))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "live feed for '{agent}': {status} {text}"
+            )));
+        }
+        let mut stream = resp.bytes_stream();
+        let mut buf = String::new();
+        while let Some(chunk) = stream.next().await {
+            buf.push_str(&String::from_utf8_lossy(&chunk?));
+            while let Some(end) = buf.find("\n\n") {
+                let frame: String = buf.drain(..end + 2).collect();
+                for line in frame.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if let Ok(value) = serde_json::from_str(data) {
+                            if !on_event(value) {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn get_spans(
