@@ -382,7 +382,11 @@ impl A2AService {
         // Step 2: Parse params.
         let mut params: MessageSendParams = serde_json::from_value(req.params)
             .map_err(|e| AgentError::Validation(format!("Invalid params: {}", e)))?;
-        ensure_context_id(&mut params);
+        // The executor context already names the conversation's thread (a
+        // fresh one for a missing or blank contextId). Thread init and the run
+        // must use that one id; minting another here split a chat's first
+        // message into two threads.
+        params.message.context_id = Some(executor_context.thread_id.clone());
 
         // Step 3: Validate provider secrets BEFORE anything else so errors
         // run in the caller's task-local context (user/workspace — needed

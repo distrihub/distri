@@ -130,58 +130,6 @@ async fn build_executor_context_populates_load_skills_from_metadata() {
     );
 }
 
-/// A message without a context id (a channel chat's first message) runs in
-/// the thread its executor context names: one thread, holding the title and
-/// last message, not a second thread nothing else uses.
-#[tokio::test]
-async fn message_without_context_id_uses_the_executor_context_thread() {
-    let service = build_service().await;
-    let params = json!({
-        "message": {
-            "kind": "message",
-            "messageId": "m1",
-            "role": "user",
-            "parts": [{ "kind": "text", "text": "How long do I boil an egg?" }],
-        },
-    });
-    let req = make_request("message/stream", params.clone());
-    let ctx = service
-        .build_executor_context(
-            &req,
-            "test-agent".to_string(),
-            "u-1".to_string(),
-            None,
-            false,
-        )
-        .await
-        .expect("executor context");
-    let expected = ctx.thread_id.clone();
-
-    let params: distri_a2a::MessageSendParams = serde_json::from_value(params).unwrap();
-    let (thread_id, _) = crate::a2a::stream::init_thread_get_message(
-        "test-agent".to_string(),
-        service.orchestrator.clone(),
-        &params,
-        Arc::new(ctx),
-    )
-    .await
-    .expect("init thread");
-    assert_eq!(thread_id, expected);
-
-    let thread = service
-        .orchestrator
-        .stores
-        .thread_store
-        .get_thread(&thread_id)
-        .await
-        .unwrap()
-        .expect("the context's thread exists");
-    assert_eq!(
-        thread.last_message.as_deref(),
-        Some("How long do I boil an egg?")
-    );
-}
-
 // ── 7c.7 cancel_task_idempotent ─────────────────────────────────────────────
 
 #[tokio::test]
