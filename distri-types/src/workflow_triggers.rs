@@ -40,6 +40,10 @@ pub enum WorkflowTrigger {
         /// Default input passed to the workflow on each scheduled run.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         input: Option<serde_json::Value>,
+        /// Where the run's `Reply` steps are delivered. `None` keeps the
+        /// output in the run record only.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deliver_to: Option<ScheduleDelivery>,
     },
 
     /// A channel slash command. `args` names positional params.
@@ -97,6 +101,15 @@ pub enum WorkflowTrigger {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         input_schema: Option<serde_json::Value>,
     },
+}
+
+/// Where a scheduled run sends what it says. A scheduled run has no inbound
+/// conversation to answer, so a channel target is named up front.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ScheduleDelivery {
+    /// Post every `Reply` step to this conversation (`channels.id`).
+    Channel { channel_id: uuid::Uuid },
 }
 
 /// Verification scheme for a generic webhook trigger. Reuses the
