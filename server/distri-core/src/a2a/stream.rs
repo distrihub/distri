@@ -98,11 +98,21 @@ pub async fn init_thread_get_message(
         "init_thread_get_message: context_id from params"
     );
 
+    // A message without a context id (a chat's first message on a channel)
+    // runs in the thread the executor context already named; creating a
+    // second, unrelated thread here split the conversation in two, with the
+    // title and last message on a thread nothing else used.
+    let thread_id = params
+        .message
+        .context_id
+        .clone()
+        .unwrap_or_else(|| executor_context.thread_id.clone());
+
     // Middleware already set task-local context - no need to extract user_id/workspace_id here
     let thread = executor
         .ensure_thread_exists(
             &agent_id,
-            params.message.context_id.as_deref().map(String::from),
+            Some(thread_id),
             thread_title.as_deref(),
             executor_context
                 .additional_attributes
