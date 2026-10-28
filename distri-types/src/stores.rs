@@ -1197,20 +1197,10 @@ pub enum DefaultModelError {
 }
 
 /// Resolve the server's stored default model into ready-to-use
-/// [`ModelSettings`], including credentials.
-///
-/// [`ServerSettings::to_model_settings`] fills the endpoint; this adds the
-/// key. A `custom_*` provider's key lives under `{PROVIDER_ID}_API_KEY` —
-/// the same lookup [`resolve_provider_test_endpoint`] uses — and is set
-/// *inline* on the provider, because
-/// [`ModelProvider::api_key_secret`](crate::agent::ModelProvider::api_key_secret)
-/// has no per-custom-provider name to fall back to.
-///
-/// A custom provider registered without that secret is treated as an
-/// unauthenticated endpoint (empty inline key) rather than borrowing
-/// `OPENAI_API_KEY`: sending the workspace's OpenAI key to an arbitrary
-/// third-party `base_url` is not a safe default. Built-in providers are
-/// left alone — their key still resolves through the secret store.
+/// [`ModelSettings`], including a custom provider's key (see
+/// [`fill_custom_provider_key`]). [`ServerSettings::to_model_settings`]
+/// fills the endpoint. Built-in providers are left alone — their key still
+/// resolves through the secret store.
 pub async fn resolve_default_model_settings(
     settings: &ServerSettings,
     secret_store: &dyn SecretStore,
@@ -1218,12 +1208,31 @@ pub async fn resolve_default_model_settings(
     let Some(mut ms) = settings.to_model_settings()? else {
         return Ok(None);
     };
-    let Some((provider_str, _)) = settings
-        .default_model
-        .as_deref()
-        .and_then(|dm| dm.split_once('/'))
-    else {
-        return Ok(Some(ms));
+    if let Some(dm) = settings.default_model.as_deref() {
+        fill_custom_provider_key(&mut ms, dm, secret_store).await?;
+    }
+    Ok(Some(ms))
+}
+
+/// Set a `custom_*` (OpenAI-compatible) default model's API key *inline*
+/// from the provider's own `{PROVIDER_ID}_API_KEY` secret — the same lookup
+/// [`resolve_provider_test_endpoint`] uses.
+/// [`ModelProvider::api_key_secret`](crate::agent::ModelProvider::api_key_secret)
+/// has no per-custom-provider name, so without this the key falls back to
+/// `OPENAI_API_KEY`.
+///
+/// A custom provider registered without that secret is treated as an
+/// unauthenticated endpoint (empty inline key) rather than borrowing
+/// `OPENAI_API_KEY`: sending the workspace's OpenAI key to an arbitrary
+/// third-party `base_url` is not a safe default. Other providers, and a
+/// key already set, are left alone. `default_model` is `provider/model`.
+pub async fn fill_custom_provider_key(
+    ms: &mut crate::agent::ModelSettings,
+    default_model: &str,
+    secret_store: &dyn SecretStore,
+) -> Result<(), DefaultModelError> {
+    let Some((provider_str, _)) = default_model.split_once('/') else {
+        return Ok(());
     };
     if let crate::agent::ModelProvider::OpenAICompatible {
         api_key: api_key @ None,
@@ -1247,7 +1256,7 @@ pub async fn resolve_default_model_settings(
         }
         *api_key = Some(stored.map(|s| s.value).unwrap_or_default());
     }
-    Ok(Some(ms))
+    Ok(())
 }
 
 impl ServerSettings {
@@ -2264,6 +2273,24 @@ mod tests {
             ref other => panic!("expected OpenAICompatible, got {other:?}"),
         }
         assert!(ms.inner.provider.required_secret_keys().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fill_custom_provider_key_leaves_built_in_providers_alone() {
+        let mut ms = crate::agent::ModelSettings::from_provider_model_str("openai/gpt-4.1-mini")
+            .unwrap()
+            .expect("model settings");
+        fill_custom_provider_key(
+            &mut ms,
+            "openai/gpt-4.1-mini",
+            &secrets(&[("OPENAI_API_KEY", "sk-oai")]),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            ms.inner.provider,
+            crate::agent::ModelProvider::OpenAI {}
+        ));
     }
 
     #[tokio::test]
