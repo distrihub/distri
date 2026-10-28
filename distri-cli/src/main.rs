@@ -11,6 +11,7 @@ mod commands;
 mod config;
 mod credentials;
 mod input;
+mod integrate;
 mod launcher;
 mod logging;
 mod login;
@@ -200,6 +201,12 @@ enum Commands {
     Threads {
         #[clap(subcommand)]
         command: Option<ThreadsCommands>,
+    },
+
+    /// Help while you wire an agent into your app (watch its calls live)
+    Integrate {
+        #[clap(subcommand)]
+        command: integrate::IntegrateCommands,
     },
 
     /// Trace inspection commands (defaults to list)
@@ -956,6 +963,9 @@ async fn main() -> Result<()> {
                 tags: vec![],
             });
             traces::handle_traces_command(&client, command).await?;
+        }
+        Commands::Integrate { command } => {
+            integrate::handle(&client, command).await?;
         }
         Commands::Optimize { command } => {
             traces::handle_optimize_command(&client, command).await?;
