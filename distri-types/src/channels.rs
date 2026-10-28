@@ -297,10 +297,22 @@ pub struct Channel {
     /// workspace's agent; cleared by `/switch` and on deactivate.
     #[serde(default)]
     pub selected_agent_id: Option<String>,
+    /// The last reply the platform refused for this conversation (chat not
+    /// found, bot blocked, …). Cleared by the next delivered reply.
+    #[serde(default)]
+    pub delivery_failure: Option<DeliveryFailure>,
     #[serde(default)]
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default)]
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// A reply the platform refused to deliver to a conversation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DeliveryFailure {
+    /// The platform's error, e.g. `Bad Request: chat not found`.
+    pub error: String,
+    pub at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Payload for creating a new channel row.
