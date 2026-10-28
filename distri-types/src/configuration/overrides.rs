@@ -1,4 +1,4 @@
-use crate::agent::{RuntimeMode, ToolsConfig};
+use crate::agent::ToolsConfig;
 use crate::dynamic_tool::DynamicToolFactory;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -30,15 +30,6 @@ pub struct DefinitionOverrides {
 
     /// Override browser usage flag
     pub use_browser: Option<bool>,
-
-    /// Override the agent's runtime constraint. When `Some(...)`, replaces
-    /// `StandardDefinition.runtime` wholesale. The `--remote` CLI flag is
-    /// sugar for `Some(vec![RuntimeMode::Cloud])` — when the caller's
-    /// current runtime doesn't match, the orchestrator routes via the
-    /// configured `RemoteTaskRunner`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<Vec<String>>)]
-    pub runtime: Option<Vec<RuntimeMode>>,
 
     /// Override the agent's tools configuration (used for ad-hoc agents).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -99,23 +90,6 @@ impl DefinitionOverrides {
 
     pub fn with_browser_enabled(mut self, enabled: bool) -> Self {
         self.use_browser = Some(enabled);
-        self
-    }
-
-    pub fn with_runtime(mut self, runtime: Vec<RuntimeMode>) -> Self {
-        self.runtime = Some(runtime);
-        self
-    }
-
-    /// Sugar for the `--remote` CLI flag: forces runtime = [Cloud] so the
-    /// orchestrator routes the invocation through a cloud-providing
-    /// RemoteTaskRunner.
-    pub fn with_remote(mut self, remote: bool) -> Self {
-        if remote {
-            self.runtime = Some(vec![RuntimeMode::Cloud]);
-        } else {
-            self.runtime = None;
-        }
         self
     }
 

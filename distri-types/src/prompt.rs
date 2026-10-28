@@ -496,10 +496,30 @@ impl PromptRegistry {
         template: &str,
         template_data: &TemplateData<'a>,
     ) -> Result<String, AgentError> {
+        self.render_template_with_partials(template, template_data, &HashMap::new())
+            .await
+    }
+
+    /// Render with extra partials that apply to this render only, on top of
+    /// the registry's own. Workspace partials loaded from the database go
+    /// here rather than into the shared registry, so one workspace's
+    /// `{{> name}}` never leaks into another's and an edited partial is
+    /// picked up on the next render.
+    pub async fn render_template_with_partials<'a>(
+        &self,
+        template: &str,
+        template_data: &TemplateData<'a>,
+        extra_partials: &HashMap<String, String>,
+    ) -> Result<String, AgentError> {
         let mut handlebars = Handlebars::new();
         handlebars.set_strict_mode(true);
 
         self.configure_handlebars(&mut handlebars).await?;
+        for (name, content) in extra_partials {
+            handlebars.register_partial(name, content).map_err(|e| {
+                AgentError::Planning(format!("Failed to register partial '{}': {}", name, e))
+            })?;
+        }
         let rendered = handlebars
             .render_template(template, &template_data)
             .map_err(|e| AgentError::Planning(format!("Failed to render template: {}", e)))?;

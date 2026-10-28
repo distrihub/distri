@@ -53,6 +53,9 @@ pub struct ServiceRequest {
     pub executor_context: Option<ExecutorContext>,
     pub verbose: bool,
     pub workspace_model_settings: Option<distri_types::ModelSettings>,
+    /// Who sent the request, as established by the server (auth middleware
+    /// or the channel gateway). `None` for callers that predate it.
+    pub caller: Option<distri_types::RequestCaller>,
 }
 
 /// Prepared state for any agent invocation — streaming OR send.
@@ -342,6 +345,7 @@ impl A2AService {
             executor_context,
             verbose,
             workspace_model_settings,
+            caller,
         } = input;
 
         let req_id = req.id.clone();
@@ -354,6 +358,10 @@ impl A2AService {
                     .await?
             }
         };
+        // Step 1b: the agent's environment decides the runtime; the caller's
+        // claim is only checked. Then let the host see (and maybe refuse) it.
+        self.apply_agent_environment(&mut executor_context, caller.as_ref())
+            .await?;
         // Injected settings (cloud middleware) win; otherwise fall back to the
         // server's own stored default model.
         if let Some(ms) = self
@@ -372,8 +380,9 @@ impl A2AService {
             .and_then(|s| uuid::Uuid::parse_str(s).ok());
 
         // Step 2: Parse params.
-        let params: MessageSendParams = serde_json::from_value(req.params)
+        let mut params: MessageSendParams = serde_json::from_value(req.params)
             .map_err(|e| AgentError::Validation(format!("Invalid params: {}", e)))?;
+        ensure_context_id(&mut params);
 
         // Step 3: Validate provider secrets BEFORE anything else so errors
         // run in the caller's task-local context (user/workspace — needed
@@ -607,6 +616,54 @@ impl A2AService {
 
     // ── helpers ────────────────────────────────────────────────────────
 
+    /// Resolve the request's runtime from the agent's environment and run
+    /// the orchestrator's request observer, if any. Workflow agents have no
+    /// environment and pass through unchanged.
+    async fn apply_agent_environment(
+        &self,
+        executor_context: &mut ExecutorContext,
+        caller: Option<&distri_types::RequestCaller>,
+    ) -> Result<(), AgentError> {
+        let Some(distri_types::configuration::AgentConfig::StandardAgent(def)) = self
+            .orchestrator
+            .get_agent(&executor_context.agent_id)
+            .await
+        else {
+            return Ok(());
+        };
+        let claimed = executor_context.runtime_mode.clone();
+        let runtime = def
+            .resolve_request_runtime(&claimed)
+            .map_err(AgentError::Validation)?;
+        executor_context.runtime_mode = runtime.clone();
+
+        if let Some(observer) = &self.orchestrator.request_observer {
+            let external_tools: Vec<distri_types::ToolDefinition> =
+                match &executor_context.dynamic_tools {
+                    Some(tools) => tools
+                        .read()
+                        .await
+                        .iter()
+                        .map(|t| t.get_tool_definition())
+                        .collect(),
+                    None => Vec::new(),
+                };
+            observer
+                .on_request(distri_types::AgentRequest {
+                    agent: &def,
+                    user_id: &executor_context.user_id,
+                    workspace_id: executor_context.workspace_id.as_deref(),
+                    caller,
+                    claimed_runtime: &claimed,
+                    runtime: &runtime,
+                    external_tools: &external_tools,
+                })
+                .await
+                .map_err(AgentError::Validation)?;
+        }
+        Ok(())
+    }
+
     /// Build an `ExecutorContext` from a JSON-RPC `message/*` request.
     /// Exposed publicly so the legacy `A2AHandler::get_executor_context` entry
     /// point (used by the gateway) can continue to work unchanged.
@@ -621,8 +678,9 @@ impl A2AService {
         let _req_id = req.id.clone();
         let params = req.params.clone();
 
-        let params: MessageSendParams = serde_json::from_value(params)
+        let mut params: MessageSendParams = serde_json::from_value(params)
             .map_err(|e| AgentError::Validation(format!("Invalid params: {}", e)))?;
+        ensure_context_id(&mut params);
 
         // Validate task_id for tool result messages
         if req.method == "message/stream" || req.method == "message/send" {
@@ -740,6 +798,20 @@ impl A2AService {
     }
 }
 
+/// `contextId` names the conversation's thread. A missing or blank one starts
+/// a new thread: a blank id would otherwise be one thread shared by every
+/// caller that sends it, each reading the others' messages as history.
+fn ensure_context_id(params: &mut MessageSendParams) {
+    let blank = params
+        .message
+        .context_id
+        .as_deref()
+        .is_none_or(|id| id.trim().is_empty());
+    if blank {
+        params.message.context_id = Some(Uuid::new_v4().to_string());
+    }
+}
+
 /// Maps an `AgentError` onto the JSON-RPC error space. Kept as a module-level
 /// fn so legacy `A2AHandler` re-exports can forward to it.
 pub fn map_agent_error(e: AgentError) -> JsonRpcError {
@@ -774,4 +846,44 @@ pub async fn build_final_message(
         &executor_context.thread_id,
         executor_context.parent_task_id.as_deref(),
     ))
+}
+
+#[cfg(test)]
+mod context_id_tests {
+    use super::ensure_context_id;
+    use distri_a2a::MessageSendParams;
+
+    fn params(context_id: Option<&str>) -> MessageSendParams {
+        serde_json::from_value(serde_json::json!({
+            "message": {
+                "kind": "message",
+                "messageId": "m1",
+                "role": "user",
+                "parts": [{ "kind": "text", "text": "hi" }],
+                "contextId": context_id,
+            }
+        }))
+        .expect("valid params")
+    }
+
+    #[test]
+    fn blank_context_ids_get_their_own_thread() {
+        let mut a = params(Some(""));
+        let mut b = params(Some("  "));
+        let mut c = params(None);
+        ensure_context_id(&mut a);
+        ensure_context_id(&mut b);
+        ensure_context_id(&mut c);
+        let ids = [a, b, c].map(|p| p.message.context_id.expect("set"));
+        assert!(ids.iter().all(|id| !id.trim().is_empty()));
+        assert_ne!(ids[0], ids[1]);
+        assert_ne!(ids[0], ids[2]);
+    }
+
+    #[test]
+    fn given_context_id_is_kept() {
+        let mut p = params(Some("thread-1"));
+        ensure_context_id(&mut p);
+        assert_eq!(p.message.context_id.as_deref(), Some("thread-1"));
+    }
 }
