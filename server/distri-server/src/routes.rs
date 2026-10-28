@@ -2045,7 +2045,10 @@ async fn delete_agent(
             if let (Some(registry), Some(name)) =
                 (executor.workflow_trigger_registry.as_ref(), name)
             {
-                if let Err(err) = registry.unregister(&name).await {
+                // Bindings are per workspace; the caller's is the agent's.
+                let workspace_id =
+                    distri_types::context::current_workspace_id().map(|w| w.to_string());
+                if let Err(err) = registry.unregister(&name, workspace_id.as_deref()).await {
                     tracing::warn!(error = %err, agent = %name, "unregister workflow triggers");
                 }
             }
