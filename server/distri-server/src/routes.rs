@@ -2031,8 +2031,29 @@ async fn delete_agent(
     path: web::Path<String>,
 ) -> HttpResponse {
     let id = path.into_inner();
+    // Triggers are indexed by agent name; read it before the row goes.
+    let name = executor
+        .stores
+        .agent_store
+        .get(&id)
+        .await
+        .map(|config| config.get_name().to_string());
     match executor.stores.agent_store.delete(&id).await {
-        Ok(()) => HttpResponse::NoContent().finish(),
+        Ok(()) => {
+            // A deleted workflow agent's schedules, webhooks and tools stop
+            // firing with it.
+            if let (Some(registry), Some(name)) =
+                (executor.workflow_trigger_registry.as_ref(), name)
+            {
+                // Bindings are per workspace; the caller's is the agent's.
+                let workspace_id =
+                    distri_types::context::current_workspace_id().map(|w| w.to_string());
+                if let Err(err) = registry.unregister(&name, workspace_id.as_deref()).await {
+                    tracing::warn!(error = %err, agent = %name, "unregister workflow triggers");
+                }
+            }
+            HttpResponse::NoContent().finish()
+        }
         Err(err) => {
             tracing::warn!(error = ?err, "Failed to delete agent");
             HttpResponse::NotFound().json(json!({ "error": format!("Agent not found: {}", id) }))
@@ -2213,6 +2234,69 @@ mod tests {
             .unwrap();
 
         Arc::new(orchestrator)
+    }
+
+    #[actix_rt::test]
+    async fn delete_agent_unregisters_its_triggers() {
+        use distri_types::workflow_triggers::WorkflowTrigger;
+        use distri_workflow::{
+            EntryPoint, InMemoryWorkflowTriggerRegistry, WorkflowDefinition, WorkflowStep,
+            WorkflowTriggerRegistry,
+        };
+
+        let temp_dir = tempdir().unwrap();
+        let registry = Arc::new(InMemoryWorkflowTriggerRegistry::new());
+        let mut executor = Arc::try_unwrap(build_executor(temp_dir.path()).await)
+            .unwrap_or_else(|_| panic!("executor is not shared yet"));
+        executor.workflow_trigger_registry = Some(registry.clone());
+        let executor = Arc::new(executor);
+
+        let definition = StandardDefinition {
+            name: "morning_brief_schedule".to_string(),
+            description: "Scheduled".to_string(),
+            instructions: "Do something".to_string(),
+            ..Default::default()
+        };
+        let request = TestRequest::default()
+            .insert_header((header::CONTENT_TYPE, "application/json"))
+            .to_http_request();
+        let created = create_agent(
+            request,
+            web::Bytes::from(serde_json::to_vec(&definition).unwrap()),
+            web::Data::new(executor.clone()),
+        )
+        .await;
+        assert_eq!(created.status(), actix_web::http::StatusCode::OK);
+
+        let workflow = WorkflowDefinition::new(vec![WorkflowStep::checkpoint("s", "S", "ok")])
+            .with_entry_points(vec![EntryPoint {
+                id: "main".into(),
+                label: "Main".into(),
+                description: None,
+                starts_at: "s".into(),
+                preset_results: Default::default(),
+                required_inputs: vec![],
+                triggers: vec![WorkflowTrigger::Schedule {
+                    cron: "0 0 8 * * *".into(),
+                    timezone: None,
+                    enabled: true,
+                    input: None,
+                    deliver_to: None,
+                }],
+            }]);
+        registry
+            .register("morning_brief_schedule", None, &workflow)
+            .await
+            .unwrap();
+        assert_eq!(registry.list_schedules().await.unwrap().len(), 1);
+
+        let deleted = delete_agent(
+            web::Data::new(executor.clone()),
+            web::Path::from("morning_brief_schedule".to_string()),
+        )
+        .await;
+        assert_eq!(deleted.status(), actix_web::http::StatusCode::NO_CONTENT);
+        assert!(registry.list_schedules().await.unwrap().is_empty());
     }
 
     #[actix_rt::test]

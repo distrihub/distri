@@ -31,12 +31,16 @@ pub struct TriggerBinding {
 }
 
 /// Persist and query the trigger -> (agent_id, entry_point_id) routing.
+///
+/// Bindings belong to an agent **within a workspace**: agent names are
+/// only unique per workspace, so two workspaces can each register an agent
+/// called `daily_report` without touching the other's triggers.
+/// `workspace_id` is `None` for OSS / single-tenant deployments.
 #[async_trait::async_trait]
 pub trait WorkflowTriggerRegistry: Send + Sync {
     /// Register all triggers from an agent's workflow definition.
-    /// Overwrites any previous bindings for this agent (call after
-    /// upsert). `workspace_id` is the tenant the agent belongs to
-    /// (cloud); `None` for OSS.
+    /// Overwrites any previous bindings for this agent in this workspace
+    /// (call after upsert).
     async fn register(
         &self,
         agent_id: &str,
@@ -44,21 +48,30 @@ pub trait WorkflowTriggerRegistry: Send + Sync {
         def: &WorkflowDefinition,
     ) -> anyhow::Result<()>;
 
-    /// Remove all bindings for an agent.
-    async fn unregister(&self, agent_id: &str) -> anyhow::Result<()>;
+    /// Remove all bindings for an agent in a workspace.
+    async fn unregister(&self, agent_id: &str, workspace_id: Option<&str>) -> anyhow::Result<()>;
 
     /// Resolve the binding for a `Webhook { path }` trigger. The
-    /// webhook HTTP route maps `/v1/workflows/webhook/{path}` here.
-    /// First-match wins when multiple tenants declare the same path.
+    /// webhook HTTP route maps `/v1/workflows/webhook/{path}` here; the
+    /// path is the whole address, so it is global. The last agent to
+    /// register a path owns it.
     async fn find_webhook(&self, path: &str) -> anyhow::Result<Option<TriggerBinding>>;
 
     /// Resolve the binding for a `Tool { name }` trigger (workflow
-    /// exposed as an A2A skill).
-    async fn find_tool(&self, tool_name: &str) -> anyhow::Result<Option<TriggerBinding>>;
+    /// exposed as an A2A skill) in a workspace.
+    async fn find_tool(
+        &self,
+        tool_name: &str,
+        workspace_id: Option<&str>,
+    ) -> anyhow::Result<Option<TriggerBinding>>;
 
-    /// All bindings for an `Event { topic }` trigger. Returns every
-    /// subscriber so the event bus can fan-out.
-    async fn find_event(&self, topic: &str) -> anyhow::Result<Vec<TriggerBinding>>;
+    /// All bindings for an `Event { topic }` trigger in a workspace.
+    /// Returns every subscriber so the event bus can fan-out.
+    async fn find_event(
+        &self,
+        topic: &str,
+        workspace_id: Option<&str>,
+    ) -> anyhow::Result<Vec<TriggerBinding>>;
 
     /// All bindings that are `Schedule { … }` triggers. The
     /// scheduler tick walks this list each interval and fires due
@@ -66,12 +79,19 @@ pub trait WorkflowTriggerRegistry: Send + Sync {
     async fn list_schedules(&self) -> anyhow::Result<Vec<TriggerBinding>>;
 }
 
-/// In-memory registry. One `HashMap<agent_id, Vec<TriggerBinding>>`
-/// plus secondary indices for the hot lookups. The Redis impl
-/// follows a similar layout but keys per trigger kind.
+/// The agent a set of bindings belongs to: `(workspace_id, agent_id)`.
+type Owner = (Option<String>, String);
+
+fn owner(agent_id: &str, workspace_id: Option<&str>) -> Owner {
+    (workspace_id.map(str::to_string), agent_id.to_string())
+}
+
+/// In-memory registry: bindings per `(workspace_id, agent_id)`, scanned
+/// for lookups. The Redis impl keeps the same ownership with per-kind
+/// secondary indices.
 #[derive(Default)]
 pub struct InMemoryWorkflowTriggerRegistry {
-    bindings: std::sync::Mutex<HashMap<String, Vec<TriggerBinding>>>,
+    bindings: std::sync::Mutex<HashMap<Owner, Vec<TriggerBinding>>>,
 }
 
 impl InMemoryWorkflowTriggerRegistry {
@@ -112,18 +132,18 @@ impl WorkflowTriggerRegistry for InMemoryWorkflowTriggerRegistry {
             .lock()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         guard.insert(
-            agent_id.to_string(),
+            owner(agent_id, workspace_id),
             Self::collect_bindings(agent_id, workspace_id, def),
         );
         Ok(())
     }
 
-    async fn unregister(&self, agent_id: &str) -> anyhow::Result<()> {
+    async fn unregister(&self, agent_id: &str, workspace_id: Option<&str>) -> anyhow::Result<()> {
         let mut guard = self
             .bindings
             .lock()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        guard.remove(agent_id);
+        guard.remove(&owner(agent_id, workspace_id));
         Ok(())
     }
 
@@ -144,12 +164,20 @@ impl WorkflowTriggerRegistry for InMemoryWorkflowTriggerRegistry {
         Ok(None)
     }
 
-    async fn find_tool(&self, tool_name: &str) -> anyhow::Result<Option<TriggerBinding>> {
+    async fn find_tool(
+        &self,
+        tool_name: &str,
+        workspace_id: Option<&str>,
+    ) -> anyhow::Result<Option<TriggerBinding>> {
         let guard = self
             .bindings
             .lock()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        for entries in guard.values() {
+        let in_workspace = guard
+            .iter()
+            .filter(|((ws, _), _)| ws.as_deref() == workspace_id)
+            .map(|(_, entries)| entries);
+        for entries in in_workspace {
             for binding in entries {
                 if let WorkflowTrigger::Tool { name, .. } = &binding.trigger {
                     if name == tool_name {
@@ -161,13 +189,21 @@ impl WorkflowTriggerRegistry for InMemoryWorkflowTriggerRegistry {
         Ok(None)
     }
 
-    async fn find_event(&self, topic: &str) -> anyhow::Result<Vec<TriggerBinding>> {
+    async fn find_event(
+        &self,
+        topic: &str,
+        workspace_id: Option<&str>,
+    ) -> anyhow::Result<Vec<TriggerBinding>> {
         let guard = self
             .bindings
             .lock()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let mut out = Vec::new();
-        for entries in guard.values() {
+        let in_workspace = guard
+            .iter()
+            .filter(|((ws, _), _)| ws.as_deref() == workspace_id)
+            .map(|(_, entries)| entries);
+        for entries in in_workspace {
             for binding in entries {
                 if let WorkflowTrigger::Event { topic: t, .. } = &binding.trigger {
                     if t == topic {
@@ -244,10 +280,10 @@ mod tests {
         }]);
         reg.register("wf-summarize", None, &def).await.unwrap();
 
-        let hit = reg.find_tool("summarize").await.unwrap().unwrap();
+        let hit = reg.find_tool("summarize", None).await.unwrap().unwrap();
         assert_eq!(hit.agent_id, "wf-summarize");
 
-        assert!(reg.find_tool("nope").await.unwrap().is_none());
+        assert!(reg.find_tool("nope", None).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -264,7 +300,7 @@ mod tests {
         reg.register("agent-a", None, &def_a).await.unwrap();
         reg.register("agent-b", None, &def_b).await.unwrap();
 
-        let hits = reg.find_event("user.signup").await.unwrap();
+        let hits = reg.find_event("user.signup", None).await.unwrap();
         assert_eq!(hits.len(), 2);
     }
 
@@ -277,6 +313,7 @@ mod tests {
                 timezone: None,
                 enabled: true,
                 input: None,
+                deliver_to: None,
             },
             WorkflowTrigger::Manual,
         ]);
@@ -299,7 +336,7 @@ mod tests {
         reg.register("billing", None, &def).await.unwrap();
         assert!(reg.find_webhook("stripe").await.unwrap().is_some());
 
-        reg.unregister("billing").await.unwrap();
+        reg.unregister("billing", None).await.unwrap();
         assert!(reg.find_webhook("stripe").await.unwrap().is_none());
     }
 
@@ -325,5 +362,60 @@ mod tests {
         reg.register("api", None, &def_v2).await.unwrap();
         assert!(reg.find_webhook("v1").await.unwrap().is_none());
         assert!(reg.find_webhook("v2").await.unwrap().is_some());
+    }
+
+    fn nightly() -> WorkflowDefinition {
+        def_with(vec![
+            WorkflowTrigger::Schedule {
+                cron: "0 0 8 * * *".into(),
+                timezone: None,
+                enabled: true,
+                input: None,
+                deliver_to: None,
+            },
+            WorkflowTrigger::Tool {
+                name: "brief".into(),
+                description: "morning brief".into(),
+                input_schema: None,
+            },
+        ])
+    }
+
+    #[tokio::test]
+    async fn same_agent_name_in_two_workspaces_stays_apart() {
+        let reg = InMemoryWorkflowTriggerRegistry::new();
+        reg.register("daily", Some("ws-a"), &nightly())
+            .await
+            .unwrap();
+        reg.register("daily", Some("ws-b"), &nightly())
+            .await
+            .unwrap();
+
+        let mut owners: Vec<_> = reg
+            .list_schedules()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|b| b.workspace_id)
+            .collect();
+        owners.sort();
+        assert_eq!(
+            owners,
+            vec![Some("ws-a".to_string()), Some("ws-b".to_string())]
+        );
+
+        let hit = reg.find_tool("brief", Some("ws-b")).await.unwrap().unwrap();
+        assert_eq!(hit.workspace_id.as_deref(), Some("ws-b"));
+        assert!(reg
+            .find_tool("brief", Some("ws-c"))
+            .await
+            .unwrap()
+            .is_none());
+
+        // Removing one workspace's agent leaves the other's schedule.
+        reg.unregister("daily", Some("ws-a")).await.unwrap();
+        let left = reg.list_schedules().await.unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].workspace_id.as_deref(), Some("ws-b"));
     }
 }
