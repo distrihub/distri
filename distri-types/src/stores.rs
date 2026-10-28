@@ -1225,6 +1225,21 @@ pub async fn resolve_default_model_settings(
     else {
         return Ok(Some(ms));
     };
+    fill_custom_provider_key(&mut ms, provider_str, secret_store).await?;
+    Ok(Some(ms))
+}
+
+/// Set a custom OpenAI-compatible provider's key inline from its own
+/// `{PROVIDER_ID}_API_KEY` secret, or to empty (an unauthenticated endpoint)
+/// when it has none — never `OPENAI_API_KEY`, which
+/// [`ModelSettings::hydrate_creds`](crate::agent::ModelSettings::hydrate_creds)
+/// would otherwise fill in and send to the provider's third-party `base_url`.
+/// Other providers, and a key that is already set, are left alone.
+pub async fn fill_custom_provider_key(
+    ms: &mut crate::agent::ModelSettings,
+    provider_str: &str,
+    secret_store: &dyn SecretStore,
+) -> Result<(), DefaultModelError> {
     if let crate::agent::ModelProvider::OpenAICompatible {
         api_key: api_key @ None,
         ..
@@ -1247,7 +1262,7 @@ pub async fn resolve_default_model_settings(
         }
         *api_key = Some(stored.map(|s| s.value).unwrap_or_default());
     }
-    Ok(Some(ms))
+    Ok(())
 }
 
 impl ServerSettings {
