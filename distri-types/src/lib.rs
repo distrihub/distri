@@ -53,6 +53,9 @@ pub use tool::*;
 pub mod runner;
 pub use runner::*;
 
+pub mod request_observer;
+pub use request_observer::*;
+
 pub mod integration;
 pub use integration::*;
 
