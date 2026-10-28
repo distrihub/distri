@@ -380,8 +380,9 @@ impl A2AService {
             .and_then(|s| uuid::Uuid::parse_str(s).ok());
 
         // Step 2: Parse params.
-        let params: MessageSendParams = serde_json::from_value(req.params)
+        let mut params: MessageSendParams = serde_json::from_value(req.params)
             .map_err(|e| AgentError::Validation(format!("Invalid params: {}", e)))?;
+        ensure_context_id(&mut params);
 
         // Step 3: Validate provider secrets BEFORE anything else so errors
         // run in the caller's task-local context (user/workspace — needed
@@ -677,8 +678,9 @@ impl A2AService {
         let _req_id = req.id.clone();
         let params = req.params.clone();
 
-        let params: MessageSendParams = serde_json::from_value(params)
+        let mut params: MessageSendParams = serde_json::from_value(params)
             .map_err(|e| AgentError::Validation(format!("Invalid params: {}", e)))?;
+        ensure_context_id(&mut params);
 
         // Validate task_id for tool result messages
         if req.method == "message/stream" || req.method == "message/send" {
@@ -796,6 +798,20 @@ impl A2AService {
     }
 }
 
+/// `contextId` names the conversation's thread. A missing or blank one starts
+/// a new thread: a blank id would otherwise be one thread shared by every
+/// caller that sends it, each reading the others' messages as history.
+fn ensure_context_id(params: &mut MessageSendParams) {
+    let blank = params
+        .message
+        .context_id
+        .as_deref()
+        .is_none_or(|id| id.trim().is_empty());
+    if blank {
+        params.message.context_id = Some(Uuid::new_v4().to_string());
+    }
+}
+
 /// Maps an `AgentError` onto the JSON-RPC error space. Kept as a module-level
 /// fn so legacy `A2AHandler` re-exports can forward to it.
 pub fn map_agent_error(e: AgentError) -> JsonRpcError {
@@ -830,4 +846,44 @@ pub async fn build_final_message(
         &executor_context.thread_id,
         executor_context.parent_task_id.as_deref(),
     ))
+}
+
+#[cfg(test)]
+mod context_id_tests {
+    use super::ensure_context_id;
+    use distri_a2a::MessageSendParams;
+
+    fn params(context_id: Option<&str>) -> MessageSendParams {
+        serde_json::from_value(serde_json::json!({
+            "message": {
+                "kind": "message",
+                "messageId": "m1",
+                "role": "user",
+                "parts": [{ "kind": "text", "text": "hi" }],
+                "contextId": context_id,
+            }
+        }))
+        .expect("valid params")
+    }
+
+    #[test]
+    fn blank_context_ids_get_their_own_thread() {
+        let mut a = params(Some(""));
+        let mut b = params(Some("  "));
+        let mut c = params(None);
+        ensure_context_id(&mut a);
+        ensure_context_id(&mut b);
+        ensure_context_id(&mut c);
+        let ids = [a, b, c].map(|p| p.message.context_id.expect("set"));
+        assert!(ids.iter().all(|id| !id.trim().is_empty()));
+        assert_ne!(ids[0], ids[1]);
+        assert_ne!(ids[0], ids[2]);
+    }
+
+    #[test]
+    fn given_context_id_is_kept() {
+        let mut p = params(Some("thread-1"));
+        ensure_context_id(&mut p);
+        assert_eq!(p.message.context_id.as_deref(), Some("thread-1"));
+    }
 }
