@@ -331,7 +331,11 @@ pub(crate) async fn execute_step(
             let result = orchestrator
                 .execute_stream(agent_id, sub_message, sub_ctx, None)
                 .await;
-            let _ = drain.await;
+            // The sub-agent's events are discarded. Stop the drain instead of
+            // waiting for every sender to drop: something spawned by the run
+            // can keep a context clone (and its sender) alive, which used to
+            // park the workflow here forever.
+            drain.abort();
 
             match result {
                 Ok(invoke_result) => {
