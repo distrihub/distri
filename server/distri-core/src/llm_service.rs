@@ -135,6 +135,17 @@ impl LlmExecuteService {
             None
         };
 
+        // The direct LLM path takes the caller's model; hold it to the same
+        // policy as an agent run.
+        if let (Some(policy), Some(ms)) = (self.orchestrator.model_policy.as_ref(), &model_settings)
+        {
+            let qualified = format!("{}/{}", ms.inner.provider.provider_id(), ms.model);
+            policy
+                .check_model(context.workspace_id.as_deref(), &qualified)
+                .await
+                .map_err(AgentError::InvalidConfiguration)?;
+        }
+
         // Step 5: Create LLM executor
         let model_label = model_settings
             .as_ref()
