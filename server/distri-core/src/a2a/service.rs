@@ -388,6 +388,20 @@ impl A2AService {
         // message into two threads.
         params.message.context_id = Some(executor_context.thread_id.clone());
 
+        // Step 2b: the model policy sees the agent's final model (its own pin
+        // merged over the workspace default) before secrets are checked, so a
+        // disallowed model is refused as such rather than as a missing key.
+        if let Some(mut agent_config) = self.orchestrator.get_agent(&agent_id).await {
+            crate::agent::AgentOrchestrator::apply_agent_overrides(
+                &mut agent_config,
+                None,
+                &executor_context.default_model_settings,
+            );
+            self.orchestrator
+                .enforce_model_policy(&agent_config, executor_context.workspace_id.as_deref())
+                .await?;
+        }
+
         // Step 3: Validate provider secrets BEFORE anything else so errors
         // run in the caller's task-local context (user/workspace — needed
         // for TenantSecretStore).
