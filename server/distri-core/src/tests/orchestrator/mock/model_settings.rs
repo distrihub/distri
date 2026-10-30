@@ -336,3 +336,63 @@ async fn test_stored_default_model_naming_an_unregistered_provider_is_named_erro
     let msg = err.to_string();
     assert!(msg.contains("custom_orange"), "message was: {msg}");
 }
+
+// ── Model policy ───────────────────────────────────────────────────────────
+
+struct AllowOnly(&'static str);
+
+#[async_trait::async_trait]
+impl distri_types::ModelPolicy for AllowOnly {
+    async fn check_model(&self, _ws: Option<&str>, model: &str) -> Result<(), String> {
+        if model == self.0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "{}: {model} is not allowed",
+                distri_types::MODEL_NOT_ALLOWED
+            ))
+        }
+    }
+}
+
+fn pinned_agent(model: &str) -> AgentConfig {
+    let md = format!(
+        "---\nname = \"pinned\"\ndescription = \"d\"\ninstructions = \"i\"\nmax_iterations = 1\n[model_settings]\nmodel = \"{model}\"\nprovider = {{ name = \"openai\" }}\n---\n"
+    );
+    let def = futures::executor::block_on(parse_agent_markdown_content(&md)).unwrap();
+    AgentConfig::StandardAgent(def)
+}
+
+#[tokio::test]
+async fn model_policy_refuses_an_agent_pinned_model() {
+    let orchestrator = AgentOrchestratorBuilder::default()
+        .with_store_config(test_store_config())
+        .with_model_policy(Arc::new(AllowOnly("openai/gpt-4.1-mini")))
+        .build()
+        .await
+        .unwrap();
+
+    let err = orchestrator
+        .enforce_model_policy(&pinned_agent("gpt-5"), Some("ws"))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("model_not_allowed"), "{err}");
+
+    orchestrator
+        .enforce_model_policy(&pinned_agent("gpt-4.1-mini"), Some("ws"))
+        .await
+        .expect("an allowed model passes");
+}
+
+#[tokio::test]
+async fn no_model_policy_means_no_restriction() {
+    let orchestrator = AgentOrchestratorBuilder::default()
+        .with_store_config(test_store_config())
+        .build()
+        .await
+        .unwrap();
+    orchestrator
+        .enforce_model_policy(&pinned_agent("gpt-5"), None)
+        .await
+        .unwrap();
+}
