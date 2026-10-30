@@ -61,6 +61,9 @@ pub struct AgentOrchestrator {
     /// enforce caller rules and record integration health; `None` in
     /// standalone servers.
     pub request_observer: Option<Arc<dyn distri_types::AgentRequestObserver>>,
+    /// Optional policy that refuses runs whose final model is not allowed
+    /// for the workspace. `None` in standalone servers.
+    pub model_policy: Option<Arc<dyn distri_types::ModelPolicy>>,
     /// Unified runtime for event broadcasting + task coordination.
     /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
     pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
@@ -130,6 +133,7 @@ pub struct AgentOrchestratorBuilder {
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
     remote_task_runner: Option<Arc<dyn distri_types::RemoteTaskRunner>>,
     request_observer: Option<Arc<dyn distri_types::AgentRequestObserver>>,
+    model_policy: Option<Arc<dyn distri_types::ModelPolicy>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
     workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
@@ -246,6 +250,13 @@ impl AgentOrchestratorBuilder {
         observer: Arc<dyn distri_types::AgentRequestObserver>,
     ) -> Self {
         self.request_observer = Some(observer);
+        self
+    }
+
+    /// Attach a [`ModelPolicy`](distri_types::ModelPolicy) that every run's
+    /// final model must pass.
+    pub fn with_model_policy(mut self, policy: Arc<dyn distri_types::ModelPolicy>) -> Self {
+        self.model_policy = Some(policy);
         self
     }
 
@@ -366,6 +377,7 @@ impl AgentOrchestratorBuilder {
             runtime,
             remote_task_runner: self.remote_task_runner,
             request_observer: self.request_observer,
+            model_policy: self.model_policy,
             oauth_handler: self.oauth_handler,
             mcp_pool_provider: self.mcp_pool_provider,
             workflow_store: self.workflow_store,
@@ -1139,6 +1151,8 @@ impl AgentOrchestrator {
             definition_overrides,
             &context.default_model_settings,
         );
+        self.enforce_model_policy(&agent_config, context.workspace_id.as_deref())
+            .await?;
         self.hydrate_agent_model_settings(&mut agent_config).await?;
         Self::validate_agent_model(&agent_config)?;
 
@@ -1184,6 +1198,8 @@ impl AgentOrchestrator {
             definition_overrides,
             &context.default_model_settings,
         );
+        self.enforce_model_policy(&agent_config, context.workspace_id.as_deref())
+            .await?;
         self.hydrate_agent_model_settings(&mut agent_config).await?;
 
         // Runtime-constraint check. Single source of truth lives in
@@ -1809,6 +1825,35 @@ impl AgentOrchestrator {
     /// from the workspace default, an agent's `[model_settings]` pin,
     /// or a runtime override — goes through identical secret
     /// resolution.
+    /// Refuse the run when the model policy rejects the agent's final model
+    /// or its analysis model. Runs after [`apply_agent_overrides`], so an
+    /// agent file that pins a model the workspace has not allowed is caught
+    /// here, not only the workspace default.
+    pub async fn enforce_model_policy(
+        &self,
+        agent_config: &distri_types::configuration::AgentConfig,
+        workspace_id: Option<&str>,
+    ) -> Result<(), AgentError> {
+        let Some(policy) = self.model_policy.as_ref() else {
+            return Ok(());
+        };
+        let distri_types::configuration::AgentConfig::StandardAgent(def) = agent_config else {
+            return Ok(());
+        };
+        for ms in def
+            .model_settings
+            .iter()
+            .chain(def.analysis_model_settings.iter())
+        {
+            let qualified = format!("{}/{}", ms.inner.provider.provider_id(), ms.model);
+            policy
+                .check_model(workspace_id, &qualified)
+                .await
+                .map_err(AgentError::InvalidConfiguration)?;
+        }
+        Ok(())
+    }
+
     pub async fn hydrate_agent_model_settings(
         &self,
         agent_config: &mut distri_types::configuration::AgentConfig,

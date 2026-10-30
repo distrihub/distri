@@ -53,6 +53,8 @@ pub use tool::*;
 pub mod runner;
 pub use runner::*;
 
+pub mod model_policy;
+pub use model_policy::{MODEL_NOT_ALLOWED, ModelPolicy};
 pub mod request_observer;
 pub use request_observer::*;
 
