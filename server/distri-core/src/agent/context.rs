@@ -126,6 +126,8 @@ pub struct ExecutorContext {
     /// For a child run: the call that started it, its title and type. Stamped
     /// on every event this context emits.
     pub child: Option<distri_types::ChildRun>,
+    /// How many `invoke` hops separate this run from the root run (root = 0).
+    pub depth: u32,
     /// Outer run_id when this context was spawned by a RemoteAgent.
     /// Set by AgentOrchestrator after looking up the parent run mapping in the broadcaster.
     /// Used by OtelHooks to nest the inner invoke_agent span under the outer one.
@@ -257,6 +259,7 @@ impl Default for ExecutorContext {
             parent_tx: None,
             parent_task_id: None,
             child: None,
+            depth: 0,
             parent_run_id: None,
             dynamic_tools: None,
             deferred_tool_names: Arc::new(RwLock::new(HashSet::new())),
@@ -1161,6 +1164,7 @@ impl ExecutorContext {
             dynamic_tools: self.dynamic_tools.clone(),
             event_tx: self.event_tx.clone(),
             parent_task_id: Some(self.task_id.clone()),
+            depth: self.depth + 1,
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
             env_vars: self.env_vars.clone(),
@@ -1285,6 +1289,7 @@ impl ExecutorContext {
 
         // Create a completely new ExecutorContext instance with copied attributes
         let inner_context = ExecutorContext {
+            depth: self.depth,
             thread_id: self.thread_id.clone(),
             task_id: self.task_id.clone(),
             run_id: self.run_id.clone(), // Keep the same run_id for consistency
