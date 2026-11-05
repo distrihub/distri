@@ -15,7 +15,9 @@ use distri_types::configuration::AgentConfigWithTools;
 use distri_types::configuration::ServerConfig;
 use distri_types::stores::{VoteMessageRequest, VoteType};
 use distri_types::StandardDefinition;
-use distri_types::{ExternalTool, InlineHookResponse, Message, ModelSettings};
+use distri_types::{
+    ExternalTool, InlineHookResponse, Message, ModelSettings, ModelSettingsOverride,
+};
 use futures_util::StreamExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -820,8 +822,9 @@ struct LLmRequest {
     parent_task_id: Option<String>,
     #[serde(default)]
     run_id: Option<String>,
+    /// Leave out `model` to run on the default model with these options on top.
     #[serde(default)]
-    model_settings: Option<ModelSettings>,
+    model_settings: Option<ModelSettingsOverride>,
     #[serde(default)]
     is_sub_task: bool,
     #[serde(default)]
@@ -997,12 +1000,16 @@ async fn llm_execute(
             .or(default_model_settings);
 
     // Merge with request's model_settings if provided
-    let model_settings: Option<ModelSettings> =
-        match (base_model_settings, payload.model_settings.clone()) {
-            (Some(base), Some(override_ms)) => base.merge(&override_ms),
-            (Some(base), None) => Some(base),
-            (None, override_ms) => override_ms,
-        };
+    let model_settings = match &payload.model_settings {
+        Some(request_ms) => request_ms.resolve(base_model_settings.as_ref()),
+        None => base_model_settings,
+    };
+    if model_settings.is_none() {
+        return HttpResponse::BadRequest().json(json!({
+            "error": "No model given and no default model is set for the workspace. \
+                      Set the workspace's default model or name one in model_settings.model.",
+        }));
+    }
 
     let tools = payload
         .tools
