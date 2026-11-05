@@ -155,7 +155,10 @@ impl InvokeAgentInput {
             origin: ChildRun {
                 parent_tool_call_id: Some(parent_tool_call_id.to_string())
                     .filter(|id| !id.is_empty()),
-                title: self.title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
+                title: self
+                    .title
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty()),
                 agent_type: None,
             },
         })
