@@ -714,3 +714,182 @@ async fn child_frames_carry_origin_and_parent_frames_do_not() {
     let from_parent = frames.iter().find(|e| e.task_id == parent.task_id).unwrap();
     assert!(from_parent.child.is_none());
 }
+
+// ── Depth guard ─────────────────────────────────────────────────────────────
+
+/// A run already `MAX_INVOKE_DEPTH` hops below the root may not dispatch
+/// another helper: the call is refused with a message the agent can read,
+/// and no child row is written.
+#[tokio::test]
+async fn invoke_refuses_past_max_depth_and_writes_no_child() {
+    use crate::agent::invoke::MAX_INVOKE_DEPTH;
+
+    let orch = build_orch_with_agent("worker").await;
+    let mut raw = ExecutorContext::default();
+    raw.agent_id = "worker".to_string();
+    raw.thread_id = uuid::Uuid::new_v4().to_string();
+    raw.task_id = uuid::Uuid::new_v4().to_string();
+    raw.user_id = "test-user".to_string();
+    raw.runtime_mode = RuntimeMode::Cli;
+    raw.orchestrator = Some(orch.clone());
+    raw.depth = MAX_INVOKE_DEPTH;
+    let ctx = Arc::new(raw);
+
+    let err = orch
+        .invoke(
+            Invocation::single(target_named("worker", "go")),
+            ctx.clone(),
+        )
+        .await
+        .expect_err("past the depth limit must be refused");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("at most 2 levels"),
+        "unexpected message: {msg}"
+    );
+
+    let rows = orch
+        .stores
+        .task_store
+        .list_tasks(Some(&ctx.thread_id))
+        .await
+        .expect("list_tasks");
+    assert!(rows.is_empty(), "a refused dispatch wrote rows: {rows:?}");
+}
+
+/// Each hop adds one: a child is one deeper than its parent, so a chain of
+/// helpers reaches the limit instead of running forever.
+#[tokio::test]
+async fn new_task_is_one_level_deeper_than_its_parent() {
+    let orch = build_orch_with_agent("worker").await;
+    let root = build_parent_ctx(&orch, "worker");
+    assert_eq!(root.depth, 0);
+    let child = root.new_task("worker").await;
+    assert_eq!(child.depth, 1);
+    assert_eq!(child.new_task("worker").await.depth, 2);
+}
+
+/// Below the limit a `Join::Single` dispatch still persists its child and
+/// returns, now that the child runs on a spawned task.
+#[tokio::test]
+async fn invoke_single_below_limit_still_persists_child_on_spawned_task() {
+    let orch = build_orch_with_agent("worker").await;
+    let parent = build_parent_ctx(&orch, "worker");
+    let _ = orch
+        .invoke(
+            Invocation::single(target_named("worker", "go")),
+            parent.clone(),
+        )
+        .await;
+    let rows = orch
+        .stores
+        .task_store
+        .list_tasks(Some(&parent.thread_id))
+        .await
+        .expect("list_tasks");
+    assert!(
+        rows.iter()
+            .any(|t| t.parent_task_id.as_deref() == Some(parent.task_id.as_str())),
+        "child row missing: {rows:?}"
+    );
+}
+
+// ── Cancellation reaches a `Join::Single` child ─────────────────────────────
+
+/// Runner whose `spawn` never returns, holding `alive` while it is running.
+/// Stands in for a helper mid-run: the strong count says whether it still is.
+struct HangingRunner {
+    alive: Arc<()>,
+    started: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl RemoteTaskRunner for HangingRunner {
+    async fn spawn(
+        &self,
+        _task_id: String,
+        _agent_name: String,
+        _task: String,
+        _user_id: String,
+        _workspace_id: Option<String>,
+        _environment_id: Option<String>,
+        _thread_id: Option<String>,
+    ) -> anyhow::Result<()> {
+        let _alive = self.alive.clone();
+        self.started.notify_one();
+        std::future::pending::<()>().await;
+        Ok(())
+    }
+
+    fn provided_runtime(&self) -> RuntimeMode {
+        RuntimeMode::Cli
+    }
+}
+
+/// `tasks/cancel` and a bot's `/stop` signal only the root task; the root stops
+/// because `spawn_background_execution` drops its future. A foreground helper
+/// has to stop with it, or it keeps running (and spending) after the person
+/// pressed stop.
+#[tokio::test]
+async fn dropping_the_invoke_future_stops_a_join_single_child() {
+    let alive = Arc::new(());
+    let started = Arc::new(tokio::sync::Notify::new());
+    let runner = HangingRunner {
+        alive: alive.clone(),
+        started: started.clone(),
+    };
+    // The runner's own field and this local; a running child adds one more.
+    let idle = Arc::strong_count(&alive);
+
+    let base = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .build()
+            .await
+            .unwrap(),
+    );
+    let orch = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_stores(base.stores.clone())
+            .with_remote_task_runner(Arc::new(runner))
+            .build()
+            .await
+            .unwrap(),
+    );
+    orch.register_agent_definition(StandardDefinition {
+        name: "hanging".to_string(),
+        description: "never finishes".to_string(),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let parent = build_parent_ctx(&orch, "hanging");
+
+    let inv = Invocation::single(target_named("hanging", "go")).with_executor(ExecutorHint::Force(
+        Executor::Remote {
+            runner: RunnerConfig::new("default"),
+        },
+    ));
+    let caller = {
+        let orch = orch.clone();
+        tokio::spawn(async move { orch.invoke(inv, parent).await.map(|_| ()) })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), started.notified())
+        .await
+        .expect("the child must start");
+    assert_eq!(Arc::strong_count(&alive), idle + 1, "the child is running");
+
+    // What the root's select! does on cancel: drop the future awaiting the child.
+    caller.abort();
+    let _ = caller.await;
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    while Arc::strong_count(&alive) > idle && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        Arc::strong_count(&alive),
+        idle,
+        "the child is still running after its parent was dropped"
+    );
+}
