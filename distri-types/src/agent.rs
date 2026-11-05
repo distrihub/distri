@@ -1841,6 +1841,35 @@ pub struct ModelSettingsInner {
     pub api_format: OpenAiApiFormat,
 }
 
+/// What a request says about its model: [`ModelSettings`] where the model may
+/// be left out, because the caller wants the default and only sets options on
+/// top of it (temperature, provider options). [`ModelSettings`] itself always
+/// has a model, so this is what crosses the wire and [`Self::resolve`] turns it
+/// into one.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ModelSettingsOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(flatten)]
+    pub inner: ModelSettingsInner,
+}
+
+impl ModelSettingsOverride {
+    /// The settings to run on: this merged onto `base` by the rules of
+    /// [`ModelSettings::merge`], or on its own when there is no base.
+    /// `None` when neither names a model (an empty model names none).
+    pub fn resolve(&self, base: Option<&ModelSettings>) -> Option<ModelSettings> {
+        let settings = ModelSettings {
+            model: self.model.clone().unwrap_or_default(),
+            inner: self.inner.clone(),
+        };
+        match base {
+            Some(base) => base.merge(&settings),
+            None => (!settings.model.is_empty()).then_some(settings),
+        }
+    }
+}
+
 impl ModelSettings {
     /// Create a new `ModelSettings` with the given model and default inner settings.
     pub fn new(model: impl Into<String>) -> Self {
@@ -3016,6 +3045,59 @@ tool_format = "json_l"
             result.inner.provider,
             ModelProvider::Anthropic { .. }
         ));
+    }
+
+    fn override_from(body: serde_json::Value) -> ModelSettingsOverride {
+        serde_json::from_value(body).unwrap()
+    }
+
+    #[test]
+    fn override_without_a_model_runs_on_the_base_with_its_options() {
+        let mut base = ModelSettings::from_provider_model_str("anthropic/claude-sonnet-4")
+            .unwrap()
+            .unwrap();
+        base.inner.max_tokens = Some(100);
+
+        let result = override_from(serde_json::json!({"temperature": 0.25}))
+            .resolve(Some(&base))
+            .unwrap();
+
+        assert_eq!(result.model, "claude-sonnet-4");
+        assert!(matches!(
+            result.inner.provider,
+            ModelProvider::Anthropic { .. }
+        ));
+        assert_eq!(result.inner.temperature, Some(0.25));
+        assert_eq!(result.inner.max_tokens, Some(100));
+    }
+
+    #[test]
+    fn override_naming_a_model_merges_as_model_settings_do() {
+        let base = ModelSettings::new("gpt-5.1");
+        let result = override_from(serde_json::json!({"model": "gpt-5.4"}))
+            .resolve(Some(&base))
+            .unwrap();
+        assert_eq!(result.model, "gpt-5.4");
+    }
+
+    #[test]
+    fn override_with_no_base_needs_its_own_model() {
+        let named = override_from(serde_json::json!({"model": "gpt-5.4", "temperature": 0.25}))
+            .resolve(None)
+            .unwrap();
+        assert_eq!(named.model, "gpt-5.4");
+        assert_eq!(named.inner.temperature, Some(0.25));
+
+        assert!(
+            override_from(serde_json::json!({"temperature": 0.25}))
+                .resolve(None)
+                .is_none()
+        );
+        assert!(
+            override_from(serde_json::json!({"model": ""}))
+                .resolve(None)
+                .is_none()
+        );
     }
 
     #[test]
