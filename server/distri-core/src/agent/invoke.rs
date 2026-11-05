@@ -162,7 +162,10 @@ impl AgentOrchestrator {
                 // Inline, each nested level stacks its whole async state
                 // machine on the caller's stack; a spawned task gets a
                 // fresh one. The tenant task-locals do not cross a spawn,
-                // so they are re-established as in `Join::All`.
+                // so they are re-established as in `Join::All`. The handle
+                // aborts the child if this future is dropped: `tasks/cancel`
+                // and a bot's `/stop` signal only the root and rely on the
+                // drop to stop a foreground helper.
                 let user_id = parent_ctx.user_id.clone();
                 let ws_uuid = parent_ctx
                     .workspace_id
@@ -172,13 +175,11 @@ impl AgentOrchestrator {
                 let parent = parent_ctx.clone();
                 let invocation = invocation.clone();
                 let blob = invocation_blob.clone();
-                let handle = tokio::spawn(distri_auth::context::with_user_and_workspace(
-                    user_id,
-                    ws_uuid,
-                    async move {
+                let handle = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(
+                    distri_auth::context::with_user_and_workspace(user_id, ws_uuid, async move {
                         orch.dispatch_target_sync(target, &invocation, &blob, &parent)
                             .await
-                    },
+                    }),
                 ));
                 let result = handle
                     .await
