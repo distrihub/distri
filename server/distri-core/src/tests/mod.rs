@@ -1,4 +1,5 @@
 mod a2a_service;
+mod active_task_id;
 mod agent_loop;
 mod agent_loop_store_integration;
 mod browser_sessions;

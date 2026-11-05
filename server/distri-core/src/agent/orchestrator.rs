@@ -1327,15 +1327,23 @@ impl AgentOrchestrator {
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
-        // Compute `active_task_id` at read time: the first non-terminal task
-        // in this thread. Never persisted to the DB; clients use it to decide
-        // whether to resubscribe on thread reopen.
+        // Compute `active_task_id` at read time: the non-terminal task a client
+        // should resubscribe to when it reopens the thread. Never persisted.
+        // It names the ROOT run (no parent) when one is live: a helper's task
+        // is a child of it, and subscribing to a child misses the root's
+        // stream. Only when no root is live (a detached helper outlived it)
+        // does it fall back to the first live task.
         if let Some(mut t) = thread {
             if let Ok(tasks) = self.stores.task_store.list_tasks(Some(thread_id)).await {
-                t.active_task_id = tasks
+                let live: Vec<_> = tasks
                     .into_iter()
-                    .find(|task| !task.status.is_terminal())
-                    .map(|task| task.id);
+                    .filter(|task| !task.status.is_terminal())
+                    .collect();
+                t.active_task_id = live
+                    .iter()
+                    .find(|task| task.parent_task_id.is_none())
+                    .or_else(|| live.first())
+                    .map(|task| task.id.clone());
             }
             Ok(Some(t))
         } else {
