@@ -271,6 +271,7 @@ mod tests {
             event,
             task_id: task_id.into(),
             parent_task_id: parent.map(|s| s.into()),
+            child: None,
             agent_id: agent.into(),
             user_id: None,
             identifier_id: None,

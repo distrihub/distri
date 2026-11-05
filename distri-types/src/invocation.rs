@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::ToolsConfig;
 use crate::core::{Message, TaskStatus};
+use crate::events::ChildRun;
 
 // ── Top-level invocation ──────────────────────────────────────────────────
 
@@ -54,6 +55,11 @@ pub struct Invocation {
     /// external tool pool, like claude-code's `useExactTools`).
     #[serde(default)]
     pub tools: ToolPolicy,
+
+    /// Who started this dispatch and what to call it. Stamped on every frame
+    /// the child emits (see [`ChildRun`]).
+    #[serde(default, skip_serializing_if = "ChildRun::is_empty")]
+    pub origin: ChildRun,
 }
 
 /// One leaf of a (possibly fan-out) invocation.
@@ -412,6 +418,7 @@ impl Invocation {
             join: Join::Single,
             executor: ExecutorHint::default(),
             tools: ToolPolicy::default(),
+            origin: ChildRun::default(),
         }
     }
 
@@ -423,6 +430,7 @@ impl Invocation {
             join: Join::All,
             executor: ExecutorHint::default(),
             tools: ToolPolicy::default(),
+            origin: ChildRun::default(),
         }
     }
 
@@ -435,6 +443,7 @@ impl Invocation {
             join: Join::Detached,
             executor: ExecutorHint::default(),
             tools: ToolPolicy::default(),
+            origin: ChildRun::default(),
         }
     }
 
@@ -486,6 +495,7 @@ mod tests {
             join: Join::Single,
             executor: ExecutorHint::Auto,
             tools: ToolPolicy::Inherit,
+            origin: ChildRun::default(),
         };
         assert_eq!(inv.validate(), Err(InvocationValidationError::NoTargets));
     }
@@ -504,6 +514,7 @@ mod tests {
             join: Join::Single,
             executor: ExecutorHint::Auto,
             tools: ToolPolicy::Inherit,
+            origin: ChildRun::default(),
         };
         assert_eq!(
             inv.validate(),

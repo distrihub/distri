@@ -146,6 +146,7 @@ pub trait Formatter: Send + Sync {
                 },
                 task_id: String::new(),
                 parent_task_id: None,
+                child: None,
                 agent_id: String::new(),
                 user_id: None,
                 identifier_id: None,
