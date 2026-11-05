@@ -529,6 +529,7 @@ fn build_agent_event(
         run_id: stream_agent_id.to_string(),
         task_id,
         parent_task_id: envelope.parent_task_id,
+        child: Some(envelope.child).filter(|c| !c.is_empty()),
         event: envelope.event,
         agent_id,
         user_id: None,

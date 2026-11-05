@@ -107,6 +107,7 @@ async fn invoke_rejects_zero_targets() {
         join: Join::Single,
         executor: ExecutorHint::Auto,
         tools: distri_types::invocation::ToolPolicy::Inherit,
+        origin: Default::default(),
     };
     let err = orch
         .invoke(inv, ctx)
@@ -130,6 +131,7 @@ async fn invoke_rejects_single_with_two_targets() {
         join: Join::Single,
         executor: ExecutorHint::Auto,
         tools: distri_types::invocation::ToolPolicy::Inherit,
+        origin: Default::default(),
     };
     let err = orch
         .invoke(inv, ctx)
@@ -205,6 +207,7 @@ impl RemoteTaskRunner for RecordingRemoteRunner {
                 },
                 task_id: task_id.clone(),
                 parent_task_id: None,
+                child: None,
                 agent_id: agent_name,
                 user_id: None,
                 identifier_id: None,
@@ -646,4 +649,61 @@ fn decide_dispatch_follows_environment_rules() {
 
     // Legacy agents with no environment still run anywhere.
     assert!(local(&def(None), RuntimeMode::Cloud));
+}
+
+// ── Child frames name their origin ──────────────────────────────────────────
+
+/// A child dispatched with an origin stamps `parent_tool_call_id`, `title`
+/// and `agent_type` on every frame it emits, and the parent's own frames
+/// carry none of them.
+#[tokio::test]
+async fn child_frames_carry_origin_and_parent_frames_do_not() {
+    use crate::agent::invoke::{origin_for, ResolvedTarget};
+    use distri_types::ChildRun;
+
+    let orch = build_orch_with_agent("worker").await;
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let mut raw = ExecutorContext::default();
+    raw.agent_id = "worker".to_string();
+    raw.thread_id = uuid::Uuid::new_v4().to_string();
+    raw.task_id = uuid::Uuid::new_v4().to_string();
+    raw.user_id = "test-user".to_string();
+    raw.runtime_mode = RuntimeMode::Cli;
+    raw.orchestrator = Some(orch.clone());
+    raw.event_tx = Some(Arc::new(tx));
+    let parent = Arc::new(raw);
+
+    let target = target_named("worker", "go");
+    let mut inv = Invocation::single(target.clone());
+    inv.origin = ChildRun {
+        parent_tool_call_id: Some("call-7".into()),
+        title: Some("Newton's first law".into()),
+        agent_type: None,
+    };
+    let blob = serde_json::to_value(&inv).unwrap();
+    // The persisted invocation keeps the origin, so a task row can be titled later.
+    assert_eq!(blob["origin"]["title"], "Newton's first law");
+
+    let origin = origin_for(&inv, &target);
+    assert_eq!(origin.agent_type.as_deref(), Some("worker"));
+    let resolved = ResolvedTarget::from_target(&target, None);
+    let child = orch
+        .persist_child_task(&resolved, &blob, &origin, &parent)
+        .await
+        .expect("persist child");
+
+    child.emit(distri_types::AgentEventType::RunStarted {}).await;
+    parent.emit(distri_types::AgentEventType::RunStarted {}).await;
+    rx.close();
+
+    let mut frames = vec![];
+    while let Some(e) = rx.recv().await {
+        frames.push(e);
+    }
+    assert_eq!(frames.len(), 2);
+    let from_child = frames.iter().find(|e| e.task_id == child.task_id).unwrap();
+    assert_eq!(from_child.parent_task_id.as_deref(), Some(parent.task_id.as_str()));
+    assert_eq!(from_child.child.as_ref(), Some(&origin));
+    let from_parent = frames.iter().find(|e| e.task_id == parent.task_id).unwrap();
+    assert!(from_parent.child.is_none());
 }
