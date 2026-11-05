@@ -71,6 +71,9 @@ pub struct RunSummary {
     /// Root: the thread's agent. Child: the agent its `Invocation` targeted
     /// (`_adhoc_base` for ad-hoc workers).
     pub agent_id: Option<String>,
+    /// The caller's label for a child run (`invoke_agent`'s `title`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub state: RunState,
     /// First user message: what the run was asked to do.
     pub intent: Option<String>,
@@ -220,7 +223,10 @@ fn build_node(
         task_id: row.task.id,
         thread_id: row.task.thread_id,
         parent_task_id: row.task.parent_task_id,
-        agent_id: row.agent_id,
+        agent_id: row
+            .agent_id
+            .or_else(|| act.and_then(|a| a.agent_id.clone())),
+        title: act.and_then(|a| a.title.clone()),
         state,
         intent: act.and_then(|a| a.intent.clone()),
         last_event: act.and_then(|a| a.preview.clone()),
@@ -407,6 +413,7 @@ pub mod fixture {
             thread_id: THREAD_ID.into(),
             parent_task_id: Some(ROOT_TASK_ID.into()),
             agent_id: Some(WORKER_AGENT.into()),
+            title: None,
             state: RunState::Done,
             intent: Some("Count the open issues labelled release".into()),
             last_event: Some("final: 4 open release issues".into()),
@@ -422,6 +429,7 @@ pub mod fixture {
             thread_id: THREAD_ID.into(),
             parent_task_id: Some(ROOT_TASK_ID.into()),
             agent_id: Some(ASKER_AGENT.into()),
+            title: None,
             state: RunState::NeedsInput,
             intent: Some("Ask the release owner whether to ship on Friday".into()),
             last_event: Some(format!("{ASK_TOOL}: {ASK_QUESTION}")),
@@ -437,6 +445,7 @@ pub mod fixture {
             thread_id: THREAD_ID.into(),
             parent_task_id: None,
             agent_id: Some(ROOT_AGENT.into()),
+            title: None,
             state: RunState::Done,
             intent: Some("Prepare the Friday release".into()),
             last_event: Some("final: started 2 background agents".into()),
@@ -465,6 +474,7 @@ pub mod fixture {
             task_id: ASKER_TASK_ID.into(),
             parent_task_id: Some(ROOT_TASK_ID.into()),
             agent_id: ASKER_AGENT.into(),
+            child: None,
             user_id: None,
             identifier_id: None,
             workspace_id: None,
@@ -617,9 +627,12 @@ mod tests {
                 intent: Some("list files".into()),
                 context_used_tokens: None,
                 context_window_tokens: None,
+                agent_id: None,
+                title: Some("List the files".into()),
             },
         );
         let forest = build_run_tree(rows, &activity);
+        assert_eq!(forest[0].title.as_deref(), Some("List the files"));
         assert_eq!(forest.len(), 1);
         assert_eq!(forest[0].parent_task_id.as_deref(), Some("missing"));
         assert_eq!(forest[0].last_event.as_deref(), Some("Bash: ls"));
@@ -685,6 +698,8 @@ mod tests {
                         intent: n.intent.clone(),
                         context_used_tokens: None,
                         context_window_tokens: None,
+                        agent_id: None,
+                        title: None,
                     },
                 )
             })
