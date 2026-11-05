@@ -647,3 +647,73 @@ fn decide_dispatch_follows_environment_rules() {
     // Legacy agents with no environment still run anywhere.
     assert!(local(&def(None), RuntimeMode::Cloud));
 }
+
+// ── Depth guard ─────────────────────────────────────────────────────────────
+
+/// A run already `MAX_INVOKE_DEPTH` hops below the root may not dispatch
+/// another helper: the call is refused with a message the agent can read,
+/// and no child row is written.
+#[tokio::test]
+async fn invoke_refuses_past_max_depth_and_writes_no_child() {
+    use crate::agent::invoke::MAX_INVOKE_DEPTH;
+
+    let orch = build_orch_with_agent("worker").await;
+    let mut raw = ExecutorContext::default();
+    raw.agent_id = "worker".to_string();
+    raw.thread_id = uuid::Uuid::new_v4().to_string();
+    raw.task_id = uuid::Uuid::new_v4().to_string();
+    raw.user_id = "test-user".to_string();
+    raw.runtime_mode = RuntimeMode::Cli;
+    raw.orchestrator = Some(orch.clone());
+    raw.depth = MAX_INVOKE_DEPTH;
+    let ctx = Arc::new(raw);
+
+    let err = orch
+        .invoke(Invocation::single(target_named("worker", "go")), ctx.clone())
+        .await
+        .expect_err("past the depth limit must be refused");
+    let msg = format!("{err}");
+    assert!(msg.contains("at most 2 levels"), "unexpected message: {msg}");
+
+    let rows = orch
+        .stores
+        .task_store
+        .list_tasks(Some(&ctx.thread_id))
+        .await
+        .expect("list_tasks");
+    assert!(rows.is_empty(), "a refused dispatch wrote rows: {rows:?}");
+}
+
+/// Each hop adds one: a child is one deeper than its parent, so a chain of
+/// helpers reaches the limit instead of running forever.
+#[tokio::test]
+async fn new_task_is_one_level_deeper_than_its_parent() {
+    let orch = build_orch_with_agent("worker").await;
+    let root = build_parent_ctx(&orch, "worker");
+    assert_eq!(root.depth, 0);
+    let child = root.new_task("worker").await;
+    assert_eq!(child.depth, 1);
+    assert_eq!(child.new_task("worker").await.depth, 2);
+}
+
+/// Below the limit a `Join::Single` dispatch still persists its child and
+/// returns, now that the child runs on a spawned task.
+#[tokio::test]
+async fn invoke_single_below_limit_still_persists_child_on_spawned_task() {
+    let orch = build_orch_with_agent("worker").await;
+    let parent = build_parent_ctx(&orch, "worker");
+    let _ = orch
+        .invoke(Invocation::single(target_named("worker", "go")), parent.clone())
+        .await;
+    let rows = orch
+        .stores
+        .task_store
+        .list_tasks(Some(&parent.thread_id))
+        .await
+        .expect("list_tasks");
+    assert!(
+        rows.iter()
+            .any(|t| t.parent_task_id.as_deref() == Some(parent.task_id.as_str())),
+        "child row missing: {rows:?}"
+    );
+}

@@ -35,6 +35,12 @@ use crate::agent::orchestrator::AgentOrchestrator;
 use crate::agent::ExecutorContext;
 use crate::AgentError;
 
+/// How many hops of `invoke` may nest below the root run. A root agent's
+/// helper is depth 1, that helper's helper depth 2. Deeper dispatches are
+/// refused with an error the calling agent can read. Three nested levels
+/// overflowed the server's stack when every level ran inline.
+pub const MAX_INVOKE_DEPTH: u32 = 2;
+
 // ── Dispatch decision (shared with `call_agent_stream`) ──────────────────
 
 /// How a single agent invocation will be launched. Computed once per
@@ -135,6 +141,15 @@ impl AgentOrchestrator {
         // agent's runtime constraint + the invocation's ExecutorHint.
         ensure_independent_context(&invocation)?;
 
+        if parent_ctx.depth >= MAX_INVOKE_DEPTH {
+            return Err(AgentError::Validation(format!(
+                "sub-agents may nest at most {MAX_INVOKE_DEPTH} levels deep; this run is already \
+                 {} level(s) below the root. Do the work yourself instead of dispatching another \
+                 sub-agent.",
+                parent_ctx.depth
+            )));
+        }
+
         match invocation.join {
             Join::Single => {
                 let target = invocation
@@ -142,9 +157,31 @@ impl AgentOrchestrator {
                     .first()
                     .cloned()
                     .ok_or_else(|| AgentError::Validation("invocation has no target".into()))?;
-                let result = self
-                    .dispatch_target_sync(target, &invocation, &invocation_blob, &parent_ctx)
-                    .await?;
+                // Run the child on its own task, not inline in this future.
+                // Inline, each nested level stacks its whole async state
+                // machine on the caller's stack; a spawned task gets a
+                // fresh one. The tenant task-locals do not cross a spawn,
+                // so they are re-established as in `Join::All`.
+                let user_id = parent_ctx.user_id.clone();
+                let ws_uuid = parent_ctx
+                    .workspace_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok());
+                let orch = self.clone();
+                let parent = parent_ctx.clone();
+                let invocation = invocation.clone();
+                let blob = invocation_blob.clone();
+                let handle = tokio::spawn(distri_auth::context::with_user_and_workspace(
+                    user_id,
+                    ws_uuid,
+                    async move {
+                        orch.dispatch_target_sync(target, &invocation, &blob, &parent)
+                            .await
+                    },
+                ));
+                let result = handle
+                    .await
+                    .map_err(|e| AgentError::Session(format!("join error on sub-agent: {e}")))??;
                 Ok(InvocationResult::Scalar { result })
             }
             Join::All => {
