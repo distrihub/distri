@@ -25,6 +25,30 @@ pub struct RunUsage {
     pub cost_usd: Option<f64>,
 }
 
+/// What a child run says about itself on every frame it emits, so a consumer
+/// can place it under the tool call that started it and label it. All fields
+/// are absent on root runs.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct ChildRun {
+    /// `tool_call_id` of the `invoke_agent` call (in the parent's turn) that
+    /// started this run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_tool_call_id: Option<String>,
+    /// Short human label for the run, set by the caller (`invoke_agent`'s
+    /// optional `title`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Registered agent name for a named target, `"adhoc"` for an ad-hoc worker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
+}
+
+impl ChildRun {
+    pub fn is_empty(&self) -> bool {
+        self.parent_tool_call_id.is_none() && self.title.is_none() && self.agent_type.is_none()
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentEvent {
@@ -38,6 +62,9 @@ pub struct AgentEvent {
     /// (and route sub-agent events to the right node in the FE store).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_task_id: Option<String>,
+    /// Set on child runs: the call that started them, their title and type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child: Option<ChildRun>,
     pub agent_id: String,
     /// User ID for usage tracking
     #[serde(default)]
@@ -65,6 +92,7 @@ impl AgentEvent {
             run_id: String::new(),
             task_id: String::new(),
             parent_task_id: None,
+            child: None,
             user_id: None,
             identifier_id: None,
             workspace_id: None,
@@ -96,6 +124,10 @@ pub struct AgentEventEnvelope {
     /// Lets the consumer route per-task without modifying the A2A spec.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_task_id: Option<String>,
+    /// `parent_tool_call_id`, `title` and `agent_type` of a child run, flat
+    /// beside `parent_task_id` on the wire.
+    #[serde(flatten, default, skip_serializing_if = "ChildRun::is_empty")]
+    pub child: ChildRun,
 }
 
 impl AgentEventEnvelope {
@@ -105,6 +137,7 @@ impl AgentEventEnvelope {
             event: event.event.clone(),
             agent_id: event.agent_id.clone(),
             parent_task_id: event.parent_task_id.clone(),
+            child: event.child.clone().unwrap_or_default(),
         }
     }
 }
@@ -427,6 +460,7 @@ impl AgentEvent {
             event,
             task_id: uuid::Uuid::new_v4().to_string(),
             parent_task_id: None,
+            child: None,
             agent_id: "default".to_string(),
             user_id: None,
             identifier_id: None,
@@ -448,6 +482,7 @@ impl AgentEvent {
             run_id,
             task_id,
             parent_task_id: None,
+            child: None,
             event,
             agent_id,
             user_id: None,
@@ -455,5 +490,58 @@ impl AgentEvent {
             workspace_id: None,
             channel_id: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod child_run_tests {
+    use super::*;
+
+    fn envelope(child: ChildRun) -> Value {
+        serde_json::to_value(AgentEventEnvelope {
+            event: AgentEventType::RunStarted {},
+            agent_id: "_adhoc_base".into(),
+            parent_task_id: Some("parent".into()),
+            child,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn child_fields_sit_flat_beside_parent_task_id() {
+        let wire = envelope(ChildRun {
+            parent_tool_call_id: Some("call-1".into()),
+            title: Some("Newton's first law".into()),
+            agent_type: Some("adhoc".into()),
+        });
+        assert_eq!(wire["type"], "run_started");
+        assert_eq!(wire["parent_task_id"], "parent");
+        assert_eq!(wire["parent_tool_call_id"], "call-1");
+        assert_eq!(wire["title"], "Newton's first law");
+        assert_eq!(wire["agent_type"], "adhoc");
+    }
+
+    #[test]
+    fn root_frames_gain_no_new_keys() {
+        let wire = envelope(ChildRun::default());
+        for key in ["parent_tool_call_id", "title", "agent_type"] {
+            assert!(wire.get(key).is_none(), "{key} leaked onto a root frame");
+        }
+    }
+
+    #[test]
+    fn envelope_round_trips_and_reads_old_payloads() {
+        let wire = envelope(ChildRun {
+            parent_tool_call_id: Some("call-1".into()),
+            title: None,
+            agent_type: Some("worker".into()),
+        });
+        let back: AgentEventEnvelope = serde_json::from_value(wire).unwrap();
+        assert_eq!(back.child.parent_tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(back.child.title, None);
+
+        let old = serde_json::json!({"type": "run_started", "agent_id": "a"});
+        let back: AgentEventEnvelope = serde_json::from_value(old).unwrap();
+        assert!(back.child.is_empty());
     }
 }

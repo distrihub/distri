@@ -332,6 +332,7 @@ mod tests {
             event,
             task_id: "task-1".into(),
             parent_task_id: None,
+            child: None,
             agent_id: "test-agent".into(),
             user_id: None,
             identifier_id: None,

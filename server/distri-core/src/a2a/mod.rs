@@ -206,6 +206,7 @@ pub fn to_a2a_task_update(
         event: event.event.clone(),
         agent_id: String::new(),
         parent_task_id: task.parent_task_id.clone(),
+        child: Default::default(),
     };
 
     TaskStatusUpdateEvent {

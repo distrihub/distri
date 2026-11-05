@@ -29,6 +29,7 @@ use distri_types::invocation::{
     AgentRef, AgentResult, Executor, ExecutorHint, Invocation, InvocationResult, Join, Target,
 };
 use distri_types::stores::CreateTaskInput;
+use distri_types::ChildRun;
 use distri_types::{RemoteTaskRunner, RuntimeMode, StandardDefinition};
 
 use crate::agent::orchestrator::AgentOrchestrator;
@@ -301,13 +302,14 @@ impl AgentOrchestrator {
         let plan = self
             .plan_for_target(invocation, &target, parent_ctx)
             .await?;
+        let origin = &origin_for(invocation, &target);
         match plan {
             DispatchPlan::Local => {
-                self.invoke_local_independent(target, invocation_blob, parent_ctx)
+                self.invoke_local_independent(target, invocation_blob, origin, parent_ctx)
                     .await
             }
             DispatchPlan::Remote { runner } => {
-                self.invoke_remote_independent(target, invocation_blob, parent_ctx, runner)
+                self.invoke_remote_independent(target, invocation_blob, origin, parent_ctx, runner)
                     .await
             }
         }
@@ -325,13 +327,14 @@ impl AgentOrchestrator {
         let plan = self
             .plan_for_target(invocation, &target, parent_ctx)
             .await?;
+        let origin = &origin_for(invocation, &target);
         match plan {
             DispatchPlan::Local => {
-                self.detach_local_independent(target, invocation_blob, parent_ctx)
+                self.detach_local_independent(target, invocation_blob, origin, parent_ctx)
                     .await
             }
             DispatchPlan::Remote { runner } => {
-                self.detach_remote_independent(target, invocation_blob, parent_ctx, runner)
+                self.detach_remote_independent(target, invocation_blob, origin, parent_ctx, runner)
                     .await
             }
         }
@@ -410,12 +413,13 @@ impl AgentOrchestrator {
         self: &Arc<Self>,
         target: Target,
         invocation_blob: &serde_json::Value,
+        origin: &ChildRun,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<AgentResult, AgentError> {
         let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
         let resolved = ResolvedTarget::from_target(&target, inherited);
         let child_ctx = self
-            .persist_child_task(&resolved, invocation_blob, parent_ctx)
+            .persist_child_task(&resolved, invocation_blob, origin, parent_ctx)
             .await?;
 
         // Drive the agent loop via the existing dispatch path.
@@ -476,12 +480,13 @@ impl AgentOrchestrator {
         self: &Arc<Self>,
         target: Target,
         invocation_blob: &serde_json::Value,
+        origin: &ChildRun,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<String, AgentError> {
         let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
         let resolved = ResolvedTarget::from_target(&target, inherited);
         let child_ctx = self
-            .persist_child_task(&resolved, invocation_blob, parent_ctx)
+            .persist_child_task(&resolved, invocation_blob, origin, parent_ctx)
             .await?;
 
         let task_id = child_ctx.task_id.clone();
@@ -596,13 +601,15 @@ impl AgentOrchestrator {
     /// typed Invocation blob (Local executor case). The row goes in at
     /// `status=Running`, `remote=false`; the agent loop's RunFinished
     /// or RunError handlers transition it to a terminal state.
-    async fn persist_child_task(
+    pub(crate) async fn persist_child_task(
         self: &Arc<Self>,
         resolved: &ResolvedTarget,
         invocation_blob: &serde_json::Value,
+        origin: &ChildRun,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<Arc<ExecutorContext>, AgentError> {
         let mut child = parent_ctx.new_task(&resolved.agent_id).await;
+        child.child = Some(origin.clone()).filter(|o| !o.is_empty());
         // A child runs in its own environment, not the parent's: a server
         // agent dispatched from a web parent runs as Cloud (its prompt and its
         // own default sub-agents follow). Legacy agents inherit the parent's.
@@ -640,6 +647,7 @@ impl AgentOrchestrator {
         self: &Arc<Self>,
         target: Target,
         invocation_blob: &serde_json::Value,
+        origin: &ChildRun,
         parent_ctx: &Arc<ExecutorContext>,
         runner: Arc<dyn RemoteTaskRunner>,
     ) -> Result<AgentResult, AgentError> {
@@ -647,7 +655,7 @@ impl AgentOrchestrator {
         let resolved = ResolvedTarget::from_target(&target, inherited);
         let def = self.standard_definition(&resolved.agent_id).await?;
         let child_ctx = self
-            .persist_child_task_remote(&resolved, invocation_blob, parent_ctx)
+            .persist_child_task_remote(&resolved, invocation_blob, origin, parent_ctx)
             .await?;
 
         let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
@@ -698,6 +706,7 @@ impl AgentOrchestrator {
         self: &Arc<Self>,
         target: Target,
         invocation_blob: &serde_json::Value,
+        origin: &ChildRun,
         parent_ctx: &Arc<ExecutorContext>,
         runner: Arc<dyn RemoteTaskRunner>,
     ) -> Result<String, AgentError> {
@@ -705,7 +714,7 @@ impl AgentOrchestrator {
         let resolved = ResolvedTarget::from_target(&target, inherited);
         let def = self.standard_definition(&resolved.agent_id).await?;
         let child_ctx = self
-            .persist_child_task_remote(&resolved, invocation_blob, parent_ctx)
+            .persist_child_task_remote(&resolved, invocation_blob, origin, parent_ctx)
             .await?;
         let task_id = child_ctx.task_id.clone();
 
@@ -765,9 +774,12 @@ impl AgentOrchestrator {
         self: &Arc<Self>,
         resolved: &ResolvedTarget,
         invocation_blob: &serde_json::Value,
+        origin: &ChildRun,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<Arc<ExecutorContext>, AgentError> {
-        let child_ctx = Arc::new(parent_ctx.new_task(&resolved.agent_id).await);
+        let mut child = parent_ctx.new_task(&resolved.agent_id).await;
+        child.child = Some(origin.clone()).filter(|o| !o.is_empty());
+        let child_ctx = Arc::new(child);
         let inner_task_id = uuid::Uuid::new_v4().to_string();
 
         self.stores
@@ -787,6 +799,19 @@ impl AgentOrchestrator {
 
         Ok(child_ctx)
     }
+}
+
+/// The identity a child run stamps on its frames: the invocation's origin
+/// (call id, title) plus the type, which comes from the target.
+pub(crate) fn origin_for(invocation: &Invocation, target: &Target) -> ChildRun {
+    let mut origin = invocation.origin.clone();
+    if origin.agent_type.is_none() {
+        origin.agent_type = Some(match &target.agent {
+            AgentRef::Named { agent_id, .. } => agent_id.clone(),
+            AgentRef::AdHoc { .. } => "adhoc".to_string(),
+        });
+    }
+    origin
 }
 
 // ── Skill-fork spec ──────────────────────────────────────────────────────
@@ -839,8 +864,8 @@ pub fn skill_gist(skill_id: &str, result: &AgentResult) -> String {
 
 /// What a [`Target`] resolves to at dispatch time: the agent_id to drive
 /// the loop with, plus optional `DefinitionOverrides` for ad-hoc agents.
-struct ResolvedTarget {
-    agent_id: String,
+pub(crate) struct ResolvedTarget {
+    pub(crate) agent_id: String,
     definition_overrides: Option<distri_types::configuration::DefinitionOverrides>,
 }
 
@@ -857,7 +882,10 @@ impl ResolvedTarget {
     /// no LLM-facing `tools` field — so any skill the worker loads can
     /// rely on the same builtins (`write_todos`, `invoke_agent`, …) the
     /// parent had.
-    fn from_target(target: &Target, inherited_tools: Option<distri_types::ToolsConfig>) -> Self {
+    pub(crate) fn from_target(
+        target: &Target,
+        inherited_tools: Option<distri_types::ToolsConfig>,
+    ) -> Self {
         match &target.agent {
             AgentRef::Named {
                 agent_id,

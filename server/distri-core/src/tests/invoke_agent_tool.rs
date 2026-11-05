@@ -483,3 +483,38 @@ async fn default_agent_tools_include_supervisors_alongside_invoke_agent() {
         );
     }
 }
+
+/// `title` is part of the schema and is accepted (the tool denies unknown
+/// fields, so a missing field would come back as "invalid input").
+#[tokio::test]
+async fn invoke_agent_tool_accepts_title() {
+    let schema = InvokeAgentTool.get_parameters();
+    assert!(
+        schema["properties"]["title"].is_object(),
+        "title must be in the schema: {schema}"
+    );
+    assert!(
+        !schema["required"]
+            .as_array()
+            .map(|r| r.iter().any(|f| f == "title"))
+            .unwrap_or(false),
+        "title is optional"
+    );
+
+    let orch = build_orch_with_agent("worker").await;
+    let ctx = parent_ctx(&orch, "worker");
+    let tool_call = ToolCall {
+        tool_call_id: "tc-title".to_string(),
+        tool_name: "invoke_agent".to_string(),
+        input: json!({ "prompt": "go", "agent": "worker", "title": "Newton's first law" }),
+    };
+    if let Err(e) = InvokeAgentTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+    {
+        assert!(
+            !format!("{e}").contains("invalid input"),
+            "title was rejected: {e}"
+        );
+    }
+}

@@ -292,6 +292,7 @@ async fn wait_task_blocks_until_terminal_event_arrives() {
         },
         task_id: task_for_publisher.clone(),
         parent_task_id: Some(root.clone()),
+        child: None,
         agent_id: "test".into(),
         user_id: None,
         identifier_id: None,
