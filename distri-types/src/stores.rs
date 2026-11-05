@@ -443,6 +443,40 @@ pub struct TaskActivity {
     pub intent: Option<String>,
     pub context_used_tokens: Option<i64>,
     pub context_window_tokens: Option<i64>,
+    /// The agent that ran this task: the registered name for a named target,
+    /// `_adhoc_base` for an ad-hoc worker. Read from the task's stored
+    /// invocation, so `None` for root tasks (no invocation) and old rows.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    /// The caller's label for a helper (`invoke_agent`'s `title`), also from
+    /// the stored invocation. `None` when the caller gave none.
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+impl TaskActivity {
+    /// Fill `agent_id` and `title` from a task row's stored
+    /// [`Invocation`](crate::invocation::Invocation) blob. Tolerant of the
+    /// empty `{}` a root task carries and of rows written before `origin`
+    /// existed.
+    pub fn apply_invocation(&mut self, invocation: &serde_json::Value) {
+        let agent = invocation
+            .get("targets")
+            .and_then(|t| t.get(0))
+            .and_then(|t| t.get("agent"));
+        if let Some(agent) = agent {
+            self.agent_id = match agent.get("agent_id").and_then(|v| v.as_str()) {
+                Some(id) => Some(id.to_string()),
+                None if agent.get("system_prompt").is_some() => Some("_adhoc_base".to_string()),
+                None => None,
+            };
+        }
+        self.title = invocation
+            .get("origin")
+            .and_then(|o| o.get("title"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+    }
 }
 
 // Thread Store trait for thread management
@@ -2331,5 +2365,63 @@ mod tests {
             err,
             DefaultModelError::UnconfiguredProvider { .. }
         ));
+    }
+}
+
+#[cfg(test)]
+mod task_activity_tests {
+    use super::*;
+    use crate::invocation::{Invocation, Target};
+    use crate::Message;
+
+    fn blob(target: Target, title: Option<&str>) -> serde_json::Value {
+        // `origin` is written by the child-frame change (`Invocation.origin`);
+        // build the blob by hand so this test holds on either side of it.
+        let mut v = serde_json::to_value(Invocation::single(target)).unwrap();
+        if let Some(t) = title {
+            v["origin"] = serde_json::json!({ "title": t });
+        }
+        v
+    }
+
+    #[test]
+    fn named_target_gives_agent_id_and_title() {
+        let mut a = TaskActivity::default();
+        a.apply_invocation(&blob(
+            Target::named("lesson_writer", Message::user("go".into(), None)),
+            Some("Newton's first law"),
+        ));
+        assert_eq!(a.agent_id.as_deref(), Some("lesson_writer"));
+        assert_eq!(a.title.as_deref(), Some("Newton's first law"));
+    }
+
+    #[test]
+    fn adhoc_target_reads_as_adhoc_base_without_title() {
+        let mut a = TaskActivity::default();
+        a.apply_invocation(&blob(
+            Target::adhoc("You are a worker.", Message::user("go".into(), None)),
+            None,
+        ));
+        assert_eq!(a.agent_id.as_deref(), Some("_adhoc_base"));
+        assert_eq!(a.title, None);
+    }
+
+    #[test]
+    fn root_task_blob_leaves_both_empty() {
+        let mut a = TaskActivity::default();
+        a.apply_invocation(&serde_json::json!({}));
+        assert_eq!((a.agent_id, a.title), (None, None));
+    }
+
+    #[test]
+    fn wire_rows_carry_the_new_keys() {
+        let a = TaskActivity {
+            agent_id: Some("w".into()),
+            title: Some("T".into()),
+            ..Default::default()
+        };
+        let v = serde_json::to_value(&a).unwrap();
+        assert_eq!(v["agent_id"], "w");
+        assert_eq!(v["title"], "T");
     }
 }
