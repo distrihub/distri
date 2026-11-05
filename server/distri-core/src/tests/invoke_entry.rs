@@ -692,8 +692,12 @@ async fn child_frames_carry_origin_and_parent_frames_do_not() {
         .await
         .expect("persist child");
 
-    child.emit(distri_types::AgentEventType::RunStarted {}).await;
-    parent.emit(distri_types::AgentEventType::RunStarted {}).await;
+    child
+        .emit(distri_types::AgentEventType::RunStarted {})
+        .await;
+    parent
+        .emit(distri_types::AgentEventType::RunStarted {})
+        .await;
     rx.close();
 
     let mut frames = vec![];
@@ -702,7 +706,10 @@ async fn child_frames_carry_origin_and_parent_frames_do_not() {
     }
     assert_eq!(frames.len(), 2);
     let from_child = frames.iter().find(|e| e.task_id == child.task_id).unwrap();
-    assert_eq!(from_child.parent_task_id.as_deref(), Some(parent.task_id.as_str()));
+    assert_eq!(
+        from_child.parent_task_id.as_deref(),
+        Some(parent.task_id.as_str())
+    );
     assert_eq!(from_child.child.as_ref(), Some(&origin));
     let from_parent = frames.iter().find(|e| e.task_id == parent.task_id).unwrap();
     assert!(from_parent.child.is_none());

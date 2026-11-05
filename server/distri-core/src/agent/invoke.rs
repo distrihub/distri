@@ -882,7 +882,10 @@ impl ResolvedTarget {
     /// no LLM-facing `tools` field — so any skill the worker loads can
     /// rely on the same builtins (`write_todos`, `invoke_agent`, …) the
     /// parent had.
-    pub(crate) fn from_target(target: &Target, inherited_tools: Option<distri_types::ToolsConfig>) -> Self {
+    pub(crate) fn from_target(
+        target: &Target,
+        inherited_tools: Option<distri_types::ToolsConfig>,
+    ) -> Self {
         match &target.agent {
             AgentRef::Named {
                 agent_id,
