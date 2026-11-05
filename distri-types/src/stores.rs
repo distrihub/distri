@@ -456,26 +456,19 @@ pub struct TaskActivity {
 
 impl TaskActivity {
     /// Fill `agent_id` and `title` from a task row's stored
-    /// [`Invocation`](crate::invocation::Invocation) blob. Tolerant of the
-    /// empty `{}` a root task carries and of rows written before `origin`
-    /// existed.
+    /// [`Invocation`](crate::invocation::Invocation) blob. A blob that is not
+    /// an invocation (the empty `{}` a root task carries, or a row written by
+    /// an older shape) leaves both empty.
     pub fn apply_invocation(&mut self, invocation: &serde_json::Value) {
-        let agent = invocation
-            .get("targets")
-            .and_then(|t| t.get(0))
-            .and_then(|t| t.get("agent"));
-        if let Some(agent) = agent {
-            self.agent_id = match agent.get("agent_id").and_then(|v| v.as_str()) {
-                Some(id) => Some(id.to_string()),
-                None if agent.get("system_prompt").is_some() => Some("_adhoc_base".to_string()),
-                None => None,
-            };
-        }
-        self.title = invocation
-            .get("origin")
-            .and_then(|o| o.get("title"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        use crate::invocation::{AgentRef, Invocation};
+        let Ok(invocation) = Invocation::deserialize(invocation) else {
+            return;
+        };
+        self.agent_id = invocation.targets.first().map(|t| match &t.agent {
+            AgentRef::Named { agent_id, .. } => agent_id.clone(),
+            AgentRef::AdHoc { .. } => "_adhoc_base".to_string(),
+        });
+        self.title = invocation.origin.title;
     }
 }
 
@@ -2375,13 +2368,9 @@ mod task_activity_tests {
     use crate::Message;
 
     fn blob(target: Target, title: Option<&str>) -> serde_json::Value {
-        // `origin` is written by the child-frame change (`Invocation.origin`);
-        // build the blob by hand so this test holds on either side of it.
-        let mut v = serde_json::to_value(Invocation::single(target)).unwrap();
-        if let Some(t) = title {
-            v["origin"] = serde_json::json!({ "title": t });
-        }
-        v
+        let mut invocation = Invocation::single(target);
+        invocation.origin.title = title.map(str::to_string);
+        serde_json::to_value(invocation).unwrap()
     }
 
     #[test]
