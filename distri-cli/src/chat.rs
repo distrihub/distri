@@ -20,7 +20,7 @@ use crate::input::{DistriHelper, ToggleToolsHandler};
 use crate::threads::{
     load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread,
 };
-use crate::tools::{register_all, register_approval_handler};
+use crate::tools::{register_all, register_approval_handler, register_script_tools};
 use crate::{COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET};
 use distri::message::{build_connections_context, build_message_params};
 
@@ -541,7 +541,9 @@ pub async fn run_interactive_chat(
     register_approval_handler(&registry);
     // Register all local CLI tools (Bash, Read, Write, Edit, Glob, Grep, execute_command)
     let workspace_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let tool_defs = register_all(&registry, &current_agent, &workspace_path);
+    let mut tool_defs = register_all(&registry, &current_agent, &workspace_path);
+    // Script tools: `.distri/tools/*.ts` and `~/.distri/tools/*.ts`.
+    tool_defs.extend(register_script_tools(&registry, &workspace_path, None).await);
     app.add_tool_definitions(tool_defs);
 
     let stream_config = config.clone().with_timeout(60);
