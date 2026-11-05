@@ -1,7 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::Result;
 use crossterm::terminal;
@@ -11,18 +9,16 @@ use distri::{
 };
 use distri_types::configuration::AgentConfig;
 use inquire::Select;
-use rustyline::error::ReadlineError;
-use rustyline::{Config, Editor, EventHandler, KeyEvent};
 use tokio::sync::RwLock;
 
 use crate::config::{load_last_model, save_last_model};
-use crate::input::{DistriHelper, ToggleToolsHandler};
 use crate::threads::{
     load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread,
 };
-use crate::tools::{register_all, register_approval_handler};
+use crate::tools::{register_all, register_approval_handler, register_script_tools};
 use crate::{COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET};
 use distri::message::{build_connections_context, build_message_params};
+use distri_cli::permissions::{PermissionEngine, PermissionMode};
 
 #[derive(Debug, Clone)]
 pub enum SlashCommandResult {
@@ -30,6 +26,8 @@ pub enum SlashCommandResult {
     Exit,
     ClearContext,
     Resume(String),
+    /// Open the run switcher over this conversation, then come back.
+    Runs,
 }
 
 #[derive(Clone)]
@@ -149,6 +147,7 @@ pub fn print_help_message() {
     println!("  /resume <id>        - Resume a specific thread by ID");
     println!("  /traces             - List recent traces");
     println!("  /traces <id>        - Show trace detail with Gantt chart");
+    println!("  /runs               - Switch between runs (background agents, other sessions)");
     println!("  /clear              - Clear the current session context");
     println!("  /help               - Show this help message");
     println!("  /exit               - Exit the chat");
@@ -244,6 +243,7 @@ pub async fn handle_slash_command(
             Ok(SlashCommandResult::Continue)
         }
         "/exit" | "/quit" => Ok(SlashCommandResult::Exit),
+        "/runs" => Ok(SlashCommandResult::Runs),
         "/clear" => Ok(SlashCommandResult::ClearContext),
         "/compact" => {
             let client = Distri::from_config(config.clone());
@@ -270,7 +270,10 @@ pub async fn handle_slash_command(
                         Err(err) => eprintln!("Compact failed: {}", err),
                     }
                 }
-                Ok(_) => println!("{}No task on this thread yet — send a message first.{}", COLOR_GRAY, COLOR_RESET),
+                Ok(_) => println!(
+                    "{}No task on this thread yet — send a message first.{}",
+                    COLOR_GRAY, COLOR_RESET
+                ),
                 Err(err) => eprintln!("Failed to list tasks: {}", err),
             }
             Ok(SlashCommandResult::Continue)
@@ -338,11 +341,7 @@ pub async fn handle_slash_command(
                             } else {
                                 "\x1b[90m"
                             },
-                            if *configured {
-                                ""
-                            } else {
-                                "(not configured)"
-                            },
+                            if *configured { "" } else { "(not configured)" },
                             COLOR_RESET,
                         );
                         for id in model_ids {
@@ -466,6 +465,7 @@ pub async fn handle_slash_command(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_interactive_chat(
     app: &mut DistriClientApp,
     config: &DistriConfig,
@@ -474,6 +474,7 @@ pub async fn run_interactive_chat(
     verbose: bool,
     resume: Option<String>,
     extra_tools: Vec<distri_types::dynamic_tool::DynamicToolFactory>,
+    permission_mode: Option<PermissionMode>,
 ) -> Result<()> {
     // Resolve --resume flag or start fresh
     let mut thread_id = if let Some(ref resume_arg) = resume {
@@ -490,8 +491,6 @@ pub async fn run_interactive_chat(
             current_model = Some(dm);
         }
     }
-
-    let show_tools = Arc::new(AtomicBool::new(true));
 
     print_welcome_header(
         &current_agent,
@@ -510,8 +509,8 @@ pub async fn run_interactive_chat(
         String::new()
     };
     println!(
-        "{}Connected:{} {}{}  {}(Ctrl+O to toggle tool output){}",
-        COLOR_GRAY, COLOR_RESET, base_url, workspace_label, COLOR_GRAY, COLOR_RESET
+        "{}Connected:{} {}{}",
+        COLOR_GRAY, COLOR_RESET, base_url, workspace_label
     );
 
     // If resuming, print thread history
@@ -520,28 +519,32 @@ pub async fn run_interactive_chat(
         print_thread_history(&history_client, &thread_id).await;
     }
 
-    let rl_config = Config::builder()
-        .auto_add_history(true)
-        .bracketed_paste(true)
-        .build();
-    let mut rl = Editor::with_config(rl_config)?;
-    rl.set_helper(Some(DistriHelper::new(show_tools.clone())));
-    rl.bind_sequence(
-        KeyEvent::ctrl('o'),
-        EventHandler::Conditional(Box::new(ToggleToolsHandler {
-            show_tools: show_tools.clone(),
-        })),
-    );
-
-    // Load history from existing file
-    let history_path = get_history_file();
-    let _ = rl.load_history(&history_path);
-
     let registry = app.registry();
-    register_approval_handler(&registry);
+    register_approval_handler(
+        &registry,
+        std::sync::Arc::new(distri_cli::interact::TerminalBroker),
+    );
     // Register all local CLI tools (Bash, Read, Write, Edit, Glob, Grep, execute_command)
     let workspace_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let tool_defs = register_all(&registry, &current_agent, &workspace_path);
+    let permissions = PermissionEngine::load(&workspace_path, None, permission_mode)?;
+    let mut tool_defs = register_all(
+        &registry,
+        &current_agent,
+        &workspace_path,
+        permissions,
+        std::sync::Arc::new(distri_cli::interact::TerminalBroker),
+    );
+    // Script tools: `.distri/tools/*.ts` and `~/.distri/tools/*.ts`.
+    tool_defs.extend(
+        register_script_tools(
+            &registry,
+            &workspace_path,
+            None,
+            std::sync::Arc::new(distri_cli::interact::TerminalBroker),
+            distri_cli::local_events::LocalEvents::default(),
+        )
+        .await,
+    );
     app.add_tool_definitions(tool_defs);
 
     let stream_config = config.clone().with_timeout(60);
@@ -555,9 +558,9 @@ pub async fn run_interactive_chat(
         stream_client.register_dynamic_tool(tool);
     }
 
-    let mut last_interrupt: Option<Instant> = None;
     let shared_health: Arc<RwLock<ContextHealth>> = Arc::new(RwLock::new(ContextHealth::default()));
 
+    let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
     loop {
         {
             let health = shared_health.read().await;
@@ -565,36 +568,17 @@ pub async fn run_interactive_chat(
             print_separator_with_status(&status);
         }
 
-        let input = match rl.readline("> ") {
-            Ok(line) => {
-                last_interrupt = None; // reset on successful input
-                line
-            }
-            Err(ReadlineError::Interrupted) => {
-                // Double Ctrl+C within 2 seconds to exit
-                if let Some(prev) = last_interrupt {
-                    if prev.elapsed().as_secs() < 2 {
-                        println!("\nExiting...");
-                        break;
-                    }
-                }
-                last_interrupt = Some(Instant::now());
-                println!(
-                    "\n{}Press Ctrl+C again to exit (or Ctrl+D){}",
-                    COLOR_GRAY, COLOR_RESET
-                );
-                continue;
-            }
-            Err(ReadlineError::Eof) => {
-                println!("\nExiting...");
-                break;
-            }
+        // No terminal (piped input): one message per line, until EOF.
+        let mut line = String::new();
+        match tokio::io::AsyncBufReadExt::read_line(&mut stdin, &mut line).await {
+            Ok(0) => break,
+            Ok(_) => {}
             Err(err) => {
                 eprintln!("Error reading input: {}", err);
-                continue;
+                break;
             }
-        };
-
+        }
+        let input = line;
         let input = input.trim();
         if input.is_empty() {
             continue;
@@ -620,6 +604,16 @@ pub async fn run_interactive_chat(
                         "Context cleared - new conversation started (thread: {})",
                         &thread_id[..8]
                     );
+                    continue;
+                }
+                SlashCommandResult::Runs => {
+                    // No terminal UI here: print this chat's run tree.
+                    let client = Distri::from_config(config.clone());
+                    if let Err(err) =
+                        crate::tui::runs::print_plain(&client, Some(thread_id.clone())).await
+                    {
+                        eprintln!("Could not list runs: {}", err);
+                    }
                     continue;
                 }
                 SlashCommandResult::Resume(tid) => {
@@ -668,7 +662,7 @@ pub async fn run_interactive_chat(
             params,
             verbose,
             Some(current_agent.clone()),
-            show_tools.load(Ordering::Relaxed),
+            true,
             Some(shared_health.clone()),
         )
         .await
@@ -693,7 +687,6 @@ pub async fn run_interactive_chat(
     );
 
     // Save history and last thread_id
-    let _ = rl.save_history(&history_path);
     let _ = save_last_thread(&thread_id);
 
     Ok(())

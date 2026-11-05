@@ -1,276 +1,167 @@
-mod bash;
-mod edit;
-mod glob;
-mod grep;
-pub mod prompts;
-mod read;
-mod write;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use std::collections::HashMap;
-use std::io::{self, Write as IoWrite};
-use std::path::Path;
-
-use anyhow::Context;
 use distri::ExternalToolRegistry;
-use distri_types::{AgentEvent, Part, ToolCall, ToolDefinition, ToolResponse};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
+use distri_cli::interact::SharedBroker;
+use distri_cli::local_events::{LocalEvents, LocalToolEventKind, LogLevel};
+use distri_cli::local_tools;
+pub use distri_cli::local_tools::{register_all, register_approval_handler};
+use distri_cli::script_tools::{self, Discovery, EventSink, ScriptToolHost, ScriptToolsConfig};
+use distri_types::ToolDefinition;
 
 use crate::{COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_RESET};
 
-/// Register all local CLI tools and return their definitions (with prompts).
-pub fn register_all(
-    registry: &ExternalToolRegistry,
-    _agent_id: &str,
+/// The names the built-in handlers own; a script tool cannot take one.
+pub fn builtin_tool_names() -> BTreeSet<String> {
+    local_tools::tool_definitions()
+        .into_iter()
+        .map(|d| d.name)
+        .chain([
+            "execute_command".to_string(),
+            "approval_request".to_string(),
+        ])
+        .collect()
+}
+
+/// The script-tool host for a project; permission prompts go to `broker`.
+pub fn script_tool_host(
     workspace_root: &Path,
-) -> Vec<ToolDefinition> {
-    // Register under "*" so handlers are available to ALL agents,
-    // not just the initially-launched one.
-    bash::register(registry, "*", workspace_root);
-    read::register(registry, "*", workspace_root);
-    write::register(registry, "*", workspace_root);
-    edit::register(registry, "*", workspace_root);
-    glob::register(registry, "*", workspace_root);
-    grep::register(registry, "*", workspace_root);
-    register_execute_command(registry, "*", workspace_root);
-
-    tool_definitions()
+    distri_toml: Option<PathBuf>,
+    broker: SharedBroker,
+) -> anyhow::Result<Arc<ScriptToolHost>> {
+    let cfg = ScriptToolsConfig::for_project(workspace_root, distri_toml)?;
+    Ok(Arc::new(ScriptToolHost::new(cfg, broker)?))
 }
 
-/// Build ToolDefinitions for all local CLI tools (with prompt instructions).
-fn tool_definitions() -> Vec<ToolDefinition> {
-    vec![
-        ToolDefinition {
-            name: "Bash".into(),
-            description: "Execute a bash command and return its output.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "command": { "type": "string", "description": "The command to execute" },
-                    "timeout": { "type": "number", "description": "Optional timeout in milliseconds (max 600000)" }
-                },
-                "required": ["command"]
-            }),
-            prompt: Some(prompts::BASH_PROMPT.into()),
-            examples: None,
-            output_schema: None,
-        },
-        ToolDefinition {
-            name: "Read".into(),
-            description: "Read a file from the local filesystem.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "file_path": { "type": "string", "description": "The path to the file to read" },
-                    "offset": { "type": "number", "description": "The line number to start reading from (0-based)" },
-                    "limit": { "type": "number", "description": "The number of lines to read" }
-                },
-                "required": ["file_path"]
-            }),
-            prompt: Some(prompts::READ_PROMPT.into()),
-            examples: None,
-            output_schema: None,
-        },
-        ToolDefinition {
-            name: "Write".into(),
-            description: "Write a file to the local filesystem.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "file_path": { "type": "string", "description": "The path to the file to write" },
-                    "content": { "type": "string", "description": "The content to write to the file" }
-                },
-                "required": ["file_path", "content"]
-            }),
-            prompt: Some(prompts::WRITE_PROMPT.into()),
-            examples: None,
-            output_schema: None,
-        },
-        ToolDefinition {
-            name: "Edit".into(),
-            description: "Perform exact string replacements in files.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "file_path": { "type": "string", "description": "The path to the file to edit" },
-                    "old_string": { "type": "string", "description": "The text to replace" },
-                    "new_string": { "type": "string", "description": "The replacement text" },
-                    "replace_all": { "type": "boolean", "description": "Replace all occurrences (default false)", "default": false }
-                },
-                "required": ["file_path", "old_string", "new_string"]
-            }),
-            prompt: Some(prompts::EDIT_PROMPT.into()),
-            examples: None,
-            output_schema: None,
-        },
-        ToolDefinition {
-            name: "Glob".into(),
-            description: "Fast file pattern matching tool.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "pattern": { "type": "string", "description": "The glob pattern to match files against" },
-                    "path": { "type": "string", "description": "The directory to search in (defaults to workspace root)" }
-                },
-                "required": ["pattern"]
-            }),
-            prompt: Some(prompts::GLOB_PROMPT.into()),
-            examples: None,
-            output_schema: None,
-        },
-        ToolDefinition {
-            name: "Grep".into(),
-            description: "Search file contents with regex (ripgrep).".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "pattern": { "type": "string", "description": "The regex pattern to search for" },
-                    "path": { "type": "string", "description": "File or directory to search in" },
-                    "glob": { "type": "string", "description": "Glob pattern to filter files" },
-                    "output_mode": { "type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Output mode (default: files_with_matches)" },
-                    "-A": { "type": "number", "description": "Lines after match" },
-                    "-B": { "type": "number", "description": "Lines before match" },
-                    "-C": { "type": "number", "description": "Context lines" },
-                    "-i": { "type": "boolean", "description": "Case insensitive" },
-                    "-n": { "type": "boolean", "description": "Show line numbers" },
-                    "type": { "type": "string", "description": "File type filter (js, py, rust, etc.)" },
-                    "head_limit": { "type": "number", "description": "Limit output lines (default 250)" },
-                    "multiline": { "type": "boolean", "description": "Enable multiline matching" }
-                },
-                "required": ["pattern"]
-            }),
-            prompt: Some(prompts::GREP_PROMPT.into()),
-            examples: None,
-            output_schema: None,
-        },
-    ]
-}
-
-pub fn register_approval_handler(registry: &ExternalToolRegistry) {
-    registry.register("*", "approval_request", |call, _event| async move {
-        println!(
-            "{}Calling tool:{} {}",
-            COLOR_BRIGHT_MAGENTA, COLOR_RESET, call.tool_name
-        );
-        println!("{}Approval required{}", COLOR_BRIGHT_YELLOW, COLOR_RESET);
-        print!(
-            "{}Do you approve this operation? (y/n): {}",
-            COLOR_BRIGHT_YELLOW, COLOR_RESET
-        );
-        io::stdout().flush().ok();
-
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            return Err(anyhow::anyhow!("Failed to read approval input"));
-        }
-
-        let approved = input.trim().eq_ignore_ascii_case("y");
-        if approved {
-            println!(
-                "{}Operation approved by user.{}",
-                COLOR_BRIGHT_GREEN, COLOR_RESET
+/// Print what a scan could not register (once per invocation): the Deno-missing notice and
+/// every script that failed to load. A failure the extract cache already knew (the script has
+/// not changed since) is one line, not the whole stack again.
+pub fn print_discovery_problems(discovery: &Discovery) {
+    if let Some(notice) = discovery.deno_missing_notice() {
+        eprintln!("{}{}{}", COLOR_BRIGHT_YELLOW, notice, COLOR_RESET);
+    }
+    for p in &discovery.problems {
+        if p.cached {
+            eprintln!(
+                "{}Script tool {} not registered: {} (unchanged since it failed; `distri tools check` for details){}",
+                COLOR_BRIGHT_YELLOW,
+                p.path.display(),
+                p.summary(),
+                COLOR_RESET
             );
         } else {
-            println!("Operation rejected by user.");
+            eprintln!(
+                "{}Script tool {} not registered: {}{}",
+                COLOR_BRIGHT_YELLOW,
+                p.path.display(),
+                p.message,
+                COLOR_RESET
+            );
         }
-
-        let tool_calls = call.input.clone();
-        let approval_result = json!({
-            "approved": approved,
-            "reason": if approved { "Approved by user" } else { "Rejected by user" },
-            "tool_calls": tool_calls,
-        });
-
-        Ok(ToolResponse::direct(
-            call.tool_call_id.clone(),
-            call.tool_name.clone(),
-            approval_result,
-        ))
-    });
+    }
 }
 
-// ---------------------------------------------------------------------------
-// ExecuteCommandTool — local shell execution (legacy name for backward compat)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct ExecuteCommandParams {
-    command: String,
-    #[serde(default)]
-    cwd: Option<String>,
-    #[serde(default)]
-    env: Option<HashMap<String, String>>,
-}
-
-/// Register the `execute_command` tool for local shell execution in a workspace.
-pub fn register_execute_command(
+/// Discover `.distri/tools/*.ts` and `~/.distri/tools/*.ts`, register a handler for each next
+/// to the built-ins, and return their definitions. Permission prompts go to `broker`; progress
+/// and log lines of each call go out on `events`. Problems are printed, never fatal: the
+/// built-ins keep working.
+pub async fn register_script_tools(
     registry: &ExternalToolRegistry,
-    agent_id: &str,
     workspace_root: &Path,
-) {
-    let workspace = workspace_root.to_path_buf();
+    distri_toml: Option<PathBuf>,
+    broker: SharedBroker,
+    events: LocalEvents,
+) -> Vec<ToolDefinition> {
+    let host = match script_tool_host(workspace_root, distri_toml, broker) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!(
+                "{}Script tools disabled: {:#}{}",
+                COLOR_BRIGHT_YELLOW, e, COLOR_RESET
+            );
+            return Vec::new();
+        }
+    };
+    let discovery = host.discover(&builtin_tool_names()).await;
+    print_discovery_problems(&discovery);
+    script_tools::register(&host, registry, &discovery, events)
+}
 
-    registry.register(
-        agent_id.to_string(),
-        "execute_command".to_string(),
-        move |call: ToolCall, _event: AgentEvent| {
-            let workspace = workspace.clone();
-            async move {
-                let params: ExecuteCommandParams = serde_json::from_value(call.input.clone())
-                    .map_err(|e| anyhow::anyhow!("invalid execute_command parameters: {}", e))?;
+/// Prints a script tool's `ctx.progress` / `ctx.log` / `ctx.warn` and stderr lines on stderr
+/// as they arrive (`distri tools test`).
+pub fn print_script_events() -> EventSink {
+    Arc::new(|kind| match kind {
+        LocalToolEventKind::Progress { fraction, message } => {
+            let pct = fraction
+                .map(|f| format!("{:>3.0}%", f * 100.0))
+                .unwrap_or_else(|| "   …".to_string());
+            eprintln!(
+                "{}[{}]{} {}",
+                COLOR_BRIGHT_MAGENTA,
+                pct,
+                COLOR_RESET,
+                message.unwrap_or_default()
+            );
+        }
+        LocalToolEventKind::Log {
+            level: LogLevel::Log,
+            line,
+        } => eprintln!("{line}"),
+        LocalToolEventKind::Log {
+            level: LogLevel::Warn,
+            line,
+        } => eprintln!("{}warning:{} {}", COLOR_BRIGHT_YELLOW, COLOR_RESET, line),
+        // `tools test` prints the result itself.
+        LocalToolEventKind::Finished(_) => {}
+    })
+}
 
-                let mut working_dir = workspace.clone();
-                if let Some(ref relative) = params.cwd {
-                    let trimmed = relative.trim();
-                    if !trimmed.is_empty() && trimmed != "." {
-                        working_dir = working_dir.join(trimmed);
-                    }
+/// `distri tools check [name]`: `deno check` and the schema of each script tool. Prints one
+/// line per tool and returns `false` when any failed.
+pub async fn check_script_tools(host: &ScriptToolHost, name: Option<&str>) -> bool {
+    let discovery = host.discover(&builtin_tool_names()).await;
+    if let Some(notice) = discovery.deno_missing_notice() {
+        eprintln!("{}{}{}", COLOR_BRIGHT_YELLOW, notice, COLOR_RESET);
+        return false;
+    }
+    let reports = host.check(&discovery, name).await;
+    if reports.is_empty() {
+        match name {
+            Some(n) => eprintln!(
+                "no script tool '{}' in {} or ~/.distri/tools",
+                n,
+                host.config().project_tools_dir().display()
+            ),
+            None => eprintln!(
+                "no script tools in {} or ~/.distri/tools",
+                host.config().project_tools_dir().display()
+            ),
+        }
+        return name.is_none();
+    }
+    let mut ok = true;
+    for r in &reports {
+        match &r.result {
+            Ok(()) => println!(
+                "{}✓{} {}  deno check · schema ok",
+                COLOR_BRIGHT_GREEN, COLOR_RESET, r.name
+            ),
+            Err(lines) => {
+                ok = false;
+                let mut lines = lines.lines();
+                println!(
+                    "{}✗{} {}  {}",
+                    COLOR_BRIGHT_YELLOW,
+                    COLOR_RESET,
+                    r.name,
+                    lines.next().unwrap_or_default()
+                );
+                for l in lines {
+                    println!("    {l}");
                 }
-                std::fs::create_dir_all(&working_dir).with_context(|| {
-                    format!("failed to create working directory {:?}", working_dir)
-                })?;
-
-                let mut command = if cfg!(target_os = "windows") {
-                    let mut cmd = tokio::process::Command::new("cmd");
-                    cmd.arg("/C").arg(&params.command);
-                    cmd
-                } else {
-                    let mut cmd = tokio::process::Command::new("bash");
-                    cmd.arg("-lc").arg(&params.command);
-                    cmd
-                };
-
-                command.current_dir(&working_dir);
-                if let Some(env_map) = &params.env {
-                    for (key, value) in env_map {
-                        command.env(key, value);
-                    }
-                }
-
-                let output = command
-                    .output()
-                    .await
-                    .with_context(|| format!("failed to execute command '{}'", params.command))?;
-
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let exit_code = output.status.code().unwrap_or_default();
-
-                let response = json!({
-                    "command": params.command,
-                    "cwd": params.cwd.unwrap_or_else(|| ".".to_string()),
-                    "exit_code": exit_code,
-                    "success": output.status.success(),
-                    "stdout": stdout,
-                    "stderr": stderr
-                });
-
-                Ok(ToolResponse::from_parts(
-                    call.tool_call_id.clone(),
-                    "execute_command".to_string(),
-                    vec![Part::Data(response)],
-                ))
             }
-        },
-    );
+        }
+    }
+    ok
 }
