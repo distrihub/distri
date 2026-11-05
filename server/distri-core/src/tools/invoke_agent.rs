@@ -44,7 +44,7 @@ use crate::AgentError;
 use distri_types::invocation::{
     AgentRef, ContextScope, ExecutorHint, Invocation, Join, Target, ToolPolicy,
 };
-use distri_types::Message;
+use distri_types::{ChildRun, Message};
 use distri_types::{Part, RuntimeMode, Tool, ToolCall, ToolContext};
 
 // ── LLM-facing input ──────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ enum InvokeMode {
     Background,
 }
 
-/// LLM-facing input for `invoke_agent`. Four flat fields; everything
+/// LLM-facing input for `invoke_agent`. Five flat fields; everything
 /// else is filled by the orchestrator.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -103,10 +103,19 @@ struct InvokeAgentInput {
     /// parent can keep working and check in with the supervisor tools.
     #[serde(default)]
     mode: InvokeMode,
+
+    /// Optional short label for the sub-agent (a few words, e.g. the lesson
+    /// it is writing). Shown to the person watching in place of the agent id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
 }
 
 impl InvokeAgentInput {
-    fn into_invocation(self, parent_runtime: &RuntimeMode) -> Result<Invocation, String> {
+    fn into_invocation(
+        self,
+        parent_runtime: &RuntimeMode,
+        parent_tool_call_id: &str,
+    ) -> Result<Invocation, String> {
         if self.prompt.trim().is_empty() {
             return Err("`prompt` must be a non-empty string".into());
         }
@@ -143,6 +152,12 @@ impl InvokeAgentInput {
             join,
             executor: ExecutorHint::Auto,
             tools: ToolPolicy::default(),
+            origin: ChildRun {
+                parent_tool_call_id: Some(parent_tool_call_id.to_string())
+                    .filter(|id| !id.is_empty()),
+                title: self.title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
+                agent_type: None,
+            },
         })
     }
 }
@@ -241,7 +256,8 @@ impl Tool for InvokeAgentTool {
          sub-agent's result; pass `mode: \"background\"` to detach — \
          it returns `{ task_ids }` immediately and you manage the \
          child with get_task / wait_task / cancel_task / \
-         list_my_tasks. To run several sub-tasks in parallel, emit \
+         list_my_tasks. Pass `title` (a few words) to label the \
+         sub-agent for the person watching. To run several sub-tasks in parallel, emit \
          multiple `invoke_agent` tool calls in a single assistant \
          turn — they are executed concurrently."
             .to_string()
@@ -277,7 +293,7 @@ impl ExecutorContextTool for InvokeAgentTool {
         let raw: InvokeAgentInput = serde_json::from_value(tool_call.input.clone())
             .map_err(|e| AgentError::ToolExecution(format!("invoke_agent: invalid input: {e}")))?;
         let invocation = raw
-            .into_invocation(&context.runtime_mode)
+            .into_invocation(&context.runtime_mode, &tool_call.tool_call_id)
             .map_err(|e| AgentError::ToolExecution(format!("invoke_agent: {e}")))?;
         let orch = context.get_orchestrator()?;
         let result = orch.invoke(invocation, context.clone()).await?;
