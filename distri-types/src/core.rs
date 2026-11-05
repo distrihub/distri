@@ -625,7 +625,7 @@ impl ToolResponse {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default, ToSchema, PartialEq)]
 pub struct Task {
     pub id: String,
     pub thread_id: String,
