@@ -1,0 +1,135 @@
+[
+  {
+    "timestamp": "2026-10-14T17:46:42.100Z",
+    "thread_id": "thread-multi-run",
+    "run_id": "task-asker",
+    "event": {
+      "type": "run_started"
+    },
+    "task_id": "task-asker",
+    "parent_task_id": "task-root",
+    "agent_id": "multi_run_asker",
+    "user_id": null,
+    "identifier_id": null,
+    "workspace_id": null,
+    "channel_id": null
+  },
+  {
+    "timestamp": "2026-10-14T17:46:42.200Z",
+    "thread_id": "thread-multi-run",
+    "run_id": "task-asker",
+    "event": {
+      "type": "step_started",
+      "step_id": "step-1",
+      "step_index": 0
+    },
+    "task_id": "task-asker",
+    "parent_task_id": "task-root",
+    "agent_id": "multi_run_asker",
+    "user_id": null,
+    "identifier_id": null,
+    "workspace_id": null,
+    "channel_id": null
+  },
+  {
+    "timestamp": "2026-10-14T17:46:42.300Z",
+    "thread_id": "thread-multi-run",
+    "run_id": "task-asker",
+    "event": {
+      "type": "text_message_start",
+      "message_id": "msg-1",
+      "step_id": "step-1",
+      "role": "assistant"
+    },
+    "task_id": "task-asker",
+    "parent_task_id": "task-root",
+    "agent_id": "multi_run_asker",
+    "user_id": null,
+    "identifier_id": null,
+    "workspace_id": null,
+    "channel_id": null
+  },
+  {
+    "timestamp": "2026-10-14T17:46:42.400Z",
+    "thread_id": "thread-multi-run",
+    "run_id": "task-asker",
+    "event": {
+      "type": "text_message_content",
+      "message_id": "msg-1",
+      "step_id": "step-1",
+      "delta": "I need the release owner to decide.",
+      "stripped_content": null
+    },
+    "task_id": "task-asker",
+    "parent_task_id": "task-root",
+    "agent_id": "multi_run_asker",
+    "user_id": null,
+    "identifier_id": null,
+    "workspace_id": null,
+    "channel_id": null
+  },
+  {
+    "timestamp": "2026-10-14T17:46:42.500Z",
+    "thread_id": "thread-multi-run",
+    "run_id": "task-asker",
+    "event": {
+      "type": "text_message_end",
+      "message_id": "msg-1",
+      "step_id": "step-1"
+    },
+    "task_id": "task-asker",
+    "parent_task_id": "task-root",
+    "agent_id": "multi_run_asker",
+    "user_id": null,
+    "identifier_id": null,
+    "workspace_id": null,
+    "channel_id": null
+  },
+  {
+    "timestamp": "2026-10-14T17:46:42.600Z",
+    "thread_id": "thread-multi-run",
+    "run_id": "task-asker",
+    "event": {
+      "type": "tool_calls",
+      "step_id": "step-1",
+      "parent_message_id": "msg-1",
+      "tool_calls": [
+        {
+          "tool_call_id": "call-ask-1",
+          "tool_name": "ask_human",
+          "input": {
+            "question": "Ship the release on Friday?"
+          }
+        }
+      ]
+    },
+    "task_id": "task-asker",
+    "parent_task_id": "task-root",
+    "agent_id": "multi_run_asker",
+    "user_id": null,
+    "identifier_id": null,
+    "workspace_id": null,
+    "channel_id": null
+  },
+  {
+    "timestamp": "2026-10-14T17:46:42.700Z",
+    "thread_id": "thread-multi-run",
+    "run_id": "task-asker",
+    "event": {
+      "type": "tool_execution_start",
+      "step_id": "step-1",
+      "tool_call_id": "call-ask-1",
+      "tool_call_name": "ask_human",
+      "input": {
+        "question": "Ship the release on Friday?"
+      }
+    },
+    "task_id": "task-asker",
+    "parent_task_id": "task-root",
+    "agent_id": "multi_run_asker",
+    "user_id": null,
+    "identifier_id": null,
+    "workspace_id": null,
+    "channel_id": null
+  }
+]

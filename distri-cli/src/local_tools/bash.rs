@@ -17,7 +17,12 @@ struct BashParams {
 }
 
 /// Register the `Bash` tool for local shell execution.
-pub fn register(registry: &ExternalToolRegistry, agent_id: &str, workspace_root: &Path) {
+pub(super) fn register(
+    registry: &ExternalToolRegistry,
+    agent_id: &str,
+    workspace_root: &Path,
+    gate: super::Gate,
+) {
     let workspace = workspace_root.to_path_buf();
 
     registry.register(
@@ -25,7 +30,9 @@ pub fn register(registry: &ExternalToolRegistry, agent_id: &str, workspace_root:
         "Bash".to_string(),
         move |call: ToolCall, _event: AgentEvent| {
             let workspace = workspace.clone();
+            let gate = gate.clone();
             async move {
+                gate.authorize("Bash", &call).await?;
                 let params: BashParams = serde_json::from_value(call.input.clone())
                     .map_err(|e| anyhow::anyhow!("invalid Bash parameters: {}", e))?;
 

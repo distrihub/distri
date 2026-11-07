@@ -83,6 +83,45 @@ pub fn is_probe_call(name: &str, input: &serde_json::Value) -> bool {
     }
 }
 
+/// `k: v, k2: v2` for a tool's input, for people: strings quoted and cut,
+/// arrays as a count, objects as `{…}`. At most `max` characters.
+pub fn summarize_args(input: &serde_json::Value, max: usize) -> String {
+    let one = |v: &serde_json::Value| -> String {
+        match v {
+            serde_json::Value::String(s) => {
+                let line = s.lines().next().unwrap_or("");
+                let cut: String = line.chars().take(48).collect();
+                if cut.len() < s.len() {
+                    format!("\"{cut}…\"")
+                } else {
+                    format!("\"{cut}\"")
+                }
+            }
+            serde_json::Value::Array(a) => {
+                format!("{} item{}", a.len(), if a.len() == 1 { "" } else { "s" })
+            }
+            serde_json::Value::Object(_) => "{…}".to_string(),
+            other => other.to_string(),
+        }
+    };
+    let text = match input {
+        serde_json::Value::Object(map) if map.is_empty() => String::new(),
+        serde_json::Value::Object(map) => map
+            .iter()
+            .map(|(k, v)| format!("{k}: {}", one(v)))
+            .collect::<Vec<_>>()
+            .join(", "),
+        serde_json::Value::Null => String::new(),
+        other => one(other),
+    };
+    if text.chars().count() <= max {
+        text
+    } else {
+        let cut: String = text.chars().take(max.saturating_sub(1)).collect();
+        format!("{cut}…")
+    }
+}
+
 /// Format a tool call into a human-readable one-liner, e.g. `load_skill("my_skill")`.
 pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
     let str_field = |key: &str| {
@@ -243,6 +282,33 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
             format!("run_skill(\"{}\", mode: {})", truncate(&skill, 40), mode)
         }
         "final" | "reflect" | "console_log" => format!("{}(...)", name),
+        "invoke_agent" => {
+            let agent = input
+                .get("agent")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<ad-hoc>");
+            let label = input
+                .get("title")
+                .or_else(|| input.get("prompt"))
+                .and_then(|v| v.as_str())
+                .map(|s| format!(" · \"{}\"", truncate(s.lines().next().unwrap_or(s), 60)))
+                .unwrap_or_default();
+            let mode = input
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .filter(|m| *m != "in_process")
+                .map(|m| format!(" · {m}"))
+                .unwrap_or_default();
+            format!("invoke_agent({agent}{label}{mode})")
+        }
+        "write_todos" => {
+            let n = input
+                .get("todos")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("write_todos({n} item{})", if n == 1 { "" } else { "s" })
+        }
         _ => {
             // HTTP factory tools (e.g. distri_request) take
             // {path | url, method?, body?, headers?}. `path` is for the
@@ -268,9 +334,7 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
                 }
                 return format!("{}({} {})", name, method, truncate(target, 60));
             }
-            let compact = serde_json::to_string(input).unwrap_or_else(|_| "...".into());
-            let preview = truncate(&compact, 80);
-            format!("{}({})", name, preview)
+            format!("{}({})", name, summarize_args(input, 80))
         }
     }
 }

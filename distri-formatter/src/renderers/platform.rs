@@ -1,8 +1,9 @@
 use super::RESULT_PREFIX;
 use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
 use distri_types::{Part, ToolResponse};
+use std::io::Write;
 
-pub fn render_platform_tool(result: &ToolResponse) {
+pub fn render_platform_tool(out: &mut dyn Write, result: &ToolResponse) {
     let name = result.tool_name.as_str();
     let text = first_text(&result.parts);
     let data = first_data(&result.parts);
@@ -16,12 +17,17 @@ pub fn render_platform_tool(result: &ToolResponse) {
                     .and_then(|v| v.as_array())
                     .map(|a| a.len())
                     .unwrap_or(0);
-                println!(
+                outln!(
+                    out,
                     "{}{}Loaded \"{}\" ({} steps){}",
-                    COLOR_GRAY, RESULT_PREFIX, skill_name, steps, COLOR_RESET
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    skill_name,
+                    steps,
+                    COLOR_RESET
                 );
             } else {
-                render_one_liner(text, false);
+                render_one_liner(out, text, false);
             }
         }
         "list_skills" => {
@@ -29,9 +35,13 @@ pub fn render_platform_tool(result: &ToolResponse) {
                 .and_then(|d| d.as_array())
                 .map(|a| a.len())
                 .unwrap_or(0);
-            println!(
+            outln!(
+                out,
                 "{}{}Found {} skills{}",
-                COLOR_GRAY, RESULT_PREFIX, count, COLOR_RESET
+                COLOR_GRAY,
+                RESULT_PREFIX,
+                count,
+                COLOR_RESET
             );
         }
         "list_agents" => {
@@ -39,35 +49,47 @@ pub fn render_platform_tool(result: &ToolResponse) {
                 .and_then(|d| d.as_array())
                 .map(|a| a.len())
                 .unwrap_or(0);
-            println!(
+            outln!(
+                out,
                 "{}{}Found {} agents{}",
-                COLOR_GRAY, RESULT_PREFIX, count, COLOR_RESET
+                COLOR_GRAY,
+                RESULT_PREFIX,
+                count,
+                COLOR_RESET
             );
         }
         "create_skill" => {
             let skill_name = data
                 .and_then(|d| d.get("name").and_then(|v| v.as_str()))
                 .unwrap_or("skill");
-            println!(
+            outln!(
+                out,
                 "{}{}Created \"{}\"{}",
-                COLOR_GRAY, RESULT_PREFIX, skill_name, COLOR_RESET
+                COLOR_GRAY,
+                RESULT_PREFIX,
+                skill_name,
+                COLOR_RESET
             );
         }
         "delete_skill" => {
-            println!("{}{}Deleted{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
+            outln!(out, "{}{}Deleted{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
         }
         "write_to_storage" => {
-            println!("{}{}Saved{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
+            outln!(out, "{}{}Saved{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
         }
         "read_from_storage" => {
             if let Some(t) = text {
                 let lines = t.lines().count();
-                println!(
+                outln!(
+                    out,
                     "{}{}({} lines){}",
-                    COLOR_GRAY, RESULT_PREFIX, lines, COLOR_RESET
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    lines,
+                    COLOR_RESET
                 );
             } else {
-                println!("{}{}Done{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
+                outln!(out, "{}{}Done{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
             }
         }
         "tool_search" => {
@@ -78,19 +100,29 @@ pub fn render_platform_tool(result: &ToolResponse) {
                 .and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
                 .and_then(|v| v.get("tools_found").and_then(|n| n.as_u64()))
                 .unwrap_or(0);
-            println!(
+            outln!(
+                out,
                 "{}{}Found {} tools{}",
-                COLOR_GRAY, RESULT_PREFIX, count, COLOR_RESET
+                COLOR_GRAY,
+                RESULT_PREFIX,
+                count,
+                COLOR_RESET
             );
         }
         "inject_connection_env" => {
             if false {
-                render_one_liner(text, true);
+                render_one_liner(out, text, true);
             } else {
-                println!("{}{}Connected{}", COLOR_GREEN, RESULT_PREFIX, COLOR_RESET);
+                outln!(
+                    out,
+                    "{}{}Connected{}",
+                    COLOR_GREEN,
+                    RESULT_PREFIX,
+                    COLOR_RESET
+                );
             }
         }
-        _ => render_one_liner(text, false),
+        _ => render_one_liner(out, text, false),
     }
 }
 
@@ -110,7 +142,7 @@ fn first_data(parts: &[Part]) -> Option<&serde_json::Value> {
         .find_map(|p| if let Part::Data(v) = p { Some(v) } else { None })
 }
 
-fn render_one_liner(text: Option<&str>, is_error: bool) {
+fn render_one_liner(out: &mut dyn Write, text: Option<&str>, is_error: bool) {
     let color = if is_error { COLOR_RED } else { COLOR_GRAY };
     match text {
         Some(t) => {
@@ -120,10 +152,17 @@ fn render_one_liner(text: Option<&str>, is_error: bool) {
             } else {
                 first_line.to_string()
             };
-            println!("{}{}{}{}", color, RESULT_PREFIX, truncated, COLOR_RESET);
+            outln!(
+                out,
+                "{}{}{}{}",
+                color,
+                RESULT_PREFIX,
+                truncated,
+                COLOR_RESET
+            );
         }
         None => {
-            println!("{}{}Done{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
+            outln!(out, "{}{}Done{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
         }
     }
 }

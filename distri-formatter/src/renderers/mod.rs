@@ -1,3 +1,16 @@
+use std::io::Write;
+
+/// `println!` into the renderer's sink. Write errors are dropped: a closed
+/// pipe or a full buffer must never fail rendering.
+macro_rules! outln {
+    ($out:expr) => {{
+        let _ = std::io::Write::write_all(&mut *$out, b"\n");
+    }};
+    ($out:expr, $($arg:tt)*) => {{
+        let _ = std::io::Write::write_fmt(&mut *$out, format_args!("{}\n", format_args!($($arg)*)));
+    }};
+}
+
 mod browser;
 mod code;
 pub(crate) mod data;
@@ -28,7 +41,7 @@ pub fn truncate_str(s: &str, max_bytes: usize) -> &str {
 }
 
 /// Dispatch tool result rendering to the appropriate tool-specific renderer.
-pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
+pub fn render_tool_output(out: &mut dyn Write, result: &ToolResponse, verbose: bool) {
     let _ = verbose; // verbose handled by caller; formatting is always the same
 
     let name = result.tool_name.as_str();
@@ -47,50 +60,56 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
         | "write_to_storage"
         | "read_from_storage"
         | "inject_connection_env" => {
-            platform::render_platform_tool(result);
+            platform::render_platform_tool(out, result);
         }
 
         // Browser / scraping
-        "browsr_scrape" | "browsr_crawl" => browser::render_scrape(result),
-        "browsr_browser" | "browser_step" => browser::render_browser_step(result),
+        "browsr_scrape" | "browsr_crawl" => browser::render_scrape(out, result),
+        "browsr_browser" | "browser_step" => browser::render_browser_step(out, result),
 
         // Search
-        "search" => search::render_search(result),
+        "search" => search::render_search(out, result),
 
         // Local CLI tools (claude-code style)
         "Bash" | "Read" | "Write" | "Edit" | "Glob" | "Grep" => {
-            local_tools::render_local_tool(result)
+            local_tools::render_local_tool(out, result)
         }
 
         // Shell
         "start_shell" | "execute_shell" | "stop_shell" | "execute_command" => {
-            shell::render_shell(result)
+            shell::render_shell(out, result)
         }
 
         // Todos
-        "write_todos" => render_todos(result),
+        "write_todos" => render_todos(out, result),
 
         // Code execution
-        "distri_execute_code" => code::render_code_execution(result),
+        "distri_execute_code" => code::render_code_execution(out, result),
 
         // Artifact tool
-        "artifact_tool" => render_artifact(result),
+        "artifact_tool" => render_artifact(out, result),
 
         // HTTP request tool
-        "http_request" => render_request(result),
+        "http_request" => render_request(out, result),
 
         // Default: generic part-by-part rendering
-        _ => render_tool_result(result),
+        _ => render_tool_result(out, result),
     }
 }
 
-fn render_todos(result: &ToolResponse) {
+fn render_todos(out: &mut dyn Write, result: &ToolResponse) {
     use distri_types::Part;
     for part in &result.parts {
         if let Part::Data(value) = part
             && let Some(todos) = value.get("todos").and_then(|v| v.as_array())
         {
-            println!("{}{}Updated Plan{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
+            outln!(
+                out,
+                "{}{}Updated Plan{}",
+                COLOR_GRAY,
+                RESULT_PREFIX,
+                COLOR_RESET
+            );
             for todo in todos {
                 let content = todo
                     .get("content")
@@ -105,15 +124,15 @@ fn render_todos(result: &ToolResponse) {
                     "in_progress" => "◐",
                     _ => "□",
                 };
-                println!("{}  {} {}{}", COLOR_GRAY, icon, content, COLOR_RESET);
+                outln!(out, "{}  {} {}{}", COLOR_GRAY, icon, content, COLOR_RESET);
             }
             return;
         }
     }
-    render_tool_result(result);
+    render_tool_result(out, result);
 }
 
-fn render_request(result: &ToolResponse) {
+fn render_request(out: &mut dyn Write, result: &ToolResponse) {
     use distri_types::Part;
     for part in &result.parts {
         if let Part::Data(value) = part {
@@ -130,28 +149,39 @@ fn render_request(result: &ToolResponse) {
             };
 
             if ok {
-                println!(
+                outln!(
+                    out,
                     "{}{}{} — {}{}",
-                    COLOR_GRAY, RESULT_PREFIX, status, preview, COLOR_RESET
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    status,
+                    preview,
+                    COLOR_RESET
                 );
             } else {
-                println!(
+                outln!(
+                    out,
                     "{}{}{} — {}{}",
-                    COLOR_RED, RESULT_PREFIX, status, preview, COLOR_RESET
+                    COLOR_RED,
+                    RESULT_PREFIX,
+                    status,
+                    preview,
+                    COLOR_RESET
                 );
             }
             return;
         }
     }
-    render_tool_result(result);
+    render_tool_result(out, result);
 }
 
-fn render_artifact(result: &ToolResponse) {
+fn render_artifact(out: &mut dyn Write, result: &ToolResponse) {
     use distri_types::Part;
     for part in &result.parts {
         match part {
             Part::Artifact(meta) => {
-                println!(
+                outln!(
+                    out,
                     "{}{}artifact: {} ({}){}",
                     COLOR_GRAY,
                     RESULT_PREFIX,
@@ -164,7 +194,14 @@ fn render_artifact(result: &ToolResponse) {
             }
             Part::Text(text) => {
                 let preview: String = text.lines().take(1).collect();
-                println!("{}{}{}{}", COLOR_GRAY, RESULT_PREFIX, preview, COLOR_RESET);
+                outln!(
+                    out,
+                    "{}{}{}{}",
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    preview,
+                    COLOR_RESET
+                );
             }
             _ => {}
         }

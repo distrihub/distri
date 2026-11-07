@@ -10,7 +10,6 @@ mod chat;
 mod commands;
 mod config;
 mod credentials;
-mod input;
 mod integrate;
 mod launcher;
 mod logging;
@@ -21,6 +20,8 @@ mod registries;
 mod threads;
 mod tools;
 mod traces;
+mod tui;
+mod tui_chat;
 
 use chat::run_interactive_chat;
 use commands::{
@@ -30,8 +31,9 @@ use commands::{
 };
 use config::resolve_workspace;
 use distri::run::{build_run_params, resolve_agent_name, RunOptions};
+use distri_cli::permissions::{PermissionEngine, PermissionMode};
 use threads::resolve_resume_arg;
-use tools::{register_all, register_approval_handler};
+use tools::{register_all, register_approval_handler, register_script_tools};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -47,6 +49,11 @@ struct Cli {
     /// Verbose output (forwarded to distri-server for serve)
     #[clap(long, short, global = true)]
     verbose: bool,
+
+    /// Permission mode for local tools (overrides DISTRI_PERMISSION_MODE and
+    /// distri.toml [permissions] mode)
+    #[clap(long, global = true, value_enum)]
+    permission_mode: Option<PermissionMode>,
 
     #[clap(subcommand)]
     command: Option<Commands>,
@@ -101,6 +108,18 @@ enum Commands {
         /// Repeatable: --header x-trace-source=cli
         #[clap(long = "header", value_name = "KEY=VALUE")]
         headers: Vec<String>,
+    },
+
+    /// Every run you have going (sub-agents and background forks as a
+    /// tree): attach to one to watch it live, answer what it is waiting
+    /// on, detach and it keeps going.
+    Sessions {
+        /// Only runs on this thread
+        #[clap(long)]
+        thread: Option<String>,
+        /// The agent new messages go to (default: distri)
+        #[clap(long)]
+        agent: Option<String>,
     },
 
     /// Agent-related commands (defaults to list)
@@ -308,6 +327,25 @@ enum ToolsCommands {
         filter: Option<String>,
         #[clap(long, help = "Agent to inspect for local tools (optional)")]
         agent: Option<String>,
+    },
+    /// Scaffold a script tool at `.distri/tools/<name>.ts` (or `~/.distri/tools/` with --user)
+    New {
+        #[clap(help = "Tool name")]
+        name: String,
+        #[clap(long, help = "Create it in ~/.distri/tools/ instead of the project")]
+        user: bool,
+    },
+    /// Type-check script tools (`deno check`) and their input schemas
+    Check {
+        #[clap(help = "Tool name (or script file name); default: every script tool")]
+        name: Option<String>,
+    },
+    /// Run a script tool locally, without an agent
+    Test {
+        #[clap(help = "Tool name (or script file name)")]
+        name: String,
+        #[clap(help = "Tool input as JSON (default empty object)")]
+        input: Option<String>,
     },
     /// Call a tool directly via the server
     Invoke {
@@ -676,16 +714,34 @@ async fn main() -> Result<()> {
                 .dynamic_tools
                 .unwrap_or_default();
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
-            run_interactive_chat(
-                &mut app,
-                &config,
-                &base_url,
-                agent_name,
-                cli.verbose,
-                resume,
-                extra_tools,
-            )
-            .await?;
+            if tui::available() {
+                tui_chat::run_tui_chat(
+                    &mut app,
+                    &config,
+                    tui_chat::TuiChatOptions {
+                        agent: agent_name,
+                        resume,
+                        extra_tools,
+                        permission_mode: cli.permission_mode,
+                        distri_toml: cli.config.clone(),
+                        open_runs: false,
+                        thread: None,
+                    },
+                )
+                .await?;
+            } else {
+                run_interactive_chat(
+                    &mut app,
+                    &config,
+                    &base_url,
+                    agent_name,
+                    cli.verbose,
+                    resume,
+                    extra_tools,
+                    cli.permission_mode,
+                )
+                .await?;
+            }
         }
         Commands::Run {
             agent,
@@ -766,7 +822,26 @@ async fn main() -> Result<()> {
             // external tool calls the server delegates back — there is no
             // remote/sandbox mode where a container owns tool execution
             // instead.
-            let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
+            let permissions =
+                PermissionEngine::load(&workspace, cli.config.as_deref(), cli.permission_mode)?;
+            let mut tool_defs = register_all(
+                &app.registry(),
+                &agent_name,
+                &workspace,
+                permissions,
+                std::sync::Arc::new(distri_cli::interact::TerminalBroker),
+            );
+            // Script tools: `.distri/tools/*.ts` and `~/.distri/tools/*.ts`.
+            tool_defs.extend(
+                register_script_tools(
+                    &app.registry(),
+                    &workspace,
+                    cli.config.clone(),
+                    std::sync::Arc::new(distri_cli::interact::TerminalBroker),
+                    distri_cli::local_events::LocalEvents::default(),
+                )
+                .await,
+            );
             app.add_tool_definitions(tool_defs);
 
             // Build params via the shared entry point. We split build +
@@ -781,7 +856,10 @@ async fn main() -> Result<()> {
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
-            register_approval_handler(&registry);
+            register_approval_handler(
+                &registry,
+                std::sync::Arc::new(distri_cli::interact::TerminalBroker),
+            );
             let mut stream_config = config.clone().with_timeout(600);
             stream_config.traceparent = traceparent;
             let http_client = stream_config.build_http_client()?;
@@ -803,6 +881,28 @@ async fn main() -> Result<()> {
                 true,
             )
             .await?;
+        }
+        Commands::Sessions { thread, agent } => {
+            if tui::available() {
+                // The chat TUI with the run tree open: follow any run, answer
+                // what it waits on with this machine's tools, then keep chatting.
+                tui_chat::run_tui_chat(
+                    &mut app,
+                    &config,
+                    tui_chat::TuiChatOptions {
+                        agent: agent.unwrap_or_else(|| "distri".to_string()),
+                        resume: None,
+                        extra_tools: Vec::new(),
+                        permission_mode: cli.permission_mode,
+                        distri_toml: cli.config.clone(),
+                        open_runs: true,
+                        thread,
+                    },
+                )
+                .await?;
+            } else {
+                tui::runs::print_plain(&client, thread).await?;
+            }
         }
         Commands::Agents { command } => match command.unwrap_or(AgentsCommands::List) {
             AgentsCommands::List => {
@@ -873,19 +973,113 @@ async fn main() -> Result<()> {
             agent: None,
         }) {
             ToolsCommands::List { filter, agent } => {
+                let term = filter.map(|t| t.to_lowercase());
+                let matches = |name: &str, description: &str| {
+                    term.as_ref().is_none_or(|t| {
+                        name.to_lowercase().contains(t) || description.to_lowercase().contains(t)
+                    })
+                };
+
+                // Local script tools first: they need no server.
+                let host = tools::script_tool_host(
+                    &workspace,
+                    cli.config.clone(),
+                    std::sync::Arc::new(distri_cli::interact::TerminalBroker),
+                )?;
+                let discovery = host.discover(&tools::builtin_tool_names()).await;
+                tools::print_discovery_problems(&discovery);
+                let scripts: Vec<_> = discovery
+                    .tools
+                    .iter()
+                    .filter(|t| matches(t.name(), &t.export.description))
+                    .collect();
+                if !scripts.is_empty() {
+                    println!("Script tools:");
+                    for t in scripts {
+                        println!(
+                            "  {} - {} [{}: {}]",
+                            t.name(),
+                            t.export.description,
+                            t.scope,
+                            t.path.display()
+                        );
+                    }
+                    println!();
+                }
+
                 if let Some(agent_id) = agent {
                     app.fetch_agent_card(&agent_id).await?;
                 }
                 let mut tools = app.list_tools().await?;
-                if let Some(term) = filter {
-                    let term = term.to_lowercase();
-                    tools.retain(|t| {
-                        t.tool_name.to_lowercase().contains(&term)
-                            || t.description.to_lowercase().contains(&term)
-                    });
-                }
+                tools.retain(|t| matches(&t.tool_name, &t.description));
                 for tool in tools {
                     println!("{} - {}", tool.tool_name, tool.description);
+                }
+            }
+            ToolsCommands::New { name, user } => {
+                let host = tools::script_tool_host(
+                    &workspace,
+                    cli.config.clone(),
+                    std::sync::Arc::new(distri_cli::interact::TerminalBroker),
+                )?;
+                let dir = if user {
+                    host.config()
+                        .user_tools_dir
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("no user tools directory"))?
+                } else {
+                    host.config().project_tools_dir()
+                };
+                let path = distri_cli::script_tools::scaffold(&dir, &name)?;
+                println!("Created {}", path.display());
+                println!(
+                    "Try it: distri tools test {} '{{\"input\": \"hello\"}}'",
+                    name
+                );
+            }
+            ToolsCommands::Test { name, input } => {
+                let input: serde_json::Value = match input {
+                    Some(raw) => serde_json::from_str(&raw)
+                        .with_context(|| format!("input is not JSON: {raw}"))?,
+                    None => serde_json::Value::Object(Default::default()),
+                };
+                let host = tools::script_tool_host(
+                    &workspace,
+                    cli.config.clone(),
+                    std::sync::Arc::new(distri_cli::interact::TerminalBroker),
+                )?;
+                let discovery = host.discover(&tools::builtin_tool_names()).await;
+                tools::print_discovery_problems(&discovery);
+                let Some(tool) = discovery.find(&name) else {
+                    anyhow::bail!(
+                        "no script tool '{}' in {} or ~/.distri/tools",
+                        name,
+                        host.config().project_tools_dir().display()
+                    );
+                };
+                // The input is checked against the schema first; progress and log lines are
+                // printed as they arrive.
+                match host
+                    .call(tool, &input, Some(tools::print_script_events()))
+                    .await
+                {
+                    Ok(out) => {
+                        println!("{}", serde_json::to_string_pretty(&out.value)?);
+                    }
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            ToolsCommands::Check { name } => {
+                let host = tools::script_tool_host(
+                    &workspace,
+                    cli.config.clone(),
+                    std::sync::Arc::new(distri_cli::interact::TerminalBroker),
+                )?;
+                if !tools::check_script_tools(&host, name.as_deref()).await {
+                    std::process::exit(1);
                 }
             }
             ToolsCommands::Invoke {
