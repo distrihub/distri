@@ -1890,7 +1890,9 @@ mod content_filter_chunk_tests {
         let delta = r#"{"choices":[{"delta":{"content":"hi"},"content_filter_results":{},"index":0}],"id":"x","object":"chat.completion.chunk"}"#;
         assert!(!is_content_filter_annotation(delta));
         assert!(!is_content_filter_annotation(r#"{"choices":[]}"#));
-        assert!(!is_content_filter_annotation(r#"{"error":{"message":"bad"}}"#));
+        assert!(!is_content_filter_annotation(
+            r#"{"error":{"message":"bad"}}"#
+        ));
         assert!(!is_content_filter_annotation("not json"));
     }
 }

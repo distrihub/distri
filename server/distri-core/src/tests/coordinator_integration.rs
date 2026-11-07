@@ -436,16 +436,16 @@ async fn test_subtask_callback_round_trips_and_lists_pending() {
 async fn test_mark_subtask_notified_is_idempotent_and_excludes_from_pending() {
     let (coord, _task_store) = make_coordinator().await;
 
-    coord
-        .set_subtask_callback("child-2", "{}")
-        .await
-        .unwrap();
+    coord.set_subtask_callback("child-2", "{}").await.unwrap();
 
     let first = coord.mark_subtask_notified("child-2").await.unwrap();
     assert!(first, "first call must flip pending -> notified");
 
     let second = coord.mark_subtask_notified("child-2").await.unwrap();
-    assert!(!second, "second call on an already-notified id must be a no-op");
+    assert!(
+        !second,
+        "second call on an already-notified id must be a no-op"
+    );
 
     // Dropped from the pending list...
     assert!(coord
@@ -465,7 +465,10 @@ async fn test_list_pending_subtask_callbacks_excludes_notified() {
     let (coord, _task_store) = make_coordinator().await;
 
     coord.set_subtask_callback("pending-1", "{}").await.unwrap();
-    coord.set_subtask_callback("notified-1", "{}").await.unwrap();
+    coord
+        .set_subtask_callback("notified-1", "{}")
+        .await
+        .unwrap();
     coord.mark_subtask_notified("notified-1").await.unwrap();
 
     let pending = coord.list_pending_subtask_callbacks().await.unwrap();
