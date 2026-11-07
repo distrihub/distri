@@ -141,16 +141,8 @@ mod tests {
     /// override.
     #[test]
     fn request_stays_in_cli_mode() {
-        let params = build_message_params_full(
-            "test task".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
+        let params =
+            build_message_params_full("test task".into(), None, None, None, None, None, None, None);
         let metadata = parse_metadata(&params);
         assert_eq!(metadata.runtime_mode, RuntimeMode::Cli);
     }

@@ -2378,8 +2378,8 @@ mod tests {
 #[cfg(test)]
 mod task_activity_tests {
     use super::*;
-    use crate::invocation::{Invocation, Target};
     use crate::Message;
+    use crate::invocation::{Invocation, Target};
 
     fn blob(target: Target, title: Option<&str>) -> serde_json::Value {
         let mut invocation = Invocation::single(target);
