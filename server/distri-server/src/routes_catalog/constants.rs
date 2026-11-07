@@ -105,6 +105,9 @@ define_routes! {
     /// Live event stream (SSE) for one task — a monitor's per-child feed.
     TaskEvents        => "/tasks/{task_id}/events" { GET: Execute },
     TaskGet           => "/tasks/{task_id}" { GET: Execute },
+    /// Run tree: root tasks with their sub-agents and background forks.
+    Runs              => "/runs" { GET: Execute },
+    RunGet            => "/runs/{task_id}" { GET: Execute },
     Tools             => "/tools" { GET: Execute },
 
     // ── Threads + messages (run surface) ────────────────────────────────────
