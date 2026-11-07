@@ -281,10 +281,7 @@ impl DistriClientApp {
     /// — no system prompt, tools, or model settings. Use this whenever you only
     /// need to verify an agent exists or resolve its canonical name, rather than
     /// loading the entire definition.
-    pub async fn fetch_agent_card(
-        &self,
-        agent_id: &str,
-    ) -> Result<Option<AgentCard>, ClientError> {
+    pub async fn fetch_agent_card(&self, agent_id: &str) -> Result<Option<AgentCard>, ClientError> {
         let url = format!("{}/agents/{}/.well-known/agent.json", self.base(), agent_id);
         let resp = self.http.get(url).send().await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {

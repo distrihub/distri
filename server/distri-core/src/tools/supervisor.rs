@@ -519,8 +519,10 @@ impl ExecutorContextTool for GetTaskResultTool {
         tool_call: distri_types::ToolCall,
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
-        let input: GetTaskResultInput = serde_json::from_value(tool_call.input.clone())
-            .map_err(|e| AgentError::ToolExecution(format!("get_task_result: invalid input: {e}")))?;
+        let input: GetTaskResultInput =
+            serde_json::from_value(tool_call.input.clone()).map_err(|e| {
+                AgentError::ToolExecution(format!("get_task_result: invalid input: {e}"))
+            })?;
         let orch = context.get_orchestrator()?;
 
         let row = orch

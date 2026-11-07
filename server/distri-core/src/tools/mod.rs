@@ -39,7 +39,9 @@ pub use builtin::{get_builtin_tools, ConsoleLogTool, DistriExecuteCodeTool, Fina
 pub use inject_env::InjectConnectionEnvTool;
 pub use invoke_agent::InvokeAgentTool;
 pub use send_message::SendMessageTool;
-pub use supervisor::{CancelTaskTool, GetTaskResultTool, GetTaskTool, ListMyTasksTool, WaitTaskTool};
+pub use supervisor::{
+    CancelTaskTool, GetTaskResultTool, GetTaskTool, ListMyTasksTool, WaitTaskTool,
+};
 pub use tool_search::ToolSearchTool;
 
 #[derive(Debug, Clone)]

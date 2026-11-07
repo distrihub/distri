@@ -382,12 +382,21 @@ mod grouping_tests {
 
     #[test]
     fn multiple_tool_calls_collapse_into_one_step() {
-        let calls = vec![tc("a", "search"), tc("b", "browsr_scrape"), tc("c", "search")];
+        let calls = vec![
+            tc("a", "search"),
+            tc("b", "browsr_scrape"),
+            tc("c", "search"),
+        ];
         let steps = UnifiedPlanner::group_tool_calls_into_steps(calls, "thinking".to_string());
 
         // The whole batch must land in a SINGLE step — this is the fix for
         // one-tool-per-iteration sequential execution.
-        assert_eq!(steps.len(), 1, "expected one grouped step, got {}", steps.len());
+        assert_eq!(
+            steps.len(),
+            1,
+            "expected one grouped step, got {}",
+            steps.len()
+        );
         match &steps[0].action {
             Action::ToolCalls { tool_calls } => {
                 assert_eq!(tool_calls.len(), 3, "all three calls must be grouped");
