@@ -151,7 +151,11 @@ impl ExecutorContextTool for LoadSkillTool {
                 // `preload_skills` path). Same thread, fresh task_id/run_id,
                 // parent_task_id = current task, skill body as an instruction
                 // overlay on the same agent; only the gist returns to the parent.
-                let fork = (skill_id.to_string(), skill.content.clone(), skill.model.clone());
+                let fork = (
+                    skill_id.to_string(),
+                    skill.content.clone(),
+                    skill.model.clone(),
+                );
                 let summary = match orchestrator.fork_skill(&context, fork).await {
                     Ok(result) => crate::agent::invoke::skill_gist(skill_id, &result),
                     Err(e) => {

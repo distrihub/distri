@@ -8,9 +8,7 @@
 
 use std::sync::Arc;
 
-use distri_types::{
-    CreateThreadRequest, ExecutionStatus, Part, TaskStatus,
-};
+use distri_types::{CreateThreadRequest, ExecutionStatus, Part, TaskStatus};
 use serde_json::json;
 
 use crate::agent::strategy::execution::{AgentExecutor, ExecutionStrategy};
@@ -130,11 +128,7 @@ async fn should_continue_true_does_not_stop() {
     let ctx = setup_running_context().await;
     let executor = executor_for(&ctx);
 
-    store_tool_result(
-        &ctx,
-        vec![Part::Data(json!({ "should_continue": true }))],
-    )
-    .await;
+    store_tool_result(&ctx, vec![Part::Data(json!({ "should_continue": true }))]).await;
 
     let cont = executor.should_continue(&[], 0, ctx.clone()).await;
     assert!(cont, "should_continue:true must not stop the turn");

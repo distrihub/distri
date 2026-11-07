@@ -193,9 +193,7 @@ async fn get_secret(
     };
 
     match store.get(&key).await {
-        Ok(Some(secret)) => {
-            HttpResponse::Ok().json(to_secret_response(secret, &sensitive_keys()))
-        }
+        Ok(Some(secret)) => HttpResponse::Ok().json(to_secret_response(secret, &sensitive_keys())),
         Ok(None) => HttpResponse::NotFound().json(json!({"error": "Secret not found"})),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
