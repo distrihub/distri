@@ -169,7 +169,9 @@ pub struct ResponseUsage {
     pub total_tokens: u32,
 }
 
-fn deserialize_usage<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<ResponseUsage, D::Error> {
+fn deserialize_usage<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ResponseUsage, D::Error> {
     Option::<ResponseUsage>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
@@ -182,9 +184,13 @@ enum ResponseEventPayload {
 }
 
 fn lifecycle_response(data: &str) -> Result<CreateResponseResponse, String> {
-    serde_json::from_str::<ResponseEventPayload>(data).map(|payload| match payload {
-        ResponseEventPayload::Wrapped { response } | ResponseEventPayload::Bare(response) => response,
-    }).map_err(|error| error.to_string())
+    serde_json::from_str::<ResponseEventPayload>(data)
+        .map(|payload| match payload {
+            ResponseEventPayload::Wrapped { response } | ResponseEventPayload::Bare(response) => {
+                response
+            }
+        })
+        .map_err(|error| error.to_string())
 }
 
 // ─── Streaming Types ─────────────────────────────────────────────────────────
@@ -599,23 +605,36 @@ mod response_event_tests {
                 {"type":"function_call","id":"fc_1","call_id":"call_1","name":"final","arguments":"{}"}
             ],"usage":{"input_tokens":123,"output_tokens":45,"total_tokens":168}
         }}).to_string();
-        let event = parse_typed_event("response.completed", &data).unwrap().unwrap();
-        let TypedStreamEvent::ResponseCompleted(response) = event else {panic!("wrong event")};
-        assert_eq!(response.usage.input_tokens,123);
-        assert_eq!(response.usage.output_tokens,45);
-        assert_eq!(response.usage.total_tokens,168);
-        assert!(matches!(&response.output[1], OutputItem::FunctionCall(call) if call.name == "final"));
+        let event = parse_typed_event("response.completed", &data)
+            .unwrap()
+            .unwrap();
+        let TypedStreamEvent::ResponseCompleted(response) = event else {
+            panic!("wrong event")
+        };
+        assert_eq!(response.usage.input_tokens, 123);
+        assert_eq!(response.usage.output_tokens, 45);
+        assert_eq!(response.usage.total_tokens, 168);
+        assert!(
+            matches!(&response.output[1], OutputItem::FunctionCall(call) if call.name == "final")
+        );
     }
 
     #[test]
     fn created_null_usage_and_failed_envelopes_are_not_dropped() {
         let created = json!({"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[],"usage":null}}).to_string();
-        assert!(matches!(parse_typed_event("response.created", &created).unwrap().unwrap(), TypedStreamEvent::ResponseCreated(_)));
-        for status in ["failed","incomplete"] {
+        assert!(matches!(
+            parse_typed_event("response.created", &created)
+                .unwrap()
+                .unwrap(),
+            TypedStreamEvent::ResponseCreated(_)
+        ));
+        for status in ["failed", "incomplete"] {
             let event_type = format!("response.{status}");
             let data = json!({"type":event_type,"response":{"id":"resp_1","status":status,"output":[],"usage":null}}).to_string();
-            let parsed = parse_typed_event(&event_type,&data).unwrap().unwrap();
-            assert!(matches!(parsed,TypedStreamEvent::ResponseFailed(response) if response.status == status));
+            let parsed = parse_typed_event(&event_type, &data).unwrap().unwrap();
+            assert!(
+                matches!(parsed,TypedStreamEvent::ResponseFailed(response) if response.status == status)
+            );
         }
     }
 }
