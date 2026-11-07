@@ -21,7 +21,12 @@ const MAX_LINES: usize = 2000;
 /// as line-numbered text in a `Part::Data`; images come back as a small
 /// `Part::Data` descriptor PLUS a `Part::Image` so the multimodal model
 /// can see them on the next turn.
-pub fn register(registry: &ExternalToolRegistry, agent_id: &str, workspace_root: &Path) {
+pub(super) fn register(
+    registry: &ExternalToolRegistry,
+    agent_id: &str,
+    workspace_root: &Path,
+    gate: super::Gate,
+) {
     let workspace = workspace_root.to_path_buf();
 
     registry.register(
@@ -29,7 +34,9 @@ pub fn register(registry: &ExternalToolRegistry, agent_id: &str, workspace_root:
         "Read".to_string(),
         move |call: ToolCall, _event: AgentEvent| {
             let workspace = workspace.clone();
+            let gate = gate.clone();
             async move {
+                gate.authorize("Read", &call).await?;
                 let params: ReadParams = serde_json::from_value(call.input.clone())
                     .map_err(|e| anyhow::anyhow!("invalid Read parameters: {}", e))?;
 

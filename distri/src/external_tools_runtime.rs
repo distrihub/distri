@@ -6,16 +6,27 @@ use distri_types::{AgentEvent, ToolCall, ToolResponse};
 type HandlerFuture = Pin<Box<dyn Future<Output = Result<ToolResponse>> + Send>>;
 type Handler = Arc<dyn Fn(ToolCall, AgentEvent) -> HandlerFuture + Send + Sync + 'static>;
 
+/// Told about every call a handler finished: the call and what it returned
+/// (or its error). A UI shows local results with it; the server only learns
+/// them through `complete-tool`.
+pub type ToolObserver = Arc<dyn Fn(&ToolCall, &Result<ToolResponse>) + Send + Sync + 'static>;
+
 /// Per-context registry for handling external tools locally instead of waiting for remote completion.
 #[derive(Clone, Default)]
 pub struct ExternalToolRegistry {
     handlers: Arc<std::sync::RwLock<HashMap<(String, String), Handler>>>,
+    observer: Arc<std::sync::RwLock<Option<ToolObserver>>>,
 }
 
 impl ExternalToolRegistry {
     pub fn new() -> Self {
-        Self {
-            handlers: Arc::new(std::sync::RwLock::new(HashMap::new())),
+        Self::default()
+    }
+
+    /// Watch every handled call (replaces a previous observer).
+    pub fn set_observer(&self, observer: ToolObserver) {
+        if let Ok(mut guard) = self.observer.write() {
+            *guard = Some(observer);
         }
     }
 
@@ -64,7 +75,12 @@ impl ExternalToolRegistry {
                 .or_else(|| guard.get(&("*".to_string(), tool_name.to_string())))?
                 .clone()
         };
-        Some(handler(call.clone(), event.clone()).await)
+        let result = handler(call.clone(), event.clone()).await;
+        let observer = self.observer.read().ok().and_then(|g| g.clone());
+        if let Some(observe) = observer {
+            observe(call, &result);
+        }
+        Some(result)
     }
 
     /// Check if a tool handler is registered for the agent or globally.

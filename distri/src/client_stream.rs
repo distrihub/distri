@@ -214,7 +214,13 @@ impl AgentStreamClient {
                     continue;
                 };
 
-                if let Some(ref agent_event) = item.agent_event {
+                // The caller sees each event before any external call it
+                // carries runs, so a UI can show the call (and any prompt the
+                // handler raises) while it executes.
+                let agent_event = item.agent_event.clone();
+                on_event(item).await;
+
+                if let Some(ref agent_event) = agent_event {
                     // Fire-and-forget hook execution
                     if let AgentEventType::InlineHookRequested { request } = &agent_event.event
                         && let Some(registry) = &self.hook_registry
@@ -246,8 +252,6 @@ impl AgentStreamClient {
                         }
                     }
                 }
-
-                on_event(item).await;
             }
         }
 
