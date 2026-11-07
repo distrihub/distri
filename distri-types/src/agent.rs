@@ -308,11 +308,17 @@ impl OpenAiApiFormat {
     /// - Deep research models: o3-deep-research, o4-mini-deep-research
     fn model_requires_responses_api(model: &str) -> bool {
         let m = model.to_lowercase();
-        let astra = m == "gpt-6-astra" || m.strip_prefix("gpt-6-astra-").is_some_and(|date| {
-            date.len() == 10 && date.bytes().enumerate().all(|(i, b)| {
-                if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() }
-            })
-        });
+        let astra = m == "gpt-6-astra"
+            || m.strip_prefix("gpt-6-astra-").is_some_and(|date| {
+                date.len() == 10
+                    && date.bytes().enumerate().all(|(i, b)| {
+                        if i == 4 || i == 7 {
+                            b == b'-'
+                        } else {
+                            b.is_ascii_digit()
+                        }
+                    })
+            });
         // Codex models (codex-*, *-codex, */codex*)
         astra || m.starts_with("codex")
             || m.ends_with("-codex")
