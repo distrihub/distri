@@ -1,0 +1,14 @@
+# Cancel-tree fixture (distri#154, #155): a parent that invokes a slow child,
+# on a scripted OpenAI-compatible stub (stub_llm.py), so cancel can be tried
+# end to end with no model key. See README.md.
+providers:
+  - id: custom_stub
+    name: Scripted stub
+    base_url: http://127.0.0.1:18931/v1
+default_model: custom_stub/stub
+server:
+  host: 127.0.0.1
+  port: 18930
+agents:
+  - file: agents/cancel_parent.md
+  - file: agents/cancel_slow.md

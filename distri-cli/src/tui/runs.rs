@@ -21,7 +21,8 @@ pub struct RunsOverlay {
     pub has_more: bool,
     pub rows: Vec<(usize, String)>,
     pub selected: usize,
-    pub confirm_cancel: Option<String>,
+    /// Runs `x` will cancel once the person says y.
+    pub confirm_cancel: Option<Vec<String>>,
     pub loaded: bool,
 }
 
@@ -92,6 +93,18 @@ impl RunsOverlay {
         self.find(task_id).and_then(|r| r.agent_id.clone())
     }
 
+    /// What `x` cancels for the selected run: the run itself while it is
+    /// live (the server cancels its descendants), else the topmost live runs
+    /// under it, such as a background child still working or waiting after
+    /// its root finished. Empty when nothing under it is live.
+    pub fn cancel_targets(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(run) = self.selected_run() {
+            live_tops(run, &mut out);
+        }
+        out
+    }
+
     pub fn render(&mut self, width: u16, max_rows: usize) -> Vec<Line<'static>> {
         self.rebuild();
         let w = width as usize;
@@ -145,6 +158,16 @@ impl RunsOverlay {
             border,
         ));
         out
+    }
+}
+
+fn live_tops(run: &RunSummary, out: &mut Vec<String>) {
+    if !run.state.is_terminal() {
+        out.push(run.task_id.clone());
+        return;
+    }
+    for child in &run.children {
+        live_tops(child, out);
     }
 }
 
