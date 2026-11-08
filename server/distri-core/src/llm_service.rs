@@ -168,7 +168,7 @@ impl LlmExecuteService {
             Ok(llm) => llm,
             Err(e) => {
                 // Settle the sub-task row before bailing — see Step 6 below.
-                if is_sub_task && persist_task {
+                if persist_task {
                     let _ = self
                         .orchestrator
                         .stores
@@ -190,9 +190,9 @@ impl LlmExecuteService {
             None => llm.execute(&messages).await,
         };
 
-        // Sub-task rows are one-shot: nothing else drives their lifecycle, so
-        // settle the status here (visible children must reach a terminal state).
-        if is_sub_task && persist_task {
+        // llm/execute rows are one-shot: nothing else drives their lifecycle, so settle the status here for every
+        // persisted task (a top-level completion otherwise stays `running` forever, and so does its conversation).
+        if persist_task {
             let status = if resp_result.is_ok() {
                 distri_types::TaskStatus::Completed
             } else {
