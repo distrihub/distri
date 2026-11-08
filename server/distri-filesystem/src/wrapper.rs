@@ -63,6 +63,42 @@ impl FileSystem {
     pub async fn read_binary(&self, path: &str) -> Result<Vec<u8>> {
         self.file_store.read_binary(path).await
     }
+
+    /// Move every file under `from` to the same relative path under `to`, byte for byte (text
+    /// and binary artifacts alike), and return how many moved. A file already at its destination
+    /// is left as it is and its source removed.
+    pub async fn move_tree(&self, from: &str, to: &str) -> Result<usize> {
+        let mut moved = 0;
+        let mut pending = vec![String::new()];
+        while let Some(relative) = pending.pop() {
+            let dir = Self::join(from, &relative);
+            let listing = self.list(&dir).await?;
+            for entry in listing.entries {
+                let child = Self::join(&relative, &entry.name);
+                if entry.is_dir {
+                    pending.push(child);
+                    continue;
+                }
+                let source = Self::join(from, &child);
+                let destination = Self::join(to, &child);
+                if self.file_store.read_binary(&destination).await.is_err() {
+                    let bytes = self.file_store.read_binary(&source).await?;
+                    self.file_store.write_binary(&destination, &bytes).await?;
+                    moved += 1;
+                }
+                self.file_store.delete(&source, false).await?;
+            }
+        }
+        Ok(moved)
+    }
+
+    fn join(base: &str, child: &str) -> String {
+        match (base.trim_matches('/'), child.trim_matches('/')) {
+            ("", c) => c.to_string(),
+            (b, "") => b.to_string(),
+            (b, c) => format!("{b}/{c}"),
+        }
+    }
 }
 
 #[async_trait]

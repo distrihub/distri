@@ -3218,6 +3218,9 @@ where
 {
     pool: DieselStorePool<Conn>,
     pending_channels: Arc<DashMap<String, oneshot::Sender<ToolResponse>>>,
+    /// The task of each call waiting on a channel above (the channel, and so the wait, is in
+    /// this process).
+    pending_tasks: Arc<DashMap<String, String>>,
 }
 
 impl<Conn> DieselExternalToolCallsStore<Conn>
@@ -3231,6 +3234,7 @@ where
         Self {
             pool,
             pending_channels: Arc::new(DashMap::new()),
+            pending_tasks: Arc::new(DashMap::new()),
         }
     }
 
@@ -3267,6 +3271,7 @@ where
     async fn register_external_tool_call(
         &self,
         session_id: &str,
+        task_id: &str,
     ) -> Result<oneshot::Receiver<ToolResponse>> {
         let mut connection = self.conn().await?;
         let new_call = NewExternalToolCallModel {
@@ -3296,6 +3301,8 @@ where
         }
 
         let (sender, receiver) = oneshot::channel();
+        self.pending_tasks
+            .insert(session_id.to_string(), task_id.to_string());
         if self
             .pending_channels
             .insert(session_id.to_string(), sender)
@@ -3334,6 +3341,7 @@ where
             .context("failed to update external tool call")?;
 
         // Send full response (including images) to the running agent so it can see them in current turn
+        self.pending_tasks.remove(session_id);
         if let Some((_, sender)) = self.pending_channels.remove(session_id) {
             if sender.send(tool_response).is_err() {
                 warn!(
@@ -3354,7 +3362,15 @@ where
             .await
             .context("failed to delete external tool call")?;
         self.pending_channels.remove(session_id);
+        self.pending_tasks.remove(session_id);
         Ok(())
+    }
+
+    async fn pending_task_id(&self, session_id: &str) -> Result<Option<String>> {
+        Ok(self
+            .pending_tasks
+            .get(session_id)
+            .map(|entry| entry.value().clone()))
     }
 
     async fn list_pending_tool_calls(&self) -> Result<Vec<String>> {
