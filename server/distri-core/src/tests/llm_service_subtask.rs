@@ -124,3 +124,49 @@ async fn subtask_without_parent_stays_ephemeral() {
         "parentless sub-tasks keep the old ephemeral behavior; got {tasks:?}"
     );
 }
+
+/// A top-level completion's task used to stay `running` forever (only sub-tasks were settled), so its conversation
+/// showed Running after the answer had come back.
+#[tokio::test]
+async fn top_level_completion_settles_its_task() {
+    let orch = build_orch().await;
+    let thread_id = uuid::Uuid::new_v4().to_string();
+
+    let svc = LlmExecuteService::new(orch.clone());
+    // No model configured in the test env: execution errors, and the row must still be settled.
+    let _ = svc
+        .execute(
+            "u".to_string(),
+            None,
+            "llm_execute".to_string(),
+            Some(thread_id.clone()),
+            None,
+            None,
+            vec![Message::user("hi".to_string(), None)],
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            false, // top level
+            None,
+        )
+        .await;
+
+    let tasks = orch
+        .stores
+        .task_store
+        .list_tasks(Some(&thread_id))
+        .await
+        .unwrap();
+    assert_eq!(
+        tasks.len(),
+        1,
+        "a top-level completion persists one task; got {tasks:?}"
+    );
+    assert!(
+        tasks[0].status.is_terminal(),
+        "the task must be settled, not left running; got {:?}",
+        tasks[0].status
+    );
+}
