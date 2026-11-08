@@ -29,11 +29,23 @@ use tokio::sync::RwLock;
 
 pub const SKILL_STORAGE_ROOT: &str = "storage/skills";
 
+/// An inline hook waiting for its client's mutation.
+pub struct PendingInlineHook {
+    /// The task whose run raised the hook.
+    pub task_id: String,
+    pub sender: tokio::sync::oneshot::Sender<HookMutation>,
+}
+
 #[derive(Clone)]
 pub struct AgentOrchestrator {
     pub mcp_registry: Arc<RwLock<McpServerRegistry>>,
 
-    pub session_filesystem: Arc<FileSystem>,
+    /// The session filesystem's root (artifacts, large tool results). Reached only through
+    /// [`AgentOrchestrator::session_filesystem`], which applies the host's [`distri_types::TenantScope`].
+    session_filesystem_root: Arc<FileSystem>,
+    /// What a multi-tenant host decides about artifacts and session values; `None` for a single
+    /// tenant.
+    tenant_scope: Option<Arc<dyn distri_types::TenantScope>>,
     /// Optional workspace filesystem for HTTP file routes (not used by agent tools).
     /// Set by the hosting application if workspace file APIs are needed.
     pub workspace_filesystem: Option<Arc<FileSystem>>,
@@ -45,7 +57,11 @@ pub struct AgentOrchestrator {
     /// All stores - use this instead of individual store fields
     pub stores: InitializedStores,
     pub hooks: Arc<RwLock<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>>,
-    pub inline_hooks: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<HookMutation>>>,
+    /// Inline hooks waiting for a client's mutation, by hook id.
+    pub inline_hooks: Arc<dashmap::DashMap<String, PendingInlineHook>>,
+    /// The task of each external tool call waiting for a client's result, by tool call id:
+    /// completing one requires the caller to be able to read that task.
+    pub pending_tool_call_tasks: Arc<dashmap::DashMap<String, String>>,
     pub hook_registry: HookRegistry,
     pub system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
 
@@ -98,6 +114,40 @@ impl std::fmt::Debug for AgentOrchestrator {
 }
 
 impl AgentOrchestrator {
+    /// The session filesystem (artifacts, large tool results) of the current tenant: the root,
+    /// scoped to the host's [`distri_types::TenantScope`] prefix when one is installed. Fails
+    /// when the host partitions it and no tenant is in context, rather than reading or writing
+    /// the shared root.
+    pub fn session_filesystem(&self) -> anyhow::Result<Arc<FileSystem>> {
+        match &self.tenant_scope {
+            None => Ok(self.session_filesystem_root.clone()),
+            Some(scope) => {
+                let prefix = scope.artifact_root_prefix()?;
+                Ok(Arc::new(
+                    self.session_filesystem_root.scoped(Some(&prefix))?,
+                ))
+            }
+        }
+    }
+
+    /// Whether the current caller may reach the artifacts of `namespace` over HTTP. Always true
+    /// without a [`distri_types::TenantScope`].
+    pub async fn artifact_namespace_allowed(&self, namespace: &str) -> anyhow::Result<bool> {
+        match &self.tenant_scope {
+            None => Ok(true),
+            Some(scope) => scope.allows_artifact_namespace(namespace).await,
+        }
+    }
+
+    /// Whether the current caller may read or write the session values of `session_id` over
+    /// HTTP. Always true without a [`distri_types::TenantScope`].
+    pub async fn session_allowed(&self, session_id: &str) -> anyhow::Result<bool> {
+        match &self.tenant_scope {
+            None => Ok(true),
+            Some(scope) => scope.allows_session(session_id).await,
+        }
+    }
+
     /// Shorthand for `self.runtime.broadcaster()`.
     pub fn broadcaster(&self) -> &dyn crate::broadcast::AgentEventBroadcaster {
         self.runtime.broadcaster()
@@ -122,6 +172,7 @@ pub struct AgentOrchestratorBuilder {
     registry: Option<Arc<RwLock<McpServerRegistry>>>,
     additional_tools: Option<HashMap<String, Vec<Arc<dyn Tool>>>>,
     session_filesystem: Option<Arc<FileSystem>>,
+    tenant_scope: Option<Arc<dyn distri_types::TenantScope>>,
     session_storage_path: Option<std::path::PathBuf>,
     workspace_filesystem: Option<Arc<FileSystem>>,
     browser_config: Option<BrowsrClientConfig>,
@@ -166,6 +217,13 @@ impl AgentOrchestratorBuilder {
 
     pub fn with_session_filesystem(mut self, fs: Arc<FileSystem>) -> Self {
         self.session_filesystem = Some(fs);
+        self
+    }
+
+    /// Partition the session filesystem per tenant, and decide who may reach an artifact
+    /// namespace or a session's values over HTTP (see [`distri_types::TenantScope`]).
+    pub fn with_tenant_scope(mut self, scope: Arc<dyn distri_types::TenantScope>) -> Self {
+        self.tenant_scope = Some(scope);
         self
     }
 
@@ -363,7 +421,8 @@ impl AgentOrchestratorBuilder {
 
         let orchestrator = AgentOrchestrator {
             mcp_registry: registry,
-            session_filesystem,
+            session_filesystem_root: session_filesystem,
+            tenant_scope: self.tenant_scope,
             workspace_filesystem: self.workspace_filesystem,
             browser_config,
             additional_tools: Arc::new(RwLock::new(self.additional_tools.unwrap_or_default())),
@@ -373,6 +432,7 @@ impl AgentOrchestratorBuilder {
             system_hooks: self.system_hooks,
             hooks: hooks.clone(),
             inline_hooks: Arc::new(dashmap::DashMap::new()),
+            pending_tool_call_tasks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
             runtime,
             remote_task_runner: self.remote_task_runner,
@@ -2154,12 +2214,38 @@ impl AgentOrchestrator {
             }
         }
 
+        // A pending call is completed only by a caller who can read its task (the task store
+        // scopes reads on a multi-tenant host). A call this process did not register is refused
+        // on such a host, and passed through on a single-tenant one as before.
+        let pending_task = self
+            .pending_tool_call_tasks
+            .get(tool_call_id)
+            .map(|entry| entry.value().clone());
+        match pending_task {
+            Some(task_id) => {
+                if !self.caller_can_read_task(&task_id).await {
+                    return Err(format!(
+                        "No pending external tool execution found for session: {tool_call_id}"
+                    ));
+                }
+            }
+            None if self.tenant_scope.is_some() => {
+                return Err(format!(
+                    "No pending external tool execution found for session: {tool_call_id}"
+                ));
+            }
+            None => {}
+        }
+
         let outcome = self
             .stores
             .external_tool_calls_store
             .complete_external_tool_call(tool_call_id, tool_response)
             .await
             .map_err(|e| e.to_string());
+        if outcome.is_ok() {
+            self.pending_tool_call_tasks.remove(tool_call_id);
+        }
         tracing::info!(
             target: "ext_tool.complete",
             tool_call_id = %tool_call_id,
@@ -2315,12 +2401,27 @@ impl AgentOrchestrator {
         hook_id: &str,
         mutation: HookMutation,
     ) -> Result<(), String> {
-        if let Some((_, tx)) = self.inline_hooks.remove(hook_id) {
-            let _ = tx.send(mutation);
+        // Only a caller who can read the hook's task completes it; anyone else gets "not found"
+        // and the hook keeps waiting for its own client.
+        let task_id = match self.inline_hooks.get(hook_id) {
+            Some(pending) => pending.task_id.clone(),
+            None => return Err(format!("Inline hook {} not found", hook_id)),
+        };
+        if !self.caller_can_read_task(&task_id).await {
+            return Err(format!("Inline hook {} not found", hook_id));
+        }
+        if let Some((_, pending)) = self.inline_hooks.remove(hook_id) {
+            let _ = pending.sender.send(mutation);
             Ok(())
         } else {
             Err(format!("Inline hook {} not found", hook_id))
         }
+    }
+
+    /// Whether the task store returns `task_id` to the current caller (a multi-tenant host's
+    /// task store scopes reads to the caller).
+    async fn caller_can_read_task(&self, task_id: &str) -> bool {
+        matches!(self.stores.task_store.get_task(task_id).await, Ok(Some(_)))
     }
 
     /// Find a tool by name, supporting simple names and plugin::tool names

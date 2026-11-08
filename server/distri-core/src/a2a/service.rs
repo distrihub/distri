@@ -558,29 +558,35 @@ impl A2AService {
         // completion would otherwise hang. Fetch the current task and surface
         // the terminal state to `run_resubscribe_session`, which synthesizes a
         // final `TaskStatusUpdate` frame for them.
+        //
+        // The task store decides who may read a task (a multi-tenant host
+        // scopes it to the caller): a task it does not return is not found,
+        // and the subscription is dropped. The broadcaster is keyed by task id
+        // alone, so streaming without this check would hand any caller who
+        // knows an id another tenant's events.
         let task_store = self.orchestrator.stores.task_store.clone();
-        let (pre_terminal_status, context_id, history) = match task_store.get_task(&params.id).await
-        {
-            Ok(Some(task)) if task.status.is_terminal() => {
-                let state =
-                    distri_types::a2a_converters::map_task_status_to_a2a_state(&task.status);
-                let history = task_history_frames(task_store.as_ref(), &task).await?;
-                (Some(state), task.thread_id.clone(), history)
-            }
-            Ok(Some(task)) => {
-                // Live task: a broadcaster without a log (in-process) starts
-                // at the subscription, so replay what was persisted so far.
-                // Events persisted between subscribing and this read can
-                // arrive twice; text deltas are never persisted.
-                let history = if self.orchestrator.broadcaster().replays_history() {
-                    Vec::new()
-                } else {
-                    task_history_frames(task_store.as_ref(), &task).await?
-                };
-                (None, task.thread_id.clone(), history)
-            }
-            _ => (None, String::new(), Vec::new()),
+        let task = task_store
+            .get_task(&params.id)
+            .await
+            .map_err(|e| AgentError::Session(format!("Failed to read task: {}", e)))?
+            .ok_or_else(|| AgentError::NotFound(format!("Task not found: {}", params.id)))?;
+        let (pre_terminal_status, history) = if task.status.is_terminal() {
+            let state = distri_types::a2a_converters::map_task_status_to_a2a_state(&task.status);
+            let history = task_history_frames(task_store.as_ref(), &task).await?;
+            (Some(state), history)
+        } else {
+            // Live task: a broadcaster without a log (in-process) starts
+            // at the subscription, so replay what was persisted so far.
+            // Events persisted between subscribing and this read can
+            // arrive twice; text deltas are never persisted.
+            let history = if self.orchestrator.broadcaster().replays_history() {
+                Vec::new()
+            } else {
+                task_history_frames(task_store.as_ref(), &task).await?
+            };
+            (None, history)
         };
+        let context_id = task.thread_id;
 
         Ok(ResubscribeSession {
             req_id,

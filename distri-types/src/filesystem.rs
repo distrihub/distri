@@ -584,3 +584,27 @@ pub trait FileSystemOps: Send + Sync + std::fmt::Debug {
     /// List directory tree (legacy - same as list)
     async fn tree(&self, path: &str) -> Result<DirectoryListing>;
 }
+
+/// What a multi-tenant host decides about the per-conversation state the server keeps beside its
+/// stores: the session filesystem (artifacts, large tool results) and session values.
+///
+/// Without one, a server is single-tenant: one session filesystem tree and one session value
+/// space shared by every caller. A hosted server installs one so that every artifact read and
+/// write lands under the current tenant's prefix, and a caller reaches only the artifacts and
+/// session values of conversations it can read.
+#[async_trait]
+pub trait TenantScope: Send + Sync + std::fmt::Debug {
+    /// The prefix under which the current request's (or run's) artifacts live, such as
+    /// `workspaces/{id}`. An error when no tenant is in context: never fall back to the shared
+    /// root.
+    fn artifact_root_prefix(&self) -> Result<String>;
+
+    /// Whether the current caller may list, read or write the artifacts of `namespace` (an
+    /// artifact id such as `threads/{hash}/tasks/{hash}` or `shared/{name}`), within its tenant's
+    /// prefix.
+    async fn allows_artifact_namespace(&self, namespace: &str) -> Result<bool>;
+
+    /// Whether the current caller may read or write the session values of `session_id` (a
+    /// thread id, or a task id for a task's todos).
+    async fn allows_session(&self, session_id: &str) -> Result<bool>;
+}

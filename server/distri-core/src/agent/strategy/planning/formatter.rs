@@ -757,8 +757,11 @@ impl<'a> MessageFormatter<'a> {
         match part {
             Part::Artifact(metadata) => {
                 // Get filesystem from orchestrator
-                if let Ok(orchestrator) = context.get_orchestrator() {
-                    let filesystem = orchestrator.session_filesystem.clone();
+                let filesystem = context
+                    .get_orchestrator()
+                    .ok()
+                    .and_then(|o| o.session_filesystem().ok());
+                if let Some(filesystem) = filesystem {
                     use distri_filesystem::ArtifactWrapper;
                     use distri_types::filesystem::FileSystemOps;
                     ArtifactWrapper::load_artifact(
@@ -768,7 +771,7 @@ impl<'a> MessageFormatter<'a> {
                     )
                     .await
                 } else {
-                    // If no orchestrator, keep as artifact
+                    // No orchestrator (or no tenant in context): keep as artifact
                     Part::Artifact(metadata)
                 }
             }

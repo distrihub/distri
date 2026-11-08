@@ -174,11 +174,11 @@ impl ExecutorContextTool for SaveArtifactTool {
                 &context.thread_id,
                 &context.task_id,
             );
-            match orchestrator
-                .session_filesystem
-                .create_artifact_wrapper(base_path)
-                .await
-            {
+            let wrapper = match orchestrator.session_filesystem() {
+                Ok(fs) => fs.create_artifact_wrapper(base_path).await,
+                Err(e) => Err(e),
+            };
+            match wrapper {
                 Ok(wrapper) => {
                     let ap = format!("{}/content/{}", wrapper.prefix_path(), filename);
                     if let Err(e) = wrapper.save_artifact(&filename, &base64_str).await {
