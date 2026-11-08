@@ -59,9 +59,6 @@ pub struct AgentOrchestrator {
     pub hooks: Arc<RwLock<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>>,
     /// Inline hooks waiting for a client's mutation, by hook id.
     pub inline_hooks: Arc<dashmap::DashMap<String, PendingInlineHook>>,
-    /// The task of each external tool call waiting for a client's result, by tool call id:
-    /// completing one requires the caller to be able to read that task.
-    pub pending_tool_call_tasks: Arc<dashmap::DashMap<String, String>>,
     pub hook_registry: HookRegistry,
     pub system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
 
@@ -128,6 +125,46 @@ impl AgentOrchestrator {
                 ))
             }
         }
+    }
+
+    /// Move the artifacts written at the shared root before a [`distri_types::TenantScope`] was
+    /// installed (`threads/{thread hash}/…`) under the prefix `prefix_for(thread hash)` names,
+    /// such as the thread's workspace. A thread hash it does not know stays where it is (and is no
+    /// longer served). Returns the number of files moved. A host runs it once at startup.
+    pub async fn migrate_unscoped_artifacts<F, Fut>(&self, prefix_for: F) -> anyhow::Result<usize>
+    where
+        F: FnOnce(Vec<String>) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<HashMap<String, String>>>,
+    {
+        let root = &self.session_filesystem_root;
+        let hashes: Vec<String> =
+            match distri_types::filesystem::FileSystemOps::list(root.as_ref(), "threads").await {
+                Ok(listing) => listing
+                    .entries
+                    .into_iter()
+                    .filter(|e| e.is_dir)
+                    .map(|e| e.name)
+                    .collect(),
+                Err(_) => return Ok(0),
+            };
+        if hashes.is_empty() {
+            return Ok(0);
+        }
+        let prefixes = prefix_for(hashes.clone()).await?;
+        let mut moved = 0;
+        for hash in hashes {
+            let Some(prefix) = prefixes.get(&hash) else {
+                tracing::warn!(thread_hash = %hash, "unscoped artifacts of an unknown thread left in place");
+                continue;
+            };
+            moved += root
+                .move_tree(
+                    &format!("threads/{hash}"),
+                    &format!("{}/threads/{hash}", prefix.trim_matches('/')),
+                )
+                .await?;
+        }
+        Ok(moved)
     }
 
     /// Whether the current caller may reach the artifacts of `namespace` over HTTP. Always true
@@ -432,7 +469,6 @@ impl AgentOrchestratorBuilder {
             system_hooks: self.system_hooks,
             hooks: hooks.clone(),
             inline_hooks: Arc::new(dashmap::DashMap::new()),
-            pending_tool_call_tasks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
             runtime,
             remote_task_runner: self.remote_task_runner,
@@ -2214,13 +2250,17 @@ impl AgentOrchestrator {
             }
         }
 
-        // A pending call is completed only by a caller who can read its task (the task store
-        // scopes reads on a multi-tenant host). A call this process did not register is refused
-        // on such a host, and passed through on a single-tenant one as before.
+        // A pending call is completed only by a caller who can read its task. The store that
+        // holds the pending call records the task (a store shared between servers answers on
+        // every server), and the task store decides who may read it (a multi-tenant host scopes
+        // it to the caller, from the database). A call with no pending record is refused on such
+        // a host, and passed through on a single-tenant one as before.
         let pending_task = self
-            .pending_tool_call_tasks
-            .get(tool_call_id)
-            .map(|entry| entry.value().clone());
+            .stores
+            .external_tool_calls_store
+            .pending_task_id(tool_call_id)
+            .await
+            .map_err(|e| e.to_string())?;
         match pending_task {
             Some(task_id) => {
                 if !self.caller_can_read_task(&task_id).await {
@@ -2243,9 +2283,6 @@ impl AgentOrchestrator {
             .complete_external_tool_call(tool_call_id, tool_response)
             .await
             .map_err(|e| e.to_string());
-        if outcome.is_ok() {
-            self.pending_tool_call_tasks.remove(tool_call_id);
-        }
         tracing::info!(
             target: "ext_tool.complete",
             tool_call_id = %tool_call_id,

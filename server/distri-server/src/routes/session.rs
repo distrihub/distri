@@ -99,31 +99,62 @@ async fn list_sessions(
     query: web::Query<ListSessionsQuery>,
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
-    let sessions = match executor
-        .stores
-        .session_store
-        .list_sessions(query.thread_id.as_deref(), query.limit, query.offset)
-        .await
-    {
-        Ok(sessions) => sessions,
-        Err(err) => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Failed to list sessions: {}", err)
-            }))
+    // `offset` and `limit` count the sessions this caller may reach: on a multi-tenant host some
+    // of the store's sessions are someone else's, so read the store a page at a time and skip
+    // and take among the visible ones, never leaving a short page behind a hidden session.
+    let limit = query.limit.unwrap_or(50);
+    let skip = query.offset.unwrap_or(0);
+    let page_size = limit.max(50);
+    let mut sessions = Vec::with_capacity(limit);
+    let mut skipped = 0usize;
+    let mut store_offset = 0usize;
+    'pages: loop {
+        let batch = match executor
+            .stores
+            .session_store
+            .list_sessions(
+                query.thread_id.as_deref(),
+                Some(page_size),
+                Some(store_offset),
+            )
+            .await
+        {
+            Ok(batch) => batch,
+            Err(err) => {
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to list sessions: {}", err)
+                }))
+            }
+        };
+        let batch_len = batch.len();
+        store_offset += batch_len;
+        for session in batch {
+            match executor.session_allowed(&session.session_id).await {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(err) => {
+                    return HttpResponse::InternalServerError().json(serde_json::json!({
+                        "error": format!("Failed to check session access: {}", err)
+                    }))
+                }
+            }
+            if skipped < skip {
+                skipped += 1;
+                continue;
+            }
+            sessions.push(session);
+            if sessions.len() >= limit {
+                break 'pages;
+            }
         }
-    };
+        // A single-namespace listing is one page; a short page is the last one.
+        if batch_len < page_size || query.thread_id.is_some() {
+            break;
+        }
+    }
 
     let mut items = Vec::with_capacity(sessions.len());
     for session in sessions {
-        match executor.session_allowed(&session.session_id).await {
-            Ok(true) => {}
-            Ok(false) => continue,
-            Err(err) => {
-                return HttpResponse::InternalServerError().json(serde_json::json!({
-                    "error": format!("Failed to check session access: {}", err)
-                }))
-            }
-        }
         let task_ids = match executor
             .stores
             .task_store

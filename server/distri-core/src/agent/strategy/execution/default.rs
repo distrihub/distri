@@ -547,15 +547,10 @@ pub async fn execute_tool_calls_with_timeout(
     for (tool, tool_call) in &tool_tuples {
         if tool.is_external() {
             match external_tool_calls_store
-                .register_external_tool_call(&tool_call.tool_call_id)
+                .register_external_tool_call(&tool_call.tool_call_id, &context.task_id)
                 .await
             {
                 Ok(rx) => {
-                    if let Ok(orchestrator) = context.get_orchestrator() {
-                        orchestrator
-                            .pending_tool_call_tasks
-                            .insert(tool_call.tool_call_id.clone(), context.task_id.clone());
-                    }
                     tracing::info!(
                         target: "ext_tool.register",
                         task_id = %context.task_id,
@@ -821,15 +816,11 @@ async fn handle_external_tool_inline(
 
     let rx = match pre_registered_rx {
         Some(rx) => rx,
-        None => match store.register_external_tool_call(&tool_call_id).await {
-            Ok(rx) => {
-                if let Ok(orchestrator) = context.get_orchestrator() {
-                    orchestrator
-                        .pending_tool_call_tasks
-                        .insert(tool_call_id.clone(), context.task_id.clone());
-                }
-                rx
-            }
+        None => match store
+            .register_external_tool_call(&tool_call_id, &context.task_id)
+            .await
+        {
+            Ok(rx) => rx,
             Err(e) => {
                 tracing::error!("Failed to register external tool call: {}", e);
                 return ToolResultWithSkip::Skip {
@@ -852,9 +843,6 @@ async fn handle_external_tool_inline(
 
     // Wait for response with timeout
     let result = tokio::time::timeout(timeout, rx).await;
-    if let Ok(orchestrator) = context.get_orchestrator() {
-        orchestrator.pending_tool_call_tasks.remove(&tool_call_id);
-    }
 
     match result {
         Ok(Ok(tool_response)) => {
