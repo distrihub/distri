@@ -134,9 +134,51 @@ struct SearchArtifactsRequest {
 // Handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// The current tenant's session filesystem, once the caller may reach `namespace`.
+///
+/// A multi-tenant host installs an [`distri_types::TenantScope`]: the filesystem is then the
+/// tenant's own (never the shared root), and a namespace the caller may not reach is "not found",
+/// so its existence does not leak either. A `..` segment is refused outright.
+async fn filesystem_for(
+    executor: &AgentOrchestrator,
+    namespace: &str,
+) -> Result<Arc<distri_filesystem::FileSystem>, HttpResponse> {
+    if namespace.split('/').any(|segment| segment == "..") {
+        return Err(HttpResponse::BadRequest().json(json!({
+            "error": "artifact id must not contain '..'"
+        })));
+    }
+    match executor.artifact_namespace_allowed(namespace).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(HttpResponse::NotFound().json(json!({
+                "error": "Artifact namespace not found",
+                "artifact_id": namespace
+            })))
+        }
+        Err(e) => {
+            return Err(HttpResponse::InternalServerError().json(json!({
+                "error": format!("Failed to check artifact access: {}", e)
+            })))
+        }
+    }
+    executor.session_filesystem().map_err(|e| {
+        HttpResponse::InternalServerError().json(json!({
+            "error": format!("Session filesystem unavailable: {}", e)
+        }))
+    })
+}
+
 /// List all accessible artifact namespaces
 async fn list_all_namespaces(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
-    let filesystem = executor.session_filesystem.clone();
+    let filesystem = match executor.session_filesystem() {
+        Ok(fs) => fs,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(json!({
+                "error": format!("Session filesystem unavailable: {}", e)
+            }))
+        }
+    };
 
     // List top-level directories to find namespaces
     let mut namespaces = Vec::new();
@@ -196,7 +238,26 @@ async fn list_all_namespaces(executor: web::Data<Arc<AgentOrchestrator>>) -> Htt
         }
     }
 
-    HttpResponse::Ok().json(NamespaceListResponse { namespaces })
+    // Only the namespaces this caller may reach (all of them without a TenantScope).
+    let mut visible = Vec::with_capacity(namespaces.len());
+    for namespace in namespaces {
+        match executor
+            .artifact_namespace_allowed(&namespace.artifact_id)
+            .await
+        {
+            Ok(true) => visible.push(namespace),
+            Ok(false) => {}
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(json!({
+                    "error": format!("Failed to check artifact access: {}", e)
+                }))
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(NamespaceListResponse {
+        namespaces: visible,
+    })
 }
 
 /// Get the computed artifact_id (namespace) for a thread/task pair
@@ -223,7 +284,10 @@ async fn list_artifacts(
         return list_all_namespaces(executor).await;
     }
 
-    let filesystem = executor.session_filesystem.clone();
+    let filesystem = match filesystem_for(&executor, &artifact_id).await {
+        Ok(fs) => fs,
+        Err(response) => return response,
+    };
 
     // Use ArtifactWrapper helper to list artifacts from all paths (thread and task level)
     let paths_to_check = ArtifactWrapper::get_paths_to_check(&artifact_id);
@@ -270,7 +334,10 @@ async fn read_artifact(
 ) -> HttpResponse {
     let (artifact_id, filename) = path.into_inner();
 
-    let filesystem = executor.session_filesystem.clone();
+    let filesystem = match filesystem_for(&executor, &artifact_id).await {
+        Ok(fs) => fs,
+        Err(response) => return response,
+    };
 
     // Use ArtifactWrapper helper to read artifact from all paths (thread and task level)
     match ArtifactWrapper::read_artifact_multi_path(
@@ -317,7 +384,10 @@ async fn save_artifact(
 ) -> HttpResponse {
     let (artifact_id, filename) = path.into_inner();
 
-    let filesystem = executor.session_filesystem.clone();
+    let filesystem = match filesystem_for(&executor, &artifact_id).await {
+        Ok(fs) => fs,
+        Err(response) => return response,
+    };
 
     // Get the filesystem root prefix to show absolute path (before moving filesystem)
     let filesystem_root = filesystem.root_prefix().unwrap_or_default();
@@ -421,7 +491,10 @@ async fn delete_artifact(
 ) -> HttpResponse {
     let (artifact_id, _filename) = path.into_inner();
 
-    let filesystem = executor.session_filesystem.clone();
+    let filesystem = match filesystem_for(&executor, &artifact_id).await {
+        Ok(fs) => fs,
+        Err(response) => return response,
+    };
 
     let wrapper =
         match ArtifactWrapper::new(filesystem as Arc<dyn FileSystemOps>, artifact_id.clone()).await
@@ -450,7 +523,10 @@ async fn search_artifacts(
 ) -> HttpResponse {
     let artifact_id = path.into_inner();
 
-    let filesystem = executor.session_filesystem.clone();
+    let filesystem = match filesystem_for(&executor, &artifact_id).await {
+        Ok(fs) => fs,
+        Err(response) => return response,
+    };
 
     let wrapper =
         match ArtifactWrapper::new(filesystem as Arc<dyn FileSystemOps>, artifact_id.clone()).await

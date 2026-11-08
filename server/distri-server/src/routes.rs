@@ -1615,7 +1615,7 @@ async fn get_task_handler(
     path = "/v1/tasks/{task_id}/events",
     tag = "Agents",
     params(("task_id" = String, Path, description = "Task ID")),
-    responses((status = 200, description = "SSE stream of the task's agent events; closes when the task reaches a terminal state"))
+    responses((status = 200, description = "SSE stream of the task's agent events; closes when the task reaches a terminal state"), (status = 404, description = "Unknown task, or one the caller cannot read"))
 )]
 async fn task_events_handler(
     path: web::Path<String>,
@@ -1625,6 +1625,22 @@ async fn task_events_handler(
     HttpResponse,
 > {
     let task_id = path.into_inner();
+    // The broadcaster is keyed by task id alone; the task store decides who
+    // may read a task (a multi-tenant host scopes it to the caller), so a task
+    // it does not return is not found and its events are never streamed.
+    match executor.stores.task_store.get_task(&task_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return actix_web::Either::Right(
+                HttpResponse::NotFound().json(json!({ "error": "Task not found" })),
+            )
+        }
+        Err(e) => {
+            return actix_web::Either::Right(HttpResponse::InternalServerError().json(json!({
+                "error": format!("Failed to read task: {}", e)
+            })))
+        }
+    }
     // follow_stream ends on the task's own terminal event, so monitors don't
     // hold connections open after a child finishes. Cloud's Redis broadcaster
     // replays buffered events first; the in-process one is live-only.
