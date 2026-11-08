@@ -92,6 +92,24 @@ impl FileSystem {
         Ok(moved)
     }
 
+    /// Whether any file lies under `path` (a folder emptied by [`Self::move_tree`] can remain).
+    pub async fn holds_files(&self, path: &str) -> Result<bool> {
+        let mut pending = vec![path.trim_matches('/').to_string()];
+        while let Some(dir) = pending.pop() {
+            let Ok(listing) = self.list(&dir).await else {
+                continue;
+            };
+            for entry in listing.entries {
+                if entry.is_dir {
+                    pending.push(Self::join(&dir, &entry.name));
+                } else {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     fn join(base: &str, child: &str) -> String {
         match (base.trim_matches('/'), child.trim_matches('/')) {
             ("", c) => c.to_string(),
