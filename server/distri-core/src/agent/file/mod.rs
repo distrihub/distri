@@ -13,11 +13,13 @@ use crate::{
 /// no longer registered as builtin tools.
 fn create_artifact_dynamic_tools(
     orchestrator: &AgentOrchestrator,
-) -> Arc<RwLock<Vec<Arc<dyn Tool>>>> {
-    let artifact_tools = distri_filesystem::create_artifact_tools(
-        orchestrator.session_filesystem.clone() as Arc<dyn FileSystemOps>,
-    );
-    Arc::new(RwLock::new(artifact_tools))
+) -> Result<Arc<RwLock<Vec<Arc<dyn Tool>>>>, AgentError> {
+    let filesystem = orchestrator
+        .session_filesystem()
+        .map_err(|e| AgentError::Execution(format!("session filesystem: {e}")))?;
+    let artifact_tools =
+        distri_filesystem::create_artifact_tools(filesystem as Arc<dyn FileSystemOps>);
+    Ok(Arc::new(RwLock::new(artifact_tools)))
 }
 
 #[cfg(test)]
@@ -43,7 +45,7 @@ pub async fn run_file_agent(
         base_path.to_string().into(),
     )]));
     // Inject artifact tools as dynamic tools so the artifact agent can use them
-    context.dynamic_tools = Some(create_artifact_dynamic_tools(orchestrator));
+    context.dynamic_tools = Some(create_artifact_dynamic_tools(orchestrator)?);
     let result = orchestrator
         .run_inline_agent(
             AgentConfig::StandardAgent(agent_config),

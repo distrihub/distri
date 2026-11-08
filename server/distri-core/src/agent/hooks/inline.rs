@@ -98,7 +98,13 @@ impl InlineHook {
 
         let hook_id = Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        orchestrator.inline_hooks.insert(hook_id.clone(), tx);
+        orchestrator.inline_hooks.insert(
+            hook_id.clone(),
+            crate::agent::orchestrator::PendingInlineHook {
+                task_id: context.task_id.clone(),
+                sender: tx,
+            },
+        );
 
         let mut request = request;
         request.hook_id = hook_id.clone();

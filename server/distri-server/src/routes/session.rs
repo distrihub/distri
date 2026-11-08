@@ -30,6 +30,23 @@ pub struct GetAllValuesResponse {
     pub values: HashMap<String, Value>,
 }
 
+/// `Some(response)` unless the caller may reach `session_id`'s values: a multi-tenant host decides
+/// (see [`distri_types::TenantScope`]); a session it refuses is "not found".
+pub(crate) async fn refuse_unless_allowed(
+    executor: &AgentOrchestrator,
+    session_id: &str,
+) -> Option<HttpResponse> {
+    match executor.session_allowed(session_id).await {
+        Ok(true) => None,
+        Ok(false) => Some(HttpResponse::NotFound().json(serde_json::json!({
+            "error": "Session not found"
+        }))),
+        Err(err) => Some(HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to check session access: {}", err)
+        }))),
+    }
+}
+
 pub fn configure_session_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(web::resource("").route(web::get().to(list_sessions)))
         .service(
@@ -98,6 +115,15 @@ async fn list_sessions(
 
     let mut items = Vec::with_capacity(sessions.len());
     for session in sessions {
+        match executor.session_allowed(&session.session_id).await {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(err) => {
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to check session access: {}", err)
+                }))
+            }
+        }
         let task_ids = match executor
             .stores
             .task_store
@@ -148,6 +174,9 @@ async fn set_value(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let session_id = path.into_inner();
+    if let Some(refused) = refuse_unless_allowed(&executor, &session_id).await {
+        return refused;
+    }
 
     // Check if the request body is gzip-compressed
     let is_gzipped = req
@@ -230,6 +259,9 @@ async fn get_value(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let (session_id, key) = path.into_inner();
+    if let Some(refused) = refuse_unless_allowed(&executor, &session_id).await {
+        return refused;
+    }
     match executor
         .stores
         .session_store
@@ -260,6 +292,9 @@ async fn get_all_values(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let session_id = path.into_inner();
+    if let Some(refused) = refuse_unless_allowed(&executor, &session_id).await {
+        return refused;
+    }
     match executor
         .stores
         .session_store
@@ -291,6 +326,9 @@ async fn delete_value(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let (session_id, key) = path.into_inner();
+    if let Some(refused) = refuse_unless_allowed(&executor, &session_id).await {
+        return refused;
+    }
     match executor
         .stores
         .session_store
@@ -321,6 +359,9 @@ async fn clear_session(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let session_id = path.into_inner();
+    if let Some(refused) = refuse_unless_allowed(&executor, &session_id).await {
+        return refused;
+    }
     match executor
         .stores
         .session_store

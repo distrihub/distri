@@ -109,6 +109,9 @@ async fn get_session_values_handler(
     path: web::Path<String>,
 ) -> HttpResponse {
     let session_id = path.into_inner();
+    if let Some(refused) = super::session::refuse_unless_allowed(&executor, &session_id).await {
+        return refused;
+    }
 
     match executor
         .stores
@@ -132,6 +135,9 @@ async fn set_session_values_handler(
     payload: web::Json<SetSessionValuesPayload>,
 ) -> HttpResponse {
     let session_id = path.into_inner();
+    if let Some(refused) = super::session::refuse_unless_allowed(&executor, &session_id).await {
+        return refused;
+    }
     let payload = payload.into_inner();
 
     for (key, value) in payload.values {
@@ -156,6 +162,9 @@ async fn get_session_value_handler(
     path: web::Path<(String, String)>,
 ) -> HttpResponse {
     let (session_id, key) = path.into_inner();
+    if let Some(refused) = super::session::refuse_unless_allowed(&executor, &session_id).await {
+        return refused;
+    }
 
     match executor
         .stores
@@ -180,6 +189,9 @@ async fn set_session_value_handler(
     payload: web::Json<SetSessionValuePayload>,
 ) -> HttpResponse {
     let (session_id, key) = path.into_inner();
+    if let Some(refused) = super::session::refuse_unless_allowed(&executor, &session_id).await {
+        return refused;
+    }
     let payload = payload.into_inner();
 
     // Validate that the key in path matches the key in payload (if provided)
@@ -209,6 +221,9 @@ async fn delete_session_value_handler(
     path: web::Path<(String, String)>,
 ) -> HttpResponse {
     let (session_id, key) = path.into_inner();
+    if let Some(refused) = super::session::refuse_unless_allowed(&executor, &session_id).await {
+        return refused;
+    }
 
     match executor
         .stores

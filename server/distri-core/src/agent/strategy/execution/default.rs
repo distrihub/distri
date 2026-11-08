@@ -273,11 +273,11 @@ impl AgentExecutor {
                 &context.thread_id,
                 &context.task_id,
             );
-            if let Ok(wrapper) = orchestrator
-                .session_filesystem
-                .create_artifact_wrapper(base_path)
-                .await
-            {
+            let wrapper = match orchestrator.session_filesystem() {
+                Ok(fs) => fs.create_artifact_wrapper(base_path).await,
+                Err(e) => Err(e),
+            };
+            if let Ok(wrapper) = wrapper {
                 let filename = format!("{}.txt", tool_result.tool_call_id);
                 match wrapper.save_artifact(&filename, &content).await {
                     Ok(()) => {
@@ -551,6 +551,11 @@ pub async fn execute_tool_calls_with_timeout(
                 .await
             {
                 Ok(rx) => {
+                    if let Ok(orchestrator) = context.get_orchestrator() {
+                        orchestrator
+                            .pending_tool_call_tasks
+                            .insert(tool_call.tool_call_id.clone(), context.task_id.clone());
+                    }
                     tracing::info!(
                         target: "ext_tool.register",
                         task_id = %context.task_id,
@@ -817,7 +822,14 @@ async fn handle_external_tool_inline(
     let rx = match pre_registered_rx {
         Some(rx) => rx,
         None => match store.register_external_tool_call(&tool_call_id).await {
-            Ok(rx) => rx,
+            Ok(rx) => {
+                if let Ok(orchestrator) = context.get_orchestrator() {
+                    orchestrator
+                        .pending_tool_call_tasks
+                        .insert(tool_call_id.clone(), context.task_id.clone());
+                }
+                rx
+            }
             Err(e) => {
                 tracing::error!("Failed to register external tool call: {}", e);
                 return ToolResultWithSkip::Skip {
@@ -840,6 +852,9 @@ async fn handle_external_tool_inline(
 
     // Wait for response with timeout
     let result = tokio::time::timeout(timeout, rx).await;
+    if let Ok(orchestrator) = context.get_orchestrator() {
+        orchestrator.pending_tool_call_tasks.remove(&tool_call_id);
+    }
 
     match result {
         Ok(Ok(tool_response)) => {
