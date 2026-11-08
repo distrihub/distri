@@ -615,6 +615,18 @@ impl AgentLoop {
             // Update task status based on completion result
             let final_status = last_result.status.clone().into();
             context.update_status(final_status).await;
+        } else if final_success
+            && context.get_final_result().await.is_some()
+            && !matches!(
+                context.get_status().await,
+                Some(crate::types::TaskStatus::InputRequired)
+            )
+        {
+            // Zero steps but an answer (a plain-text reply the planner
+            // auto-finalized): there is no step result to take the status from.
+            context
+                .update_status(crate::types::TaskStatus::Completed)
+                .await;
         }
         let final_result = context.get_final_result().await;
         verbose_log!(
@@ -735,14 +747,20 @@ impl AgentLoop {
         if let Some(crate::types::TaskStatus::InputRequired) = context.get_status().await {
             return Ok(());
         }
+        // Check if any execution result is marked as final
+        let has_final_call = context.get_final_result().await.is_some();
+
+        // A run with no executed steps is complete when it has an answer: the
+        // planner auto-finalizes a plain-text LLM reply into the final result
+        // and returns a plan with zero steps (distri #163).
         if history.is_empty() {
+            if has_final_call {
+                return Ok(());
+            }
             return Err(AgentError::Planning(
                 "Agent completed without executing any steps".to_string(),
             ));
         }
-
-        // Check if any execution result is marked as final
-        let has_final_call = context.get_final_result().await.is_some();
 
         // If no final tool was called, check if all steps completed successfully
         if !has_final_call {
