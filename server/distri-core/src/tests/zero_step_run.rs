@@ -5,8 +5,10 @@
 //! auto-finalizes: it sets the text as the context's final result and returns a
 //! plan with zero steps. The loop stops on that final result without executing
 //! a step, so the execution history is empty. That run has an answer and must
-//! be recorded `Completed`, with `RunFinished { success: true }` and no
-//! `RunError`.
+//! be recorded `Completed`, with `RunFinished { success: true }`, no
+//! `RunError`, every step closed as successful, and no ERROR-level event: in
+//! the server, tracing-opentelemetry turns an ERROR event inside the run span
+//! into an ERROR span status, which is what Traces and the chat turn read.
 //!
 //! The stub planner below does exactly what the unified planner's text-only
 //! branch does, so the loop runs without an LLM.
@@ -30,6 +32,30 @@ use crate::{AgentError, AgentOrchestratorBuilder};
 use super::helpers::test_store_config;
 
 const ANSWER: &str = "Your favourite colour is teal.";
+
+/// Counts ERROR-level tracing events, the ones that mark the run span ERROR.
+#[derive(Clone, Default)]
+struct ErrorEvents(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for ErrorEvents {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        if *event.metadata().level() == tracing::Level::ERROR {
+            let mut message = String::new();
+            event.record(
+                &mut |field: &tracing::field::Field, value: &dyn std::fmt::Debug| {
+                    if field.name() == "message" {
+                        message = format!("{value:?}");
+                    }
+                },
+            );
+            self.0.lock().unwrap().push(message);
+        }
+    }
+}
 
 /// Mirrors `UnifiedPlanner::plan` when the LLM answers in text only after
 /// `MAX_RETRIES`: final result set to the text, zero plan steps.
@@ -148,6 +174,11 @@ fn plain_text_loop() -> AgentLoop {
 
 #[tokio::test]
 async fn plain_text_zero_step_run_ends_completed() {
+    use tracing_subscriber::layer::SubscriberExt;
+    let errors = ErrorEvents::default();
+    let _guard =
+        tracing::subscriber::set_default(tracing_subscriber::registry().with(errors.clone()));
+
     let (ctx, mut rx) = context_with_events().await;
 
     let result = plain_text_loop()
@@ -179,14 +210,26 @@ async fn plain_text_zero_step_run_ends_completed() {
 
     let mut run_finished = None;
     let mut run_errors = vec![];
+    let mut steps_completed = vec![];
     while let Ok(event) = rx.try_recv() {
         match event.event {
             AgentEventType::RunFinished { success, .. } => run_finished = Some(success),
+            AgentEventType::StepCompleted { success, .. } => steps_completed.push(success),
             AgentEventType::RunError { message, code, .. } => run_errors.push((code, message)),
             _ => {}
         }
     }
     assert_eq!(run_finished, Some(true), "RunFinished must report success");
+    assert_eq!(
+        steps_completed,
+        vec![true],
+        "the one planning step closes as successful"
+    );
+    let errors = errors.0.lock().unwrap().clone();
+    assert!(
+        errors.is_empty(),
+        "no ERROR event may fire in the run span, got {errors:?}"
+    );
     assert!(
         run_errors.is_empty(),
         "no RunError expected, got {run_errors:?}"
