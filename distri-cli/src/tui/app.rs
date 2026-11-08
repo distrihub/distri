@@ -1198,14 +1198,18 @@ impl App {
         let Some(o) = self.overlay.as_mut() else {
             return vec![];
         };
-        if let Some(task) = o.confirm_cancel.take() {
+        if let Some(tasks) = o.confirm_cancel.take() {
             if k.code == KeyCode::Char('y') {
-                let agent = o.agent_of(&task).unwrap_or_else(|| self.agent.clone());
-                self.set_status(format!("canceling {}…", short(&task)));
-                return vec![Effect::Cancel {
-                    agent_id: agent,
-                    task_id: task,
-                }];
+                let effects: Vec<Effect> = tasks
+                    .iter()
+                    .map(|task| Effect::Cancel {
+                        agent_id: o.agent_of(task).unwrap_or_else(|| self.agent.clone()),
+                        task_id: task.clone(),
+                    })
+                    .collect();
+                let names: Vec<String> = tasks.iter().map(|t| short(t).to_string()).collect();
+                self.set_status(format!("canceling {}…", names.join(", ")));
+                return effects;
             }
             self.set_status("cancel aborted");
             return vec![];
@@ -1224,14 +1228,33 @@ impl App {
             }
             KeyCode::Char('r') => return vec![Effect::LoadRuns(self.runs_query())],
             KeyCode::Char('x') => {
-                if let Some(run) = o.selected_run().filter(|r| !r.state.is_terminal()) {
-                    let id = run.task_id.clone();
-                    self.set_status(format!("cancel {} and its children? y/n", short(&id)));
-                    if let Some(o) = self.overlay.as_mut() {
-                        o.confirm_cancel = Some(id);
+                let Some(run) = o.selected_run() else {
+                    return vec![];
+                };
+                let selected = run.task_id.clone();
+                let targets = o.cancel_targets();
+                match targets.as_slice() {
+                    [] => self.set_status("that run and everything under it has finished"),
+                    [only] if *only == selected => {
+                        self.set_status(format!("cancel {} and its children? y/n", short(only)))
                     }
-                } else {
-                    self.set_status("that run has already finished");
+                    live => {
+                        let n = live.len();
+                        let what = if n == 1 {
+                            format!("its live child {}", short(&live[0]))
+                        } else {
+                            format!("its {n} live child runs")
+                        };
+                        self.set_status(format!(
+                            "{} has finished · cancel {what}? y/n",
+                            short(&selected)
+                        ))
+                    }
+                }
+                if !targets.is_empty() {
+                    if let Some(o) = self.overlay.as_mut() {
+                        o.confirm_cancel = Some(targets);
+                    }
                 }
             }
             KeyCode::Enter | KeyCode::Char('a') => {
@@ -1393,7 +1416,7 @@ fn help_text(commands: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use distri_types::{AgentEventType, ToolResponse};
+    use distri_types::{AgentEventType, RunSummary, ToolResponse};
     use ratatui::crossterm::event::KeyEvent;
 
     fn app() -> App {
@@ -1748,6 +1771,83 @@ mod tests {
         type_text(&mut a, "look at @mai");
         a.handle(key(KeyCode::Tab));
         assert_eq!(a.editor.text(), "look at @src/main.rs ");
+    }
+
+    fn run(id: &str, agent: &str, state: RunState, children: Vec<RunSummary>) -> RunSummary {
+        RunSummary {
+            task_id: id.into(),
+            thread_id: "thread-1".into(),
+            parent_task_id: None,
+            agent_id: Some(agent.into()),
+            title: None,
+            state,
+            intent: None,
+            last_event: None,
+            last_event_at: None,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            child_count: children.len(),
+            needs_input: state == RunState::NeedsInput,
+            children,
+        }
+    }
+
+    /// Ctrl+T over `runs`, root row selected, then x and y.
+    fn cancel_from_runs_view(runs: Vec<RunSummary>) -> Vec<Effect> {
+        let mut a = app();
+        a.handle(ctrl('t'));
+        a.handle(Input::RunsLoaded(Ok(RunListResponse {
+            runs,
+            has_more: false,
+        })));
+        a.handle(key(KeyCode::Char('x')));
+        a.handle(key(KeyCode::Char('y')))
+    }
+
+    fn canceled(fx: &[Effect]) -> Vec<(String, String)> {
+        fx.iter()
+            .filter_map(|e| match e {
+                Effect::Cancel { agent_id, task_id } => Some((agent_id.clone(), task_id.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// distri#155: a finished root whose background child still waits.
+    #[test]
+    fn x_on_a_finished_root_cancels_its_live_child() {
+        let fx = cancel_from_runs_view(vec![run(
+            "root",
+            "parent",
+            RunState::Done,
+            vec![
+                run("kid", "worker", RunState::NeedsInput, vec![]),
+                run("old", "worker", RunState::Done, vec![]),
+            ],
+        )]);
+        assert_eq!(canceled(&fx), vec![("worker".into(), "kid".into())]);
+    }
+
+    #[test]
+    fn x_on_a_live_root_cancels_the_root() {
+        let fx = cancel_from_runs_view(vec![run(
+            "root",
+            "parent",
+            RunState::Working,
+            vec![run("kid", "worker", RunState::Working, vec![])],
+        )]);
+        assert_eq!(canceled(&fx), vec![("parent".into(), "root".into())]);
+    }
+
+    #[test]
+    fn x_on_a_finished_tree_cancels_nothing() {
+        let fx = cancel_from_runs_view(vec![run(
+            "root",
+            "parent",
+            RunState::Done,
+            vec![run("kid", "worker", RunState::Canceled, vec![])],
+        )]);
+        assert!(canceled(&fx).is_empty(), "{fx:?}");
     }
 
     #[test]
