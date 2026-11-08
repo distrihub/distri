@@ -238,15 +238,24 @@ async fn artifacts_written_before_the_tenant_scope_move_under_their_tenant() {
         .await
         .is_ok());
 
-    // running it again moves nothing
+    // running it again asks only about the folder that still holds files (the emptied one is
+    // not asked about), and the host may move the unknown thread's files elsewhere
     let again = after
-        .migrate_unscoped_artifacts(|_| async {
+        .migrate_unscoped_artifacts(|hashes| async move {
+            assert_eq!(hashes, vec!["0000cccc".to_string()]);
             Ok(std::collections::HashMap::from([(
-                "0000aaaa".to_string(),
-                "workspaces/a".to_string(),
+                "0000cccc".to_string(),
+                "orphaned".to_string(),
             )]))
         })
         .await
         .unwrap();
-    assert_eq!(again, 0);
+    assert_eq!(again, 1);
+
+    // with no files left at the root, the host is not asked at all
+    let none = after
+        .migrate_unscoped_artifacts(|_| async { panic!("asked with nothing to move") })
+        .await
+        .unwrap();
+    assert_eq!(none, 0);
 }
