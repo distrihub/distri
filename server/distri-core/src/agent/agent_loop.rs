@@ -350,6 +350,26 @@ impl AgentLoop {
                 }
             }
 
+            // A plan with no steps while the run already has its answer: the
+            // planner auto-finalized a plain-text reply (distri #163). Close the
+            // step as done and stop, rather than treating the empty plan as
+            // exhausted (whose error log marks the run's trace span ERROR).
+            if current_plan
+                .as_ref()
+                .is_some_and(|plan| plan.steps.is_empty())
+                && context.get_final_result().await.is_some()
+            {
+                context
+                    .emit(AgentEventType::StepCompleted {
+                        step_id: iteration_step_id.clone(),
+                        success: true,
+                        context_budget: Some(context.get_usage().await.context_budget.clone()),
+                        usage: Some(context.get_step_usage().await),
+                    })
+                    .await;
+                break;
+            }
+
             let current_plan_ref = current_plan.as_ref().unwrap();
             verbose_log!(
                 context.verbose,
