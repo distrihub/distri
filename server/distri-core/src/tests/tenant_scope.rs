@@ -114,15 +114,13 @@ async fn a_pending_tool_call_or_hook_is_completed_only_through_a_readable_task()
     let dir = tempfile::tempdir().unwrap();
     let orch = orchestrator(dir.path(), Some(Arc::new(Tenant("a")))).await;
 
-    // a call this process registered, whose task the caller's store does not return
+    // a pending call whose task the caller's store does not return
     let mut rx = orch
         .stores
         .external_tool_calls_store
-        .register_external_tool_call("call-1")
+        .register_external_tool_call("call-1", "task-of-someone-else")
         .await
         .unwrap();
-    orch.pending_tool_call_tasks
-        .insert("call-1".to_string(), "task-of-someone-else".to_string());
     assert!(orch
         .clone()
         .complete_tool("call-1", tool_response("call-1"))
@@ -130,7 +128,38 @@ async fn a_pending_tool_call_or_hook_is_completed_only_through_a_readable_task()
         .is_err());
     assert!(rx.try_recv().is_err(), "the run must not receive a result");
 
-    // a call this process never registered is refused on a multi-tenant host
+    // a pending call of a task the caller can read completes, and the run receives the result
+    let thread = orch
+        .create_thread(distri_types::CreateThreadRequest {
+            agent_id: "agent".to_string(),
+            title: None,
+            thread_id: None,
+            attributes: None,
+            user_id: None,
+            external_id: None,
+            channel_id: None,
+        })
+        .await
+        .unwrap();
+    let task = orch
+        .stores
+        .task_store
+        .create_task(distri_types::stores::CreateTaskInput::local(&thread.id))
+        .await
+        .unwrap();
+    let rx_own = orch
+        .stores
+        .external_tool_calls_store
+        .register_external_tool_call("call-own", &task.id)
+        .await
+        .unwrap();
+    orch.clone()
+        .complete_tool("call-own", tool_response("call-own"))
+        .await
+        .unwrap();
+    assert_eq!(rx_own.await.unwrap().tool_call_id, "call-own");
+
+    // a call with no pending record is refused on a multi-tenant host
     assert!(orch
         .clone()
         .complete_tool("call-unknown", tool_response("call-unknown"))
@@ -152,4 +181,72 @@ async fn a_pending_tool_call_or_hook_is_completed_only_through_a_readable_task()
         .is_err());
     assert!(orch.inline_hooks.contains_key("hook-1"));
     assert!(hook_rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn artifacts_written_before_the_tenant_scope_move_under_their_tenant() {
+    let dir = tempfile::tempdir().unwrap();
+    // written by a server with no tenant scope: at the shared root
+    let before = orchestrator(dir.path(), None).await;
+    let old = before.session_filesystem().unwrap();
+    let ns = "threads/0000aaaa/tasks/0000bbbb/content";
+    old.write(&format!("{ns}/note.txt"), "alice's note")
+        .await
+        .unwrap();
+    old.write_binary(&format!("{ns}/shot.png"), &[0x89, 0x50, 0x4e, 0x47, 0, 255])
+        .await
+        .unwrap();
+    old.write(
+        "threads/0000cccc/tasks/0000dddd/content/orphan.txt",
+        "unknown thread",
+    )
+    .await
+    .unwrap();
+
+    let after = orchestrator(dir.path(), Some(Arc::new(Tenant("a")))).await;
+    let moved = after
+        .migrate_unscoped_artifacts(|hashes| async move {
+            assert!(hashes.contains(&"0000aaaa".to_string()));
+            Ok(std::collections::HashMap::from([(
+                "0000aaaa".to_string(),
+                "workspaces/a".to_string(),
+            )]))
+        })
+        .await
+        .unwrap();
+    assert_eq!(moved, 2);
+
+    let fs = after.session_filesystem().unwrap();
+    assert_eq!(
+        fs.read_binary(&format!("{ns}/note.txt")).await.unwrap(),
+        b"alice's note".to_vec()
+    );
+    assert_eq!(
+        fs.read_binary(&format!("{ns}/shot.png")).await.unwrap(),
+        vec![0x89, 0x50, 0x4e, 0x47, 0, 255]
+    );
+    // gone from the shared root; an unknown thread's stay where they were
+    assert!(old
+        .read(&format!("{ns}/note.txt"), Default::default())
+        .await
+        .is_err());
+    assert!(old
+        .read(
+            "threads/0000cccc/tasks/0000dddd/content/orphan.txt",
+            Default::default()
+        )
+        .await
+        .is_ok());
+
+    // running it again moves nothing
+    let again = after
+        .migrate_unscoped_artifacts(|_| async {
+            Ok(std::collections::HashMap::from([(
+                "0000aaaa".to_string(),
+                "workspaces/a".to_string(),
+            )]))
+        })
+        .await
+        .unwrap();
+    assert_eq!(again, 0);
 }
