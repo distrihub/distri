@@ -24,6 +24,7 @@ mod orchestrator;
 pub mod otel_hooks_test;
 mod preload_skills;
 mod request_tool;
+mod run_cancel_outcome;
 mod supervisor_tools;
 mod tool_result_format;
 mod tool_result_persistence;

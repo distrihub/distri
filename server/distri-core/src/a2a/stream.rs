@@ -216,67 +216,124 @@ pub(crate) fn spawn_background_execution(
     workspace_id: Option<uuid::Uuid>,
 ) {
     tokio::spawn(with_user_and_workspace(user_id, workspace_id, async move {
-        let exec_result = {
-            let cancel_signal = executor_context.cancellation_signal.clone();
-            let exec_fut = executor.execute_stream(
-                &agent_id,
-                message,
-                executor_context.clone(),
-                definition_overrides,
-            );
+        let exec_fut = executor.execute_stream(
+            &agent_id,
+            message,
+            executor_context.clone(),
+            definition_overrides,
+        );
+        run_and_settle(exec_fut, &executor_context, &task_id).await;
+    }));
+}
 
-            if let Some(ref signal) = cancel_signal {
-                let signal = signal.clone();
-                tokio::select! {
-                    _ = signal.cancelled() => {
-                        executor_context
-                            .update_status(crate::types::TaskStatus::Canceled)
-                            .await;
-                        executor_context
-                            .emit(AgentEventType::RunError {
-                                message: "stream cancelled".to_string(),
-                                code: Some("CANCELLED".to_string()),
-                                usage: Some(executor_context.get_step_usage().await),
-                            })
-                            .await;
-                        Err(anyhow!("stream cancelled"))
-                    },
-                    res = exec_fut => res.map_err(|e: AgentError| anyhow!(e)),
-                }
-            } else {
-                exec_fut.await.map_err(|e: AgentError| anyhow!(e))
+/// Run a background execution and record how it ended: the final answer,
+/// nothing more for a cancel (already recorded), or Failed with one
+/// EXECUTION_ERROR terminal event.
+pub(crate) async fn run_and_settle<F>(
+    exec_fut: F,
+    executor_context: &ExecutorContext,
+    task_id: &str,
+) where
+    F: std::future::Future<Output = Result<crate::agent::InvokeResult, AgentError>>,
+{
+    match run_until_cancelled(exec_fut, executor_context).await {
+        RunEnd::Finished(result) => {
+            // Save the final result as the turn's one final-answer message.
+            // Its id matches the live SSE trailing frame (`build_final_message`),
+            // so history and live streams converge on the same message.
+            if let Some(content) = result.content.as_ref().filter(|c| !c.is_empty()) {
+                let final_message = distri_types::Message::final_answer(task_id, content.clone());
+                executor_context.save_message(&final_message).await;
             }
-        };
+            // Note: RunFinished event is already emitted by the agent loop.
+            // The final result is available via tasks/get.
+        }
+        RunEnd::Canceled => {
+            tracing::info!("Background execution canceled for task {}", task_id);
+        }
+        RunEnd::Failed(e) => {
+            tracing::error!("Background execution error for task {}: {}", task_id, e);
+            // Emit a terminal RunError so SSE subscribers (gateway,
+            // web client) see the real failure instead of watching the
+            // stream close silently.
+            executor_context
+                .update_status(crate::types::TaskStatus::Failed)
+                .await;
+            executor_context
+                .emit(AgentEventType::RunError {
+                    message: e.to_string(),
+                    code: Some("EXECUTION_ERROR".to_string()),
+                    usage: Some(executor_context.get_step_usage().await),
+                })
+                .await;
+        }
+    }
+}
 
-        match exec_result {
-            Ok(result) => {
-                // Save the final result as the turn's one final-answer message.
-                // Its id matches the live SSE trailing frame (`build_final_message`),
-                // so history and live streams converge on the same message.
-                if let Some(content) = result.content.as_ref().filter(|c| !c.is_empty()) {
-                    let final_message =
-                        distri_types::Message::final_answer(&task_id, content.clone());
-                    executor_context.save_message(&final_message).await;
+/// How a background run ended.
+pub(crate) enum RunEnd {
+    Finished(crate::agent::InvokeResult),
+    /// Canceled: the task is recorded Canceled and its one terminal
+    /// `RunError { code: CANCELLED }` is out. Nothing more to record.
+    Canceled,
+    Failed(anyhow::Error),
+}
+
+/// Drive `exec_fut` until it ends or the task's cancellation signal fires.
+///
+/// A canceled run must end Canceled with one CANCELLED terminal event, never
+/// Failed: neither the cancel itself nor an error the run returns because it
+/// was canceled under it (a child or a tool cut off by the cascade) may reach
+/// the Failed arm.
+pub(crate) async fn run_until_cancelled<F>(exec_fut: F, ctx: &ExecutorContext) -> RunEnd
+where
+    F: std::future::Future<Output = Result<crate::agent::InvokeResult, AgentError>>,
+{
+    let signal = ctx.cancellation_signal.clone();
+    let res = match &signal {
+        Some(signal) => {
+            tokio::select! {
+                _ = signal.cancelled() => {
+                    record_canceled(ctx).await;
+                    return RunEnd::Canceled;
                 }
-                // Note: RunFinished event is already emitted by the agent loop.
-                // The final result is available via tasks/get.
-            }
-            Err(e) => {
-                tracing::error!("Background execution error for task {}: {}", task_id, e);
-                // Emit a terminal RunError so SSE subscribers (gateway,
-                // web client) see the real failure instead of watching the
-                // stream close silently. Mirror the cancellation branch above.
-                executor_context
-                    .update_status(crate::types::TaskStatus::Failed)
-                    .await;
-                executor_context
-                    .emit(AgentEventType::RunError {
-                        message: e.to_string(),
-                        code: Some("EXECUTION_ERROR".to_string()),
-                        usage: Some(executor_context.get_step_usage().await),
-                    })
-                    .await;
+                res = exec_fut => res,
             }
         }
-    }));
+        None => exec_fut.await,
+    };
+    match res {
+        Ok(result) => RunEnd::Finished(result),
+        // The agent loop saw the signal and recorded the cancel itself.
+        Err(AgentError::Canceled) => {
+            record_canceled(ctx).await;
+            RunEnd::Canceled
+        }
+        Err(_) if is_cancelled(&signal).await => {
+            record_canceled(ctx).await;
+            RunEnd::Canceled
+        }
+        Err(e) => RunEnd::Failed(anyhow!(e)),
+    }
+}
+
+async fn is_cancelled(signal: &Option<Arc<dyn crate::broadcast::CancellationSignal>>) -> bool {
+    match signal {
+        Some(s) => s.is_cancelled().await,
+        None => false,
+    }
+}
+
+/// Record the cancel once: the agent loop may already have done it.
+async fn record_canceled(ctx: &ExecutorContext) {
+    if ctx.get_status().await == Some(crate::types::TaskStatus::Canceled) {
+        return;
+    }
+    ctx.update_status(crate::types::TaskStatus::Canceled).await;
+    ctx.emit(AgentEventType::RunError {
+        message: "stream cancelled".to_string(),
+        code: Some("CANCELLED".to_string()),
+        usage: Some(ctx.get_step_usage().await),
+    })
+    .await;
 }

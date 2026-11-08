@@ -528,6 +528,19 @@ impl AgentOrchestrator {
             .await?;
 
         let task_id = child_ctx.task_id.clone();
+        // A detached child outlives its parent's run, so it cannot stop on
+        // the parent's signal: once the parent has finished, a cancel of the
+        // tree (or of the child) only reaches the child's own signal.
+        let signal = self
+            .coordinator()
+            .register_task(&task_id, &child_ctx.thread_id, None)
+            .await
+            .map_err(|e| AgentError::Session(format!("failed to register child task: {e}")))?;
+        let child_ctx = {
+            let mut ctx = Arc::try_unwrap(child_ctx).unwrap_or_else(|arc| (*arc).clone());
+            ctx.cancellation_signal = Some(signal);
+            Arc::new(ctx)
+        };
         let agent_id = resolved.agent_id;
         let definition_overrides = resolved.definition_overrides;
         let message = target.message;
@@ -542,9 +555,16 @@ impl AgentOrchestrator {
             user_id,
             ws_uuid,
             async move {
-                if let Err(e) = orch
-                    .call_agent_stream(&agent_id, message, child_ctx, definition_overrides)
-                    .await
+                let run = orch.call_agent_stream(
+                    &agent_id,
+                    message,
+                    child_ctx.clone(),
+                    definition_overrides,
+                );
+                // Canceled: the loop is dropped and the child's own topic gets
+                // its one CANCELLED terminal event, so followers see it end.
+                if let crate::a2a::stream::RunEnd::Failed(e) =
+                    crate::a2a::stream::run_until_cancelled(run, &child_ctx).await
                 {
                     tracing::warn!(
                         target: "invoke.detached",
@@ -556,6 +576,7 @@ impl AgentOrchestrator {
                 // own RunFinished bookkeeping must not stay `running` forever
                 // — monitors and `wait_task` need a terminal state.
                 orch.settle_detached_task(&spawned_task_id).await;
+                let _ = orch.coordinator().complete_task(&spawned_task_id).await;
             },
         ));
 
