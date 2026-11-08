@@ -887,11 +887,18 @@ pub struct MessageVoteSummary {
 /// Store for managing external tool call completions using oneshot channels
 #[async_trait]
 pub trait ExternalToolCallsStore: Send + Sync + std::fmt::Debug {
-    /// Register a new external tool call session and return a receiver for the response
+    /// Register a new external tool call, raised by `task_id`'s run, and return a receiver for
+    /// the response.
     async fn register_external_tool_call(
         &self,
         session_id: &str,
+        task_id: &str,
     ) -> anyhow::Result<oneshot::Receiver<ToolResponse>>;
+
+    /// The task whose run waits on `session_id`, while it waits. A store shared between
+    /// servers (Redis) answers on every server, so the completing server can check the caller
+    /// against the task's owner.
+    async fn pending_task_id(&self, session_id: &str) -> anyhow::Result<Option<String>>;
 
     /// Complete an external tool call by sending the response
     async fn complete_external_tool_call(

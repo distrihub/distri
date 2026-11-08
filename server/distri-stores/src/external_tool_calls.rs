@@ -3,10 +3,16 @@ use distri_types::{ToolResponse, stores::ExternalToolCallsStore};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{RwLock, oneshot};
 
+/// A tool call waiting for its client's result.
+struct PendingToolCall {
+    task_id: String,
+    sender: oneshot::Sender<ToolResponse>,
+}
+
 /// In-memory implementation using HashMap and oneshot channels
 #[derive(Clone)]
 pub struct InMemoryExternalToolCallsStore {
-    tool_calls: Arc<RwLock<HashMap<String, oneshot::Sender<ToolResponse>>>>,
+    tool_calls: Arc<RwLock<HashMap<String, PendingToolCall>>>,
 }
 
 impl std::fmt::Debug for InMemoryExternalToolCallsStore {
@@ -36,6 +42,7 @@ impl ExternalToolCallsStore for InMemoryExternalToolCallsStore {
     async fn register_external_tool_call(
         &self,
         tool_call_id: &str,
+        task_id: &str,
     ) -> anyhow::Result<oneshot::Receiver<ToolResponse>> {
         let (tx, rx) = oneshot::channel();
 
@@ -44,7 +51,13 @@ impl ExternalToolCallsStore for InMemoryExternalToolCallsStore {
             return Err(anyhow::anyhow!("Session {} already exists", tool_call_id));
         }
 
-        sessions.insert(tool_call_id.to_string(), tx);
+        sessions.insert(
+            tool_call_id.to_string(),
+            PendingToolCall {
+                task_id: task_id.to_string(),
+                sender: tx,
+            },
+        );
         tracing::debug!("Registered external tool call session: {}", tool_call_id);
 
         Ok(rx)
@@ -60,7 +73,7 @@ impl ExternalToolCallsStore for InMemoryExternalToolCallsStore {
             sessions.remove(tool_call_id)
         };
 
-        match sender {
+        match sender.map(|pending| pending.sender) {
             Some(sender) => {
                 if sender.send(tool_response).is_err() {
                     return Err(anyhow::anyhow!(
@@ -89,6 +102,11 @@ impl ExternalToolCallsStore for InMemoryExternalToolCallsStore {
         let sessions = self.tool_calls.read().await;
         Ok(sessions.keys().cloned().collect())
     }
+
+    async fn pending_task_id(&self, tool_call_id: &str) -> anyhow::Result<Option<String>> {
+        let sessions = self.tool_calls.read().await;
+        Ok(sessions.get(tool_call_id).map(|p| p.task_id.clone()))
+    }
 }
 
 #[cfg(test)]
@@ -103,7 +121,7 @@ mod tests {
 
         // Register a session
         let rx = store
-            .register_external_tool_call(tool_call_id)
+            .register_external_tool_call(tool_call_id, "task-1")
             .await
             .unwrap();
 
@@ -141,12 +159,14 @@ mod tests {
 
         // Register first session
         let _rx1 = store
-            .register_external_tool_call(tool_call_id)
+            .register_external_tool_call(tool_call_id, "task-1")
             .await
             .unwrap();
 
         // Try to register same session again - should fail
-        let result = store.register_external_tool_call(tool_call_id).await;
+        let result = store
+            .register_external_tool_call(tool_call_id, "task-1")
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already exists"));
     }
