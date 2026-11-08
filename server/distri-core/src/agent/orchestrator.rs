@@ -137,7 +137,7 @@ impl AgentOrchestrator {
         Fut: std::future::Future<Output = anyhow::Result<HashMap<String, String>>>,
     {
         let root = &self.session_filesystem_root;
-        let hashes: Vec<String> =
+        let folders: Vec<String> =
             match distri_types::filesystem::FileSystemOps::list(root.as_ref(), "threads").await {
                 Ok(listing) => listing
                     .entries
@@ -147,6 +147,14 @@ impl AgentOrchestrator {
                     .collect(),
                 Err(_) => return Ok(0),
             };
+        // Only folders that still hold files: one a previous run emptied can stay behind, and
+        // asking the host about it would repeat its lookup on every start.
+        let mut hashes = Vec::with_capacity(folders.len());
+        for hash in folders {
+            if root.holds_files(&format!("threads/{hash}")).await? {
+                hashes.push(hash);
+            }
+        }
         if hashes.is_empty() {
             return Ok(0);
         }
