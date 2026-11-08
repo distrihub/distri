@@ -26,6 +26,7 @@ mod preload_skills;
 mod request_tool;
 mod run_cancel_outcome;
 mod supervisor_tools;
+mod tenant_scope;
 mod tool_result_format;
 mod tool_result_persistence;
 pub mod trace_replay;

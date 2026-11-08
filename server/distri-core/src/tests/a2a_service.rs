@@ -214,6 +214,38 @@ async fn cancel_task_idempotent() {
     );
 }
 
+// ── resubscribe to a task the store does not return ──────────────────────────
+//
+// The broadcaster is keyed by task id alone, so the task store's answer is the
+// only thing between a caller and another tenant's event stream: a task it does
+// not return (unknown, or scoped away by a multi-tenant host) is not found, even
+// while events are being published for it.
+
+#[tokio::test]
+async fn resubscribe_to_a_task_the_store_does_not_return_is_not_found() {
+    let service = build_service().await;
+    let task_id = format!("task-{}", uuid::Uuid::new_v4());
+    service
+        .orchestrator
+        .broadcaster()
+        .publish(
+            &task_id,
+            distri_types::AgentEvent::new(distri_types::AgentEventType::RunStarted {}),
+        )
+        .await
+        .unwrap();
+
+    let err = service
+        .prepare_resubscribe(json!({ "id": task_id }), Some(json!(1)))
+        .await
+        .err()
+        .expect("resubscribe to an unknown task must fail");
+    assert!(
+        matches!(err, AgentError::NotFound(_)),
+        "expected NotFound, got {err:?}"
+    );
+}
+
 // ── 7c.4 resubscribe_after_terminal_synthesizes_final_event ──────────────────
 
 #[tokio::test]
