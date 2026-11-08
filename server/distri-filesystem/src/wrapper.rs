@@ -93,12 +93,15 @@ impl FileSystem {
     }
 
     /// Whether any file lies under `path` (a folder emptied by [`Self::move_tree`] can remain).
+    /// A folder that cannot be listed is an error, never "no files": the caller would otherwise
+    /// skip files it cannot see.
     pub async fn holds_files(&self, path: &str) -> Result<bool> {
         let mut pending = vec![path.trim_matches('/').to_string()];
         while let Some(dir) = pending.pop() {
-            let Ok(listing) = self.list(&dir).await else {
-                continue;
-            };
+            let listing = self
+                .list(&dir)
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to list {dir}: {e}"))?;
             for entry in listing.entries {
                 if entry.is_dir {
                     pending.push(Self::join(&dir, &entry.name));

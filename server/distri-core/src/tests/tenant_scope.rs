@@ -259,3 +259,42 @@ async fn artifacts_written_before_the_tenant_scope_move_under_their_tenant() {
         .unwrap();
     assert_eq!(none, 0);
 }
+
+/// A thread folder that cannot be listed fails the move (to be retried on the next start)
+/// instead of being taken for empty and skipped with its files left behind.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_unreadable_thread_folder_fails_the_move_instead_of_being_skipped() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let before = orchestrator(dir.path(), None).await;
+    let old = before.session_filesystem().unwrap();
+    old.write("threads/0000eeee/tasks/0000ffff/content/note.txt", "kept")
+        .await
+        .unwrap();
+    let locked = dir.path().join("threads/0000eeee/tasks");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let after = orchestrator(dir.path(), Some(Arc::new(Tenant("a")))).await;
+    let result = after
+        .migrate_unscoped_artifacts(|_| async { panic!("asked although a folder was unreadable") })
+        .await;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        result.is_err(),
+        "an unreadable folder must not count as empty"
+    );
+
+    // readable again: the next run moves it
+    let moved = after
+        .migrate_unscoped_artifacts(|_| async {
+            Ok(std::collections::HashMap::from([(
+                "0000eeee".to_string(),
+                "workspaces/a".to_string(),
+            )]))
+        })
+        .await
+        .unwrap();
+    assert_eq!(moved, 1);
+}
