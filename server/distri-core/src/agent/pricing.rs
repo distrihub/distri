@@ -24,6 +24,31 @@ pub(crate) fn get_model_pricing() -> &'static std::collections::HashMap<String, 
     })
 }
 
+/// Cost in USD of one call, unrounded (a per-call ledger sums these; rounding
+/// each to 4 places would zero out small calls).
+pub(crate) fn exact_cost(
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    cached_tokens: u64,
+) -> Option<f64> {
+    let pricing = get_model_pricing();
+    let entry = pricing.get(model).or_else(|| {
+        pricing
+            .iter()
+            .filter(|(key, _)| model.contains(key.as_str()))
+            .max_by_key(|(key, _)| key.len())
+            .map(|(_, v)| v)
+    })?;
+    let non_cached_input = input_tokens.saturating_sub(cached_tokens);
+    Some(
+        (non_cached_input as f64 * entry.input
+            + cached_tokens.min(input_tokens) as f64 * entry.cached_input
+            + output_tokens as f64 * entry.output)
+            / 1_000_000.0,
+    )
+}
+
 /// Estimate cost in USD based on model name, token counts, and cached tokens.
 /// Prices loaded from model_pricing.json (per 1M tokens).
 /// Cached tokens are charged at the discounted cached_input rate instead of full input rate.

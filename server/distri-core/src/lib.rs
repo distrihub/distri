@@ -10,6 +10,7 @@ pub mod worker;
 
 pub mod claude_llm;
 pub mod llm;
+pub mod llm_call;
 pub mod llm_service;
 pub mod logging;
 

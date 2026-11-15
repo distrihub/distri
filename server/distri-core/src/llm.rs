@@ -12,6 +12,28 @@ pub fn mask_key(key: &str) -> String {
     }
 }
 
+/// The provider's usage report of a chat completion, with the cached and
+/// reasoning counts its details carry.
+pub(crate) fn chat_provider_usage(
+    u: &async_openai::types::chat::CompletionUsage,
+) -> crate::llm_call::ProviderUsage {
+    crate::llm_call::ProviderUsage {
+        input_tokens: u.prompt_tokens as u64,
+        output_tokens: u.completion_tokens as u64,
+        cached_tokens: u
+            .prompt_tokens_details
+            .as_ref()
+            .and_then(|d| d.cached_tokens)
+            .unwrap_or(0) as u64,
+        cache_creation_tokens: 0,
+        reasoning_tokens: u
+            .completion_tokens_details
+            .as_ref()
+            .and_then(|d| d.reasoning_tokens)
+            .unwrap_or(0) as u64,
+    }
+}
+
 /// Format provider info for logging without leaking full API keys.
 pub fn provider_label(ms: &distri_types::ModelSettings) -> String {
     let variant = std::mem::discriminant(&ms.inner.provider);
@@ -306,8 +328,19 @@ impl LLMExecutor {
             None,
         );
 
+        let recorder = crate::llm_call::LlmCallRecorder::begin(
+            self.context.clone(),
+            &ms.model,
+            ms.inner.provider.provider_id(),
+            false,
+            self.label.as_deref().unwrap_or("agent"),
+            &sanitized_messages,
+            tool_defs.clone(),
+        )
+        .await?;
+
         tracing::debug!("Sending chat completion request");
-        let response = completion(
+        let response = match completion(
             &self.llm_def,
             request,
             self.context.clone(),
@@ -316,23 +349,27 @@ impl LLMExecutor {
         )
         .instrument(span.clone())
         .await
-        .map_err(|e| {
-            tracing::error!("LLM request failed: {}", e);
-            let elapsed = start.elapsed().as_millis() as u64;
-            llm_gateway::observability::recorder::record_inference_response(
-                &span,
-                Some(ms.model.as_str()),
-                None,
-                &["error".to_string()],
-                None,
-                None,
-                None,
-                None,
-                elapsed,
-                None,
-            );
-            e
-        })?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("LLM request failed: {}", e);
+                let elapsed = start.elapsed().as_millis() as u64;
+                llm_gateway::observability::recorder::record_inference_response(
+                    &span,
+                    Some(ms.model.as_str()),
+                    None,
+                    &["error".to_string()],
+                    None,
+                    None,
+                    None,
+                    None,
+                    elapsed,
+                    None,
+                );
+                recorder.finish_err(&e, None).await;
+                return Err(e);
+            }
+        };
 
         let usage = response.usage.as_ref().map(|u| distri_types::TokenUsage {
             input_tokens: u.prompt_tokens,
@@ -340,12 +377,10 @@ impl LLMExecutor {
             total_tokens: u.total_tokens,
         });
 
-        // Track usage and model in context
-        if let Some(u) = &usage {
-            self.context
-                .increment_usage(u.input_tokens, u.output_tokens)
-                .await;
-        }
+        // Track usage (exactly one ledger record per call) and model in context
+        recorder
+            .finish_ok(response.usage.as_ref().map(chat_provider_usage))
+            .await;
         if !ms.model.is_empty() {
             self.context.set_usage_model(ms.model.clone()).await;
         }
@@ -558,6 +593,17 @@ impl LLMExecutor {
             None,
         );
 
+        let recorder = crate::llm_call::LlmCallRecorder::begin(
+            self.context.clone(),
+            &ms.model,
+            ms.inner.provider.provider_id(),
+            true,
+            self.label.as_deref().unwrap_or("agent"),
+            &sanitized_messages,
+            tool_defs.clone(),
+        )
+        .await?;
+
         tracing::debug!("Sending streaming chat completion request");
 
         let stream = completion_stream(
@@ -584,6 +630,7 @@ impl LLMExecutor {
                 })
                 .await;
 
+            recorder.finish_err(&e, None).await;
             return Err(AgentError::LLMError(e.to_string()));
         }
         let stream = stream.unwrap();
@@ -605,18 +652,20 @@ impl LLMExecutor {
         let mut parser = self.get_parser().await;
         let mut stream_input_tokens: u32 = 0;
         let mut stream_output_tokens: u32 = 0;
+        let mut stream_usage: Option<crate::llm_call::ProviderUsage> = None;
 
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(chunk) => {
                     if let Some(usage) = chunk.usage {
-                        let input_tokens = usage.prompt_tokens;
-                        let output_tokens = usage.completion_tokens;
-                        self.context
-                            .increment_usage(input_tokens, output_tokens)
-                            .await;
-                        stream_input_tokens += input_tokens;
-                        stream_output_tokens += output_tokens;
+                        let u = chat_provider_usage(&usage);
+                        let acc = stream_usage.get_or_insert_with(Default::default);
+                        acc.input_tokens += u.input_tokens;
+                        acc.output_tokens += u.output_tokens;
+                        acc.cached_tokens += u.cached_tokens;
+                        acc.reasoning_tokens += u.reasoning_tokens;
+                        stream_input_tokens += usage.prompt_tokens;
+                        stream_output_tokens += usage.completion_tokens;
                     }
                     if let Some(choice) = chunk.choices.first() {
                         let delta = &choice.delta;
@@ -752,6 +801,7 @@ impl LLMExecutor {
                 Err(e) => {
                     tracing::error!("OpenAI error: {}", e);
 
+                    recorder.finish_err(&e, stream_usage).await;
                     return Err(AgentError::LLMError(e.to_string()));
                 }
             }
@@ -870,6 +920,7 @@ impl LLMExecutor {
                 cost,
             );
         }
+        recorder.finish_ok(stream_usage).await;
         Ok(StreamResult {
             finish_reason,
             tool_calls,

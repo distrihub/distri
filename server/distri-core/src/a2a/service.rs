@@ -670,6 +670,7 @@ impl A2AService {
         executor_context: &mut ExecutorContext,
         caller: Option<&distri_types::RequestCaller>,
     ) -> Result<(), AgentError> {
+        executor_context.caller = caller.cloned();
         let Some(distri_types::configuration::AgentConfig::StandardAgent(def)) = self
             .orchestrator
             .get_agent(&executor_context.agent_id)

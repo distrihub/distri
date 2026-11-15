@@ -53,6 +53,10 @@ pub struct RequestCaller {
     pub origin: Option<String>,
     /// Client SDK name and version, when the client sends one.
     pub client: Option<String>,
+    /// Host-defined attribution for usage accounting (`api_key_id`,
+    /// `end_user`, `source`, …). Carried onto every LLM call of the run.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub attributes: std::collections::BTreeMap<String, String>,
 }
 
 /// One top-level agent request, after its runtime has been resolved.

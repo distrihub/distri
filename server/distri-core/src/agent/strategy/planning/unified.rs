@@ -157,9 +157,15 @@ impl PlanningStrategy for UnifiedPlanner {
             plan_config.model_settings.clone(),
             crate::types::ToolCallFormat::default(),
         );
-        crate::llm::create_llm_executor(llm_def, Vec::new(), context, None, None)
-            .ok()
-            .map(std::sync::Arc::from)
+        crate::llm::create_llm_executor(
+            llm_def,
+            Vec::new(),
+            context,
+            None,
+            Some("compaction".to_string()),
+        )
+        .ok()
+        .map(std::sync::Arc::from)
     }
 
     async fn plan(
