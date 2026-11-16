@@ -57,6 +57,8 @@ pub use runner::*;
 
 pub mod model_policy;
 pub use model_policy::{MODEL_NOT_ALLOWED, ModelPolicy};
+pub mod llm_usage;
+pub use llm_usage::*;
 pub mod request_observer;
 pub use request_observer::*;
 

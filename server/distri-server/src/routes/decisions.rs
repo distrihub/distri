@@ -6,7 +6,7 @@
 
 use std::sync::{Arc, LazyLock};
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpMessage, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
 use distri_core::decision_service::DecisionService;
 use distri_types::decision::DecisionRequest;
@@ -35,6 +35,7 @@ pub fn configure_decision_routes(cfg: &mut web::ServiceConfig) {
 )]
 pub async fn decide(
     executor: web::Data<Arc<AgentOrchestrator>>,
+    http_request: actix_web::HttpRequest,
     // The same workspace-scoped store `/v1/providers` uses: the standalone
     // server registers its settings-backed store, the cloud its `PgProviderStore`.
     provider_store: Option<web::Data<Arc<dyn ProviderStore>>>,
@@ -52,9 +53,60 @@ pub async fn decide(
     );
 
     let req = payload.into_inner();
-    let res = service.decide(&req).await.inspect_err(|e| {
-        tracing::warn!(model = %req.model, error = %e, "decision failed");
-    })?;
+
+    // One usage record per decision call, like every other LLM call: the
+    // caller's budgets are checked first, and the provider's usage is
+    // recorded whether the call succeeds or fails.
+    let (user_id, workspace_id) = http_request
+        .extensions()
+        .get::<crate::context::UserContext>()
+        .map(|c| (c.user_id(), c.workspace_id()))
+        .unwrap_or_else(|| ("anonymous".to_string(), None));
+    let ctx = distri_core::agent::ExecutorContext {
+        user_id,
+        workspace_id,
+        agent_id: "decision".to_string(),
+        thread_id: String::new(),
+        task_id: String::new(),
+        orchestrator: Some(executor.get_ref().clone()),
+        caller: http_request
+            .extensions()
+            .get::<distri_types::RequestCaller>()
+            .cloned(),
+        ..Default::default()
+    };
+    let (provider, model) = req
+        .model
+        .split_once('/')
+        .unwrap_or(("", req.model.as_str()));
+    let recorder = distri_core::llm_call::LlmCallRecorder::begin(
+        Arc::new(ctx),
+        model,
+        provider,
+        false,
+        "decision",
+        &distri_core::decision_service::decision_messages(&req),
+        Vec::new(),
+    )
+    .await
+    .map_err(|e| ApiError::TooManyRequests(e.to_string()))?;
+    let res = match service.decide(&req).await {
+        Ok(res) => {
+            recorder
+                .finish_ok(Some(distri_core::llm_call::ProviderUsage {
+                    input_tokens: res.usage.input_tokens,
+                    output_tokens: res.usage.output_tokens,
+                    ..Default::default()
+                }))
+                .await;
+            res
+        }
+        Err(e) => {
+            tracing::warn!(model = %req.model, error = %e, "decision failed");
+            recorder.finish_err(&e, None).await;
+            return Err(e.into());
+        }
+    };
     tracing::info!(
         model = %req.model,
         questions = req.questions.len(),

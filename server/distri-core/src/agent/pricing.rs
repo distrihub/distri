@@ -5,6 +5,10 @@ pub(crate) struct ModelPricing {
     pub(crate) output: f64,
     #[serde(default)]
     pub(crate) cached_input: f64,
+    /// Price of writing the prompt cache, per 1M tokens. Absent: 1.25× the
+    /// input price (Anthropic's rate; only Anthropic reports cache writes).
+    #[serde(default)]
+    pub(crate) cache_write: Option<f64>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -22,6 +26,39 @@ pub(crate) fn get_model_pricing() -> &'static std::collections::HashMap<String, 
             serde_json::from_str(json).expect("Failed to parse model_pricing.json");
         file.models
     })
+}
+
+/// Cost in USD of one call, unrounded (a per-call ledger sums these; rounding
+/// each to 4 places would zero out small calls). `input_tokens` is the whole
+/// prompt: cache reads (`cached_tokens`) are billed at the cached rate, cache
+/// writes (`cache_write_tokens`) at the cache-write rate, the rest at the
+/// input rate.
+pub(crate) fn exact_cost(
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    cached_tokens: u64,
+    cache_write_tokens: u64,
+) -> Option<f64> {
+    let pricing = get_model_pricing();
+    let entry = pricing.get(model).or_else(|| {
+        pricing
+            .iter()
+            .filter(|(key, _)| model.contains(key.as_str()))
+            .max_by_key(|(key, _)| key.len())
+            .map(|(_, v)| v)
+    })?;
+    let cached = cached_tokens.min(input_tokens);
+    let writes = cache_write_tokens.min(input_tokens - cached);
+    let plain = input_tokens - cached - writes;
+    let write_rate = entry.cache_write.unwrap_or(entry.input * 1.25);
+    Some(
+        (plain as f64 * entry.input
+            + cached as f64 * entry.cached_input
+            + writes as f64 * write_rate
+            + output_tokens as f64 * entry.output)
+            / 1_000_000.0,
+    )
 }
 
 /// Estimate cost in USD based on model name, token counts, and cached tokens.
@@ -62,6 +99,21 @@ pub(crate) fn estimate_cost(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_writes_cost_more_than_input_and_reads_less() {
+        let p = &get_model_pricing()["claude-sonnet-4"];
+        let plain = exact_cost("claude-sonnet-4", 1_000_000, 0, 0, 0).unwrap();
+        let written = exact_cost("claude-sonnet-4", 1_000_000, 0, 0, 1_000_000).unwrap();
+        let read = exact_cost("claude-sonnet-4", 1_000_000, 0, 1_000_000, 0).unwrap();
+        assert!((plain - p.input).abs() < 1e-9);
+        assert!((written - p.input * 1.25).abs() < 1e-9, "{written}");
+        assert!((read - p.cached_input).abs() < 1e-9);
+        // A mixed call: 100 plain, 300 read, 600 written.
+        let mixed = exact_cost("claude-sonnet-4", 1000, 0, 300, 600).unwrap();
+        let want = (100.0 * p.input + 300.0 * p.cached_input + 600.0 * p.input * 1.25) / 1e6;
+        assert!((mixed - want).abs() < 1e-12);
+    }
 
     #[test]
     fn pricing_json_loads() {

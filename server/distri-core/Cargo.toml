@@ -20,6 +20,8 @@ otel = [
 
 [dependencies]
 distri-a2a = { path = "../../distri-a2a", version = "0.4.6" }
+# Counts an LLM request by part (system, tools, history, …) for usage attribution.
+tiktoken-rs = "0.12"
 distri-parsers = { path = "../distri-parsers", version = "0.4.6" }
 distri = { path = "../../distri", version = "0.4.6" }
 browsr-client = { workspace = true }

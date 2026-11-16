@@ -34,6 +34,9 @@ const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 8192;
 struct StreamUsage {
     input: u32,
     output: u32,
+    cached: u32,
+    reasoning: u32,
+    seen: bool,
 }
 
 impl StreamUsage {
@@ -44,7 +47,31 @@ impl StreamUsage {
         );
         self.input = self.input.max(usage.input_tokens);
         self.output = self.output.max(usage.output_tokens);
+        self.cached = self.cached.max(usage.cached_tokens());
+        self.reasoning = self.reasoning.max(usage.reasoning_tokens());
+        self.seen = true;
         delta
+    }
+
+    /// The call's usage: the largest value each cumulative counter reached.
+    fn provider_usage(&self) -> Option<crate::llm_call::ProviderUsage> {
+        self.seen.then(|| crate::llm_call::ProviderUsage {
+            input_tokens: self.input as u64,
+            output_tokens: self.output as u64,
+            cached_tokens: self.cached as u64,
+            cache_creation_tokens: 0,
+            reasoning_tokens: self.reasoning as u64,
+        })
+    }
+}
+
+fn responses_provider_usage(u: &ResponseUsage) -> crate::llm_call::ProviderUsage {
+    crate::llm_call::ProviderUsage {
+        input_tokens: u.input_tokens as u64,
+        output_tokens: u.output_tokens as u64,
+        cached_tokens: u.cached_tokens() as u64,
+        cache_creation_tokens: 0,
+        reasoning_tokens: u.reasoning_tokens() as u64,
     }
 }
 
@@ -497,11 +524,23 @@ impl OpenAIResponsesLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        let response = client
+        let recorder = crate::llm_call::LlmCallRecorder::begin(
+            self.context.clone(),
+            &ms.model,
+            ms.inner.provider.provider_id(),
+            false,
+            self.label.as_deref().unwrap_or("agent"),
+            messages,
+            self.tools.iter().map(|t| t.get_tool_definition()).collect(),
+        )
+        .await?;
+        let response = match client
             .create_response(&request)
             .instrument(span.clone())
             .await
-            .map_err(|e| {
+        {
+            Ok(r) => r,
+            Err(e) => {
                 tracing::error!("LLM request failed: {}", e);
                 let elapsed = start.elapsed().as_millis() as u64;
                 llm_gateway::observability::recorder::record_inference_response(
@@ -516,13 +555,15 @@ impl OpenAIResponsesLLMExecutor {
                     elapsed,
                     None,
                 );
-                e
-            })?;
+                recorder.finish_err(&e, None).await;
+                return Err(e);
+            }
+        };
 
         let input_tokens = response.usage.input_tokens;
         let output_tokens = response.usage.output_tokens;
-        self.context
-            .increment_usage(input_tokens, output_tokens)
+        recorder
+            .finish_ok(Some(responses_provider_usage(&response.usage)))
             .await;
 
         let usage = Some(distri_types::TokenUsage {
@@ -739,6 +780,16 @@ impl OpenAIResponsesLLMExecutor {
         };
 
         let client = self.build_client().await?;
+        let recorder = crate::llm_call::LlmCallRecorder::begin(
+            self.context.clone(),
+            &ms.model,
+            ms.inner.provider.provider_id(),
+            true,
+            self.label.as_deref().unwrap_or("agent"),
+            messages,
+            self.tools.iter().map(|t| t.get_tool_definition()).collect(),
+        )
+        .await?;
         let stream = match client
             .create_response_stream(&request)
             .instrument(span.clone())
@@ -746,6 +797,7 @@ impl OpenAIResponsesLLMExecutor {
         {
             Ok(s) => s,
             Err(e) => {
+                recorder.finish_err(&e, None).await;
                 let error_msg = format!("OpenAI Responses stream request failed: {}", e);
                 tracing::error!("{}", error_msg);
                 context
@@ -783,12 +835,16 @@ impl OpenAIResponsesLLMExecutor {
                 Ok(event) => match event {
                     TypedStreamEvent::ResponseCreated(resp)
                     | TypedStreamEvent::ResponseCompleted(resp) => {
-                        let (input, output) = stream_usage.observe(&resp.usage);
-                        self.context.increment_usage(input, output).await;
+                        stream_usage.observe(&resp.usage);
                     }
                     TypedStreamEvent::ResponseFailed(resp) => {
-                        let (input, output) = stream_usage.observe(&resp.usage);
-                        self.context.increment_usage(input, output).await;
+                        stream_usage.observe(&resp.usage);
+                        recorder
+                            .finish_err(
+                                format!("response failed: {}", resp.status),
+                                stream_usage.provider_usage(),
+                            )
+                            .await;
                         return Err(AgentError::LLMError(format!(
                             "OpenAI Responses API failed with status: {}",
                             resp.status
@@ -936,6 +992,7 @@ impl OpenAIResponsesLLMExecutor {
                 },
                 Err(e) => {
                     tracing::error!("OpenAI Responses stream error: {}", e);
+                    recorder.finish_err(&e, stream_usage.provider_usage()).await;
                     return Err(e);
                 }
             }
@@ -1029,6 +1086,7 @@ impl OpenAIResponsesLLMExecutor {
             cost,
         );
 
+        recorder.finish_ok(stream_usage.provider_usage()).await;
         Ok(super::llm::StreamResult {
             finish_reason,
             tool_calls,
@@ -1087,6 +1145,7 @@ mod tests {
             input_tokens,
             output_tokens,
             total_tokens: input_tokens + output_tokens,
+            ..Default::default()
         };
         assert_eq!(seen.observe(&report(10, 0)), (10, 0));
         assert_eq!(seen.observe(&report(10, 0)), (0, 0));
