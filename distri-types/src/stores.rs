@@ -1188,10 +1188,19 @@ pub async fn resolve_provider_test_endpoint(
         let base_url = base_url.filter(|u| !u.trim().is_empty()).ok_or_else(|| {
             anyhow::anyhow!("provider '{provider_id}' has no endpoint configured")
         })?;
-        return Ok(ResolvedProviderEndpoint {
-            base_url,
-            api_key: api_key.unwrap_or_default(),
-        });
+        // A provider with no inline key slot (plain OpenAI) is never filled
+        // by `hydrate_creds`, so read its canonical secret here; otherwise
+        // the probe goes out with an empty key (distri #173).
+        let api_key = match api_key {
+            Some(key) => key,
+            None => secret_store
+                .get(ms.inner.provider.api_key_secret())
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?
+                .map(|s| s.value)
+                .unwrap_or_default(),
+        };
+        return Ok(ResolvedProviderEndpoint { base_url, api_key });
     }
     Err(anyhow::anyhow!("unknown provider '{provider_id}'"))
 }
@@ -2206,6 +2215,46 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         )
+    }
+
+    /// distri #173: Test connection must probe with the key the user saved,
+    /// for every built-in provider. OpenAI has no inline key slot, so its key
+    /// was never read and the probe went out with an empty bearer token.
+    #[tokio::test]
+    async fn test_endpoint_sends_the_saved_key_for_every_builtin_provider() {
+        let endpoints = [
+            ("AZURE_OPENAI_ENDPOINT", "https://r.openai.azure.com"),
+            ("AZURE_AI_FOUNDRY_RESOURCE", "r"),
+            ("AWS_BEDROCK_ENDPOINT", "https://bedrock.example"),
+            ("GOOGLE_VERTEX_ENDPOINT", "https://vertex.example"),
+        ];
+        for id in [
+            "openai",
+            "anthropic",
+            "zai",
+            "azure_openai",
+            "gemini",
+            "azure_ai_foundry",
+            "aws_bedrock",
+            "google_vertex",
+            "alibaba_cloud",
+            "fal_ai",
+        ] {
+            let ms = crate::agent::ModelSettings::from_provider_model_str(&format!("{id}/_"))
+                .unwrap()
+                .unwrap();
+            let key_name = ms.inner.provider.api_key_secret();
+            let mut pairs = endpoints.to_vec();
+            pairs.push((key_name, "sk-user-entered"));
+            let ep = resolve_provider_test_endpoint(id, &secrets(&pairs), &[])
+                .await
+                .unwrap_or_else(|e| panic!("{id}: {e}"));
+            assert_eq!(
+                ep.api_key, "sk-user-entered",
+                "{id} probed without its {key_name}"
+            );
+            assert!(!ep.base_url.is_empty(), "{id}");
+        }
     }
 
     #[tokio::test]
