@@ -16,6 +16,7 @@ pub mod helpers;
 mod invoke_agent_tool;
 mod invoke_entry;
 mod llm;
+mod llm_call_ledger;
 mod llm_service_subtask;
 pub mod mock_llm;
 mod mock_tool;

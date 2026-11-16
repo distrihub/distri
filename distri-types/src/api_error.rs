@@ -45,6 +45,10 @@ pub enum ApiError {
     #[error("{0}")]
     Unprocessable(String),
 
+    /// A usage budget or rate limit refused the request. Maps to HTTP 429.
+    #[error("{0}")]
+    TooManyRequests(String),
+
     /// Backing service unavailable (store not wired, OAuth not configured).
     /// Maps to HTTP 503.
     #[error("{0}")]
@@ -75,6 +79,7 @@ impl ApiError {
             Self::NotFound(_) => 404,
             Self::Conflict(_) => 409,
             Self::Unprocessable(_) => 422,
+            Self::TooManyRequests(_) => 429,
             Self::ServiceUnavailable(_) => 503,
             Self::BadGateway(_) => 502,
             Self::Internal(_) => 500,

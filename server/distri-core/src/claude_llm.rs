@@ -616,11 +616,23 @@ impl ClaudeLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        let response = client
+        let recorder = crate::llm_call::LlmCallRecorder::begin(
+            self.context.clone(),
+            &ms.model,
+            ms.inner.provider.provider_id(),
+            false,
+            self.label.as_deref().unwrap_or("agent"),
+            messages,
+            self.tools.iter().map(|t| t.get_tool_definition()).collect(),
+        )
+        .await?;
+        let response = match client
             .create_message(&request)
             .instrument(span.clone())
             .await
-            .map_err(|e| {
+        {
+            Ok(r) => r,
+            Err(e) => {
                 tracing::error!("LLM request failed: {}", e);
                 let elapsed = start.elapsed().as_millis() as u64;
                 llm_gateway::observability::recorder::record_inference_response(
@@ -635,8 +647,10 @@ impl ClaudeLLMExecutor {
                     elapsed,
                     None,
                 );
-                e
-            })?;
+                recorder.finish_err(&e, None).await;
+                return Err(e);
+            }
+        };
 
         // Log cache usage
         if let Some(cache_created) = response.usage.cache_creation_input_tokens {
@@ -653,8 +667,13 @@ impl ClaudeLLMExecutor {
         let output_tokens = response.usage.output_tokens;
         let cached_tokens = response.usage.cache_read_input_tokens.unwrap_or(0);
         let cache_created = response.usage.cache_creation_input_tokens.unwrap_or(0);
-        self.context
-            .increment_usage_with_cache(input_tokens, output_tokens, cached_tokens)
+        recorder
+            .finish_ok(Some(crate::llm_call::ProviderUsage::anthropic(
+                input_tokens,
+                output_tokens,
+                cached_tokens,
+                cache_created,
+            )))
             .await;
 
         // Verbose: per-call LLM summary
@@ -898,10 +917,31 @@ impl ClaudeLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        let stream = client
+        let recorder = crate::llm_call::LlmCallRecorder::begin(
+            self.context.clone(),
+            &ms.model,
+            ms.inner.provider.provider_id(),
+            true,
+            self.label.as_deref().unwrap_or("agent"),
+            messages,
+            self.tools.iter().map(|t| t.get_tool_definition()).collect(),
+        )
+        .await?;
+        let stream = match client
             .create_message_stream(&request)
             .instrument(span.clone())
-            .await?;
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                recorder.finish_err(&e, None).await;
+                return Err(e);
+            }
+        };
+        // Anthropic's usage counters are cumulative across stream events, so
+        // the call's usage is the largest value each one reaches.
+        let mut seen_usage = false;
+        let (mut u_in, mut u_out, mut u_read, mut u_created) = (0u32, 0u32, 0u32, 0u32);
 
         let message_id = uuid::Uuid::new_v4().to_string();
         let mut current_content = String::new();
@@ -931,13 +971,11 @@ impl ClaudeLLMExecutor {
                         if let Some(usage) = message.usage {
                             let cached = usage.cache_read_input_tokens.unwrap_or(0);
                             let created = usage.cache_creation_input_tokens.unwrap_or(0);
-                            self.context
-                                .increment_usage_with_cache(
-                                    usage.input_tokens,
-                                    usage.output_tokens,
-                                    cached,
-                                )
-                                .await;
+                            seen_usage = true;
+                            u_in = u_in.max(usage.input_tokens);
+                            u_out = u_out.max(usage.output_tokens);
+                            u_read = u_read.max(cached);
+                            u_created = u_created.max(created);
                             stream_input_tokens += usage.input_tokens;
                             stream_output_tokens += usage.output_tokens;
                             stream_cached_tokens += cached;
@@ -1069,9 +1107,12 @@ impl ClaudeLLMExecutor {
                     }
                     StreamEvent::MessageDelta { delta: _, usage } => {
                         if let Some(usage) = usage {
-                            self.context
-                                .increment_usage(usage.input_tokens, usage.output_tokens)
-                                .await;
+                            seen_usage = true;
+                            u_in = u_in.max(usage.input_tokens);
+                            u_out = u_out.max(usage.output_tokens);
+                            u_read = u_read.max(usage.cache_read_input_tokens.unwrap_or(0));
+                            u_created =
+                                u_created.max(usage.cache_creation_input_tokens.unwrap_or(0));
                             stream_output_tokens += usage.output_tokens;
                         }
                         // stop_reason is in delta.stop_reason but we handle it via tool_calls presence
@@ -1086,6 +1127,12 @@ impl ClaudeLLMExecutor {
                             error.error_type,
                             error.message
                         );
+                        let usage = seen_usage.then(|| {
+                            crate::llm_call::ProviderUsage::anthropic(
+                                u_in, u_out, u_read, u_created,
+                            )
+                        });
+                        recorder.finish_err(&error.message, usage).await;
                         return Err(AgentError::LLMError(format!(
                             "Claude stream error: {}",
                             error.message
@@ -1094,6 +1141,10 @@ impl ClaudeLLMExecutor {
                 },
                 Err(e) => {
                     tracing::error!("Claude stream error: {}", e);
+                    let usage = seen_usage.then(|| {
+                        crate::llm_call::ProviderUsage::anthropic(u_in, u_out, u_read, u_created)
+                    });
+                    recorder.finish_err(&e, usage).await;
                     return Err(e);
                 }
             }
@@ -1203,6 +1254,13 @@ impl ClaudeLLMExecutor {
             );
         }
 
+        recorder
+            .finish_ok(
+                seen_usage.then(|| {
+                    crate::llm_call::ProviderUsage::anthropic(u_in, u_out, u_read, u_created)
+                }),
+            )
+            .await;
         Ok(super::llm::StreamResult {
             finish_reason,
             tool_calls,

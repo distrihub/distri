@@ -187,6 +187,9 @@ pub struct ExecutorContext {
     pub tags: HashMap<String, String>,
     /// Resolved agent version (provenance). Recorded on the agent span.
     pub agent_version: Option<String>,
+    /// Who sent the request that started this run. Inherited by sub-agents
+    /// and copied onto every [`distri_types::LlmCallUsage`] for attribution.
+    pub caller: Option<distri_types::RequestCaller>,
     /// Inbound distributed-trace context. When present (top-level runs only),
     /// the agent's root span and all descendants inherit this trace_id.
     pub trace_context: Option<distri_types::TraceContext>,
@@ -283,6 +286,7 @@ impl Default for ExecutorContext {
             connections_used: Arc::new(RwLock::new(HashSet::new())),
             tags: HashMap::new(),
             agent_version: None,
+            caller: None,
             trace_context: None,
             span_name: None,
             summary_executor: Arc::new(RwLock::new(None)),
@@ -484,7 +488,10 @@ impl ExecutorContext {
             channel_id: self.channel_id.clone(),
         };
 
-        if let Some(tx) = tx {
+        // A call record is for the host's ledger (hooks), not the client
+        // stream or the task's event log.
+        let ledger_only = matches!(event.event, AgentEventType::LlmCall { .. });
+        if let (Some(tx), false) = (tx, ledger_only) {
             let _ = tx.send(event.clone()).await;
         }
 
@@ -506,7 +513,7 @@ impl ExecutorContext {
         // Skip saving artifacts to the task store through events
         // as they are saved separately
         // And text deltas
-        if matches!(event.event, AgentEventType::TextMessageContent { .. }) {
+        if ledger_only || matches!(event.event, AgentEventType::TextMessageContent { .. }) {
             return;
         }
 
@@ -1164,6 +1171,8 @@ impl ExecutorContext {
             dynamic_tools: self.dynamic_tools.clone(),
             event_tx: self.event_tx.clone(),
             parent_task_id: Some(self.task_id.clone()),
+            // The run that dispatched this one (usage attribution, span nesting).
+            parent_run_id: Some(self.run_id.clone()),
             depth: self.depth + 1,
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
@@ -1171,6 +1180,7 @@ impl ExecutorContext {
             runtime_mode: self.runtime_mode.clone(),
             skill_tracker: Arc::new(RwLock::new(self.skill_tracker.read().await.clone())),
             is_sandbox: self.is_sandbox,
+            caller: self.caller.clone(),
 
             ..Default::default()
         }
@@ -1208,6 +1218,7 @@ impl ExecutorContext {
             env_vars: self.env_vars.clone(),
             runtime_mode: self.runtime_mode.clone(),
             is_sandbox: self.is_sandbox,
+            caller: self.caller.clone(),
 
             ..Default::default()
         }
@@ -1342,6 +1353,7 @@ impl ExecutorContext {
             connections_used: self.connections_used.clone(),
             tags: self.tags.clone(),
             agent_version: self.agent_version.clone(),
+            caller: self.caller.clone(),
             trace_context: self.trace_context.clone(),
             span_name: self.span_name.clone(),
             summary_executor: self.summary_executor.clone(),

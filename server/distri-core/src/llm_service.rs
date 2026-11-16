@@ -11,11 +11,21 @@ use std::sync::Arc;
 /// Service for executing LLM requests with proper thread and task management
 pub struct LlmExecuteService {
     pub orchestrator: Arc<crate::AgentOrchestrator>,
+    /// Who sent the request; copied onto the call's usage record.
+    pub caller: Option<distri_types::RequestCaller>,
 }
 
 impl LlmExecuteService {
     pub fn new(orchestrator: Arc<crate::AgentOrchestrator>) -> Self {
-        Self { orchestrator }
+        Self {
+            orchestrator,
+            caller: None,
+        }
+    }
+
+    pub fn with_caller(mut self, caller: Option<distri_types::RequestCaller>) -> Self {
+        self.caller = caller;
+        self
     }
 
     /// Execute an LLM request with proper thread/task creation
@@ -57,6 +67,7 @@ impl LlmExecuteService {
         context.span_name = title.clone();
         // Searchable tags recorded on the agent span as `distri.tags` by OtelHooks.
         context.tags = tags.unwrap_or_default();
+        context.caller = self.caller.clone();
 
         if let Some(run_id) = run_id {
             context.run_id = run_id;

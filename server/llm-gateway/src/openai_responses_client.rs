@@ -167,6 +167,37 @@ pub struct ResponseUsage {
     pub output_tokens: u32,
     #[serde(default)]
     pub total_tokens: u32,
+    #[serde(default)]
+    pub input_tokens_details: Option<ResponseInputTokensDetails>,
+    #[serde(default)]
+    pub output_tokens_details: Option<ResponseOutputTokensDetails>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ResponseInputTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ResponseOutputTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: u32,
+}
+
+impl ResponseUsage {
+    pub fn cached_tokens(&self) -> u32 {
+        self.input_tokens_details
+            .as_ref()
+            .map(|d| d.cached_tokens)
+            .unwrap_or(0)
+    }
+    pub fn reasoning_tokens(&self) -> u32 {
+        self.output_tokens_details
+            .as_ref()
+            .map(|d| d.reasoning_tokens)
+            .unwrap_or(0)
+    }
 }
 
 fn deserialize_usage<'de, D: serde::Deserializer<'de>>(

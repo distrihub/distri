@@ -654,6 +654,7 @@ pub async fn execute_tool_calls_with_timeout(
                 );
                 let def = tool.get_tool_definition();
                 let parts = crate::tools::simulator::simulate_tool_response(
+                    context.clone(),
                     tool_call,
                     &def.description,
                     &def.parameters,
@@ -710,6 +711,7 @@ pub async fn execute_tool_calls_with_timeout(
                 );
                 let def = tool.get_tool_definition();
                 let parts = crate::tools::simulator::simulate_tool_response(
+                    context.clone(),
                     tool_call,
                     &def.description,
                     &def.parameters,

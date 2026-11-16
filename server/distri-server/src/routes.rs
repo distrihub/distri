@@ -1076,7 +1076,12 @@ async fn llm_execute(
     });
 
     // Use the new LlmExecuteService to handle thread/task creation and execution
-    let service = distri_core::llm_service::LlmExecuteService::new(executor.get_ref().clone());
+    let caller = http_request
+        .extensions()
+        .get::<distri_types::RequestCaller>()
+        .cloned();
+    let service = distri_core::llm_service::LlmExecuteService::new(executor.get_ref().clone())
+        .with_caller(caller);
 
     // Middleware already set task-local context - just call service directly
     let result = service

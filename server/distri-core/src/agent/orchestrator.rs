@@ -77,6 +77,9 @@ pub struct AgentOrchestrator {
     /// Optional policy that refuses runs whose final model is not allowed
     /// for the workspace. `None` in standalone servers.
     pub model_policy: Option<Arc<dyn distri_types::ModelPolicy>>,
+    /// Optional budgets checked before every provider call. `None` in
+    /// standalone servers.
+    pub spend_policy: Option<Arc<dyn distri_types::SpendPolicy>>,
     /// Unified runtime for event broadcasting + task coordination.
     /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
     pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
@@ -230,6 +233,7 @@ pub struct AgentOrchestratorBuilder {
     remote_task_runner: Option<Arc<dyn distri_types::RemoteTaskRunner>>,
     request_observer: Option<Arc<dyn distri_types::AgentRequestObserver>>,
     model_policy: Option<Arc<dyn distri_types::ModelPolicy>>,
+    spend_policy: Option<Arc<dyn distri_types::SpendPolicy>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
     workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
@@ -363,6 +367,13 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Attach a [`SpendPolicy`](distri_types::SpendPolicy) checked before
+    /// every provider call.
+    pub fn with_spend_policy(mut self, policy: Arc<dyn distri_types::SpendPolicy>) -> Self {
+        self.spend_policy = Some(policy);
+        self
+    }
+
     /// Attach an OAuth handler for the connections OAuth flow.
     /// When set, `POST /connections` with OAuth auth_type will generate a real
     /// authorization URL and `POST /connections/oauth/callback` will exchange codes.
@@ -482,6 +493,7 @@ impl AgentOrchestratorBuilder {
             remote_task_runner: self.remote_task_runner,
             request_observer: self.request_observer,
             model_policy: self.model_policy,
+            spend_policy: self.spend_policy,
             oauth_handler: self.oauth_handler,
             mcp_pool_provider: self.mcp_pool_provider,
             workflow_store: self.workflow_store,

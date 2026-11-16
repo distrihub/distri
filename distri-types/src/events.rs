@@ -341,6 +341,12 @@ pub enum AgentEventType {
     ChannelReply {
         reply: crate::channel_commands::ChannelReply,
     },
+
+    /// One provider call finished (or failed, or was refused). Exactly one
+    /// per call; see [`crate::llm_usage`].
+    LlmCall {
+        call: crate::llm_usage::LlmCallUsage,
+    },
 }
 
 fn default_compaction_source() -> String {
