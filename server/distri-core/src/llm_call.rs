@@ -186,6 +186,7 @@ impl LlmCallRecorder {
                 u.input_tokens,
                 u.output_tokens,
                 u.cached_tokens,
+                u.cache_creation_tokens,
             );
         }
         call

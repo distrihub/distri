@@ -125,3 +125,47 @@ impl DecisionService {
             })
     }
 }
+
+/// A decision request as the messages its usage record is split by: the
+/// questions are the instructions (`system`), the state is what the model
+/// reads (`user_message`). Only for counting; the provider gets the typed
+/// request.
+pub fn decision_messages(
+    req: &distri_types::decision::DecisionRequest,
+) -> Vec<distri_types::Message> {
+    let questions = serde_json::to_string(&req.questions).unwrap_or_default();
+    let state = match serde_json::to_value(&req.state) {
+        Ok(serde_json::Value::String(s)) => s,
+        Ok(v) => v.to_string(),
+        Err(_) => String::new(),
+    };
+    vec![
+        distri_types::Message::system(questions, None),
+        distri_types::Message::user(state, None),
+    ]
+}
+
+#[cfg(test)]
+mod decision_parts_tests {
+    use super::*;
+    use distri_types::RequestPartKind;
+
+    #[test]
+    fn a_decision_splits_into_instructions_and_state() {
+        let req: distri_types::decision::DecisionRequest =
+            serde_json::from_value(serde_json::json!({
+                "model": "custom_llama/kev",
+                "state": "A customer asks why their invoice doubled this month.",
+                "questions": {
+                    "route": { "type": "choice", "instructions": "Who should handle this?",
+                               "criteria": { "billing": null, "support": null } }
+                }
+            }))
+            .expect("decision request");
+        let parts = crate::llm_call::request_parts(&decision_messages(&req), &[], Some(173));
+        let kinds: Vec<_> = parts.iter().map(|p| p.kind).collect();
+        assert!(kinds.contains(&RequestPartKind::System), "{kinds:?}");
+        assert!(kinds.contains(&RequestPartKind::UserMessage), "{kinds:?}");
+        assert_eq!(parts.iter().map(|p| p.tokens).sum::<i64>(), 173);
+    }
+}

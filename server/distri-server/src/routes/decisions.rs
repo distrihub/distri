@@ -85,7 +85,7 @@ pub async fn decide(
         provider,
         false,
         "decision",
-        &[],
+        &distri_core::decision_service::decision_messages(&req),
         Vec::new(),
     )
     .await
