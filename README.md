@@ -1,43 +1,191 @@
-# Distri
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="Distri. Embedded agents for your end users. Bring the agent to your product, not your product to the agent." width="100%">
+</p>
 
-![](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square) ![](https://img.shields.io/badge/Runtime-Rust-orange?style=flat-square) ![](https://img.shields.io/badge/Protocol-A2A-green?style=flat-square)
+<p align="center">
+  <a href="https://distri.dev/docs/"><b>Documentation</b></a> ·
+  <a href="https://distri.dev/samples"><b>Gallery</b></a> ·
+  <a href="https://distri.dev/"><b>Website</b></a> ·
+  <a href="https://app.distri.dev"><b>Distri Cloud</b></a>
+</p>
 
-Distri is an open-source AI agent framework built in Rust. Define agents in markdown, connect your product functions as tools, and run them from the CLI, as an API server, or embedded in your React UI.
+Distri puts an agent inside your product, for the people who use it.
 
-**[Documentation](https://distri.dev/docs/)** · **[Website](https://distri.dev/)** · **[Distri Cloud](https://app.distri.dev)**
+Distri runs the agent. The agent works through what your product already has: its screens, its functions, its APIs, its auth and the signed-in user's session. You don't rebuild any of that for the agent, and your users don't leave your product to use it.
 
-![Distri Dashboard](https://distri.dev/img/page_home.png)
+## How it works
 
----
+![One turn: the agent runs on Distri and its tools run in your app](docs/assets/turn.svg)
 
-## Why Distri
+**The agent runs on Distri. Its tools run in your app.**
 
-- **Agents as markdown** — Define behavior, tools, and model settings in a single `.md` file with TOML frontmatter
-- **Built-in tool system** — Builtins (search, shell, browser), dynamic HTTP tools, external client-side tools, and MCP support
-- **Skills** — On-demand knowledge documents agents load at runtime via `load_skill`, with automatic re-injection after context compaction
-- **Sub-agents** — Agents delegate to specialized child agents with isolated context and token budgets
-- **Remote execution** — Run agents in sandboxed containers for untrusted code or resource isolation
-- **React SDK** — Drop-in `<Chat />` component with streaming, tool renderers, voice, and developer mode
-- **A2A compatible** — Implements the [A2A protocol](https://google.github.io/a2a/) for agent discovery and invocation
-- **Self-hosted** — Run on your own infrastructure with SQLite. No external dependencies required.
+1. An agent is a markdown file: instructions, a model and a list of tools.
+2. In your frontend you hand the chat component the functions the agent may call. These are functions you already have, such as `cart.add` or `form.setValues`.
+3. When the agent calls one, Distri sends the call to the user's browser or phone. Your handler runs there, with that user's session and permissions, and the result goes back to the agent.
+4. A tool can run on its own, or wait for the user to approve or decline it in your UI.
 
----
+The agent can also call server-side tools: remote MCP servers, declarative HTTP tools and sub-agents.
 
-## Installation
+## Quick start
+
+Install the CLI:
 
 ```bash
-# Install script (macOS / Linux)
 curl -fsSL https://distri.dev/install.sh | sh
+# or: brew tap distrihub/distri && brew install distri
+```
 
-# Homebrew
-brew tap distrihub/distri && brew install distri
+### 1. Write the agent and push it
 
-# Verify
-distri --version
+`agents/shop_assistant.md`:
+
+```markdown
+---
+name = "shop_assistant"
+description = "Helps shoppers check out"
+
+[tools]
+external = ["add_to_cart"]
+
+[model_settings]
+model = "gpt-4.1-mini"
+---
+
+# ROLE
+You help shoppers on our store.
+```
+
+```bash
+distri login   # Distri Cloud; skip this when you self-host
+distri push    # syncs ./agents, ./skills and ./templates to your workspace
+```
+
+### 2. Hand it your functions
+
+```bash
+npm install @distri/react @distri/core
+```
+
+```tsx
+import '@distri/react/styles.css';
+import { useMemo } from 'react';
+import { DistriProvider, Chat } from '@distri/react';
+import type { DistriFnTool } from '@distri/core';
+import { useCart } from './cart';
+
+export function ShopAssistant() {
+  const cart = useCart(); // your state, as it is
+
+  const tools = useMemo<DistriFnTool[]>(() => [{
+    name: 'add_to_cart',
+    description: 'Add a product to the cart',
+    type: 'function',
+    parameters: {
+      type: 'object',
+      properties: { sku: { type: 'string' }, qty: { type: 'number' } },
+      required: ['sku'],
+    },
+    autoExecute: true, // leave out to ask the user first
+    handler: async ({ sku, qty = 1 }) => {
+      await cart.add(sku, qty); // runs in the browser
+      return { ok: true, items: cart.count };
+    },
+  }], [cart]);
+
+  return (
+    <DistriProvider config={{
+      baseUrl: 'https://api.distri.dev/v1', // or your own server, e.g. http://localhost:7777
+      clientId: 'dpc_…',
+      workspaceId: '…',
+    }}>
+      <Chat agentId="shop_assistant" externalTools={tools} />
+    </DistriProvider>
+  );
+}
+```
+
+### 3. Use it
+
+Ask the assistant to add something to the cart. The call to `add_to_cart` crosses to the browser, your handler runs, and the cart on screen changes.
+
+The [Gallery](https://distri.dev/samples) has four products driven this way (a checkout, KYC/KYB onboarding, a design canvas and a 3D studio), each with its tools and agent file.
+
+The TypeScript SDK (`@distri/core`, `@distri/react`, React Native, Angular) lives in [distrihub/distrijs](https://github.com/distrihub/distrijs). See the [in-product tools guide](https://distri.dev/docs/guides/agent/in-product-tools/).
+
+## What's in the box
+
+![Architecture: your users' surfaces, the Distri runtime, the gateway and your model providers](docs/assets/architecture.svg)
+
+| | |
+|---|---|
+| **Agents as markdown** | Instructions, model settings and tools in one `.md` file with TOML frontmatter. [Agent definition](https://distri.dev/docs/concepts/agent-definition) |
+| **Client-side tools** | Functions in your app that the agent calls. They run in the user's browser or phone. |
+| **Approve or decline** | Leave `autoExecute` off and the chat asks the user before the handler runs. |
+| **Server-side tools** | Remote MCP servers, declarative HTTP tools, and built-ins such as `search`, `load_skill` and `invoke_agent`. |
+| **Skills** | Instruction documents an agent loads on demand with `load_skill`. They are re-injected after context compaction. |
+| **Sub-agents** | An agent can delegate to a named or ad-hoc worker, in the foreground or background. |
+| **Workflows** | Fixed sequences of tool calls, agent runs, conditions and a `wait_for_input` step that pauses for a person. |
+| **Streaming and resume** | Typed events over SSE. A client that reconnects replays the task's history and then continues live. |
+| **Traces and usage** | OpenTelemetry spans for agent, step, model call and tool, and a usage record for every model call. |
+| **Open protocols** | Every agent is reachable over [A2A](https://google.github.io/a2a/) (JSON-RPC). Tools connect over MCP. |
+
+## The same agent, wherever the work continues
+
+The agent you embed in your app is an API endpoint, so it can answer anywhere your users or your systems are.
+
+- **In your product:** web with `@distri/react`, mobile with React Native, or any site with one script tag.
+- **On chat channels:** Telegram, WhatsApp and Discord bots are built into [Distri Cloud](https://app.distri.dev). Paste a bot token and pick the agent or workflow it runs.
+- **Slack and your other systems:** call the agent from a webhook, a workflow or your backend through the API. There is no built-in Slack bot.
+- **From a terminal or a script:** `distri run` and `distri tui`.
+
+## Models
+
+The model is set per agent, on your own provider keys.
+
+- **Native wire formats:** OpenAI Chat Completions, OpenAI Responses and Anthropic Messages.
+- **Everything else** connects through an OpenAI-compatible endpoint, including Gemini, Azure OpenAI and open models served that way. Which features work depends on the endpoint and the model.
+
+## Self-host or use Distri Cloud
+
+**Self-host.** One command starts the server and the web UI on SQLite:
+
+```bash
+distri serve            # http://localhost:7777
+distri serve --no-ui    # API only
+distri serve --port 8080
+```
+
+The first run downloads the matching `distri-server` binary and UI bundle from [Releases](https://github.com/distrihub/distri/releases) into `~/.distri/`. Postgres is supported for larger deployments. The self-hosted server is single-tenant.
+
+**Distri Cloud** adds workspaces and members, bots on chat channels, schedule and webhook triggers for workflows, usage and limits per end user, and stored traces. [app.distri.dev](https://app.distri.dev)
+
+Two things to know before you self-host:
+
+- The `search`, shell, code-execution and browser tools are clients of the [Browsr](https://browsr.dev) service and need `BROWSR_BASE_URL` and `BROWSR_API_KEY`. This repo has no sandbox of its own.
+- Approvals for client-side tools are shown and enforced by the client SDK.
+
+## CLI
+
+```bash
+distri                                   # interactive TUI
+distri tui my_agent                      # chat with one agent
+distri run --agent my_agent --task "…"   # run a single task
+distri run --agent my_agent --task "…" --tag team=growth
+
+distri push                              # sync agents, skills and templates
+distri push --dry-run                    # preview what would upload
+distri agents list
+distri skills list
+distri traces list                       # inspect runs
+distri secrets list
+distri connections list
+
+distri update                            # pull the latest server and UI
+distri version
 ```
 
 <details>
-<summary>Other platforms</summary>
+<summary>Other install options</summary>
 
 **Direct download:**
 ```bash
@@ -55,349 +203,33 @@ $Env:Path += ";$Env:LOCALAPPDATA\distri"
 ```
 </details>
 
----
-
-## Run
-
-Once installed, start the server and web UI:
-
-```bash
-distri serve
-```
-
-The first run downloads the matching `distri-server` binary and UI bundle from
-[github.com/distrihub/distri/releases](https://github.com/distrihub/distri/releases)
-into `~/.distri/`. Opens your browser automatically to `http://localhost:7777`.
-
-### Serve options
-
-| Flag | Behavior |
-|------|----------|
-| `distri serve` | Default: resolve+spawn distri-server, serve the UI, open browser |
-| `--port 8080` | Override port (default 7777) |
-| `--no-ui` | API-only mode (no web interface) |
-| `--no-browser` | Don't auto-open the browser |
-| `--server-version 0.5.3` | Pin a specific server version |
-| `--ui-version 0.5.7` | Pin a specific UI version |
-
-### Lifecycle commands
-
-| Command | Behavior |
-|---------|----------|
-| `distri serve` | Resolve+spawn distri-server, serve the UI |
-| `distri update` | Pull the latest server + UI within the compat range |
-| `distri update --pre` | Allow pre-release versions |
-| `distri version` | Print installed CLI / server / UI versions |
-| `distri uninstall` | Wipe `~/.distri/{bin, ui, cache}` |
-
----
-
-## Quick Start
-
-### Run a built-in agent
-
-```bash
-distri run search --task "What are the top programming languages in 2026?"
-```
-
-### Define your own agent
-
-Create `agents/my_agent.md`:
-
-```markdown
----
-name = "my_agent"
-description = "A helpful assistant with web search"
-max_iterations = 15
-
-[tools]
-builtin = ["final", "search"]
----
-
-# My Agent
-
-You are a helpful assistant. Use the search tool to find current information.
-
-{{task}}
-```
-
-### Run it
-
-```bash
-# Interactive chat
-distri tui my_agent
-
-# Single task
-distri run --agent my_agent --task "Find the latest SpaceX launch date"
-
-# Start as API server
-distri serve --port 8080
-```
-
-### Push to Distri Cloud
-
-```bash
-distri login
-distri agents push agents/my_agent.md
-```
-
----
-
-## Built-in Agents
-
-| Agent | Purpose | Example |
-|-------|---------|---------|
-| **search** | Web search + scrape | `distri run search --task "latest AI news"` |
-| **fast_search** | Quick single-query lookups | `distri run fast_search --task "population of Tokyo"` |
-| **web** | Browser automation + scraping | `distri run web --task "scrape HN top 5 stories"` |
-| **code** | Sandboxed code execution | `distri run code --task "sum of primes below 1000"` |
-| **deepresearch** | Multi-phase research with sub-agent delegation | `distri run deepresearch --task "state of quantum computing"` |
-| **distri** | Master orchestrator | `distri run distri --task "find and calculate..."` |
-| **coder** | Full coding agent (shell + web + files) | `distri run coder --task "build a REST API"` |
-| **agent_designer** | Design new agent definitions | `distri run agent_designer --task "design a stock alert agent"` |
-
-> Requires `BROWSR_BASE_URL` and `BROWSR_API_KEY` for search, browser, and shell tools. Configured automatically on Distri Cloud.
-
----
-
-## Agent Definition Format
-
-Agents are markdown files with TOML frontmatter:
-
-```markdown
----
-name = "my_agent"
-description = "What this agent does"
-max_iterations = 25
-context_size = 80000
-sub_agents = ["search", "code"]     # delegate to other agents
-
-[tools]
-builtin = ["final", "search", "load_skill"]
-external = ["Read", "Write", "Edit"]  # client-side tools
-
-[[tools.dynamic]]
-name = "my_api"
-type = "http"
-description = "Call my API"
-config = { base_url = "$API_URL", headers = { "Authorization" = "Bearer $TOKEN" } }
-
-[[available_skills]]
-id = "*"
-name = "*"
----
-
-# System Prompt
-
-Your instructions here. Supports Handlebars templates:
-- {{task}} — the user's message
-- {{> skills}} — available skills listing
-- {{> connections}} — available connections
-```
-
-See [Agent Definition docs](https://distri.dev/docs/concepts/agent-definition) for the full schema.
-
----
-
-## Skills
-
-Skills are reusable instruction documents agents load on demand:
-
-```markdown
----
-name = "data_pipeline"
-description = "How to run the data transformation pipeline"
-tags = ["data", "etl"]
-context = "inline"
----
-
-# Data Pipeline
-
-## Steps
-1. Fetch data with `my_api` tool...
-2. Transform using Python...
-```
-
-```bash
-# Push skills
-distri skills push skills/data_pipeline.md
-distri skills list
-```
-
-Agents call `load_skill("data_pipeline")` at runtime. Two modes:
-- **Inline** (default) — content injected into conversation, survives context compaction
-- **Fork** — spawns isolated child agent with skill as instructions
-
----
-
-## React SDK (DistriJS)
-
-Embed agents in your React app:
-
-```bash
-npm install @distri/react
-```
-
-```tsx
-import { useAgent, Chat } from '@distri/react';
-
-function App() {
-  const { agent } = useAgent({ agentIdOrDef: 'my_agent' });
-  return <Chat agent={agent} threadId="conversation-1" />;
-}
-```
-
-Features: SSE streaming, tool execution with custom renderers, voice I/O, developer mode, browser-side file tools (IndexedDB-backed Read/Write/Edit/Glob/Grep).
-
-See the [DistriJS docs](https://distri.dev/docs/guides/client/guide-distri-provider) for full integration guide.
-
----
-
-## CLI Reference
-
-### Server & UI
-
-```bash
-distri serve                        # Start server + UI on port 7777
-distri serve --port 8080            # Custom port
-distri serve --no-ui                # API-only
-distri update                       # Pull latest server + UI
-distri version                      # Show versions
-distri uninstall                    # Clean ~/.distri/
-```
-
-### Agent & skill management
-
-```bash
-distri                              # Interactive TUI
-distri run --task "..." [--agent A] # Run a task
-distri run --task "..." --remote    # Run in sandboxed container
-
-distri agents list / push / delete  # Manage agents
-distri skills list [-a] / push      # Manage skills
-```
-
-### Debugging & tools
-
-```bash
-distri traces list / show ID [-v]   # Debug with trace viewer
-distri tools list / invoke          # Inspect and test tools
-```
-
-### Connections & config
-
-```bash
-distri connections list / token     # OAuth connections
-distri secrets list / set / delete  # Manage secrets
-distri workflows run / push         # DAG workflows
-
-distri login                        # Auth with Distri Cloud
-distri profile list / use / config  # Multi-profile management
-```
-
----
-
-## Invocation & Traces
-
-Distri has two invocation APIs, both fully traced (agent → steps → LLM → tools,
-with tokens/cost/latency and provenance) in the **Traces** view / `distri traces list`:
-
-| API | Endpoint | What it does |
-| --- | --- | --- |
-| **`execute`** | `POST /v1/agents/{id}` (A2A `message/send` \| `message/stream`) | Run a full agent |
-| **`llm_execute`** | `POST /v1/llm/execute` | A single LLM call (great for high-volume grading/extraction) |
-
-```ts
-// JS (@distri/core)
-const agent = await Agent.create('scoring_agent', client)
-await agent.invoke({ /* messages */, contextId, tags: { team: 'growth' } })   // execute
-await client.llm(messages, tools, { agent_id: 'scoring_agent', thread_id, title })  // llm_execute
-```
-
-```rust
-// Rust (distri client)
-run_agent(&client, RunOptions { agent: Some("scoring_agent".into()), task, thread_id,
-                                tags: Some(tags), trace_context: None, ..Default::default() }, cb).await?;   // execute
-client.llm_execute(LlmExecuteOptions::new(LLmContext { thread_id, label, messages, ..Default::default() })
-                       .with_agent_id("scoring_agent".into())).await?;          // llm_execute
-```
-
-```bash
-distri run --agent scoring_agent --task "grade: 2+2=4" --tag team=growth   # CLI
-```
-
-**Grouping calls into one trace:** give related calls the **same thread / context id**
-(`contextId` on `execute`, `thread_id` on `llm_execute`) — Distri derives the trace id
-from it, so they collapse into a single trace (e.g. all grading calls of one eval run).
-For cross-process propagation, pass an explicit `trace_context { trace_id, parent_span_id }`
-on `execute` to nest the agent's spans under a caller's existing trace.
-
-See the full guide: **[Traces & Tracing Context](https://distri.dev/docs/traces)**.
-
----
-
-## Architecture
+## Repository layout
 
 ```
 distri/
-├── distri-types/          # Shared type definitions
-├── distri-cli/            # CLI binary
-├── distri/                # Client library
-├── distri-formatter/      # Output formatting
-│
-├── server/
-│   ├── distri-core/       # Agent engine (orchestrator, loop, tools, LLM)
-│   ├── distri-server/     # HTTP server (actix-web, A2A endpoints)
-│   ├── distri-stores/     # Storage backends (SQLite, Postgres)
-│   ├── distri-auth/       # Auth providers
-│   ├── distri-parsers/    # Parsing utilities
-│   └── agents/            # Built-in agent definitions (.md)
-│
-└── samples/               # Example applications
-    └── scraper/           # Web scraping agent
+├── distri-types/          # Shared types (agent config, events, stores, tools)
+├── distri-cli/            # The `distri` command
+├── distri/                # Rust client library (A2A)
+├── distri-a2a/            # A2A protocol types
+├── distri-workflow/       # Workflow definitions
+├── distri-tool/           # TypeScript script-tool contract (Deno)
+└── server/
+    ├── distri-core/       # Agent loop, tools, model clients
+    ├── distri-server/     # HTTP server (actix-web, A2A endpoints)
+    ├── distri-stores/     # SQLite and Postgres stores
+    ├── distri-auth/       # Auth and OAuth connections
+    ├── distri-filesystem/ # File and artifact tools
+    ├── llm-gateway/       # Provider clients
+    └── agents/            # Built-in agent definitions
 ```
-
-### Execution Flow
-
-```
-User message → AgentOrchestrator
-  → Load agent definition
-  → Create ExecutorContext (thread, task, run)
-  → AgentLoop
-    → PlanningStrategy.plan() → LLM produces plan
-    → ExecutionStrategy.execute_step() per step
-      → Tool calls (builtin, dynamic, external, MCP)
-      → Event streaming (SSE)
-    → Loop until final tool or max iterations
-  → Return result
-```
-
----
 
 ## Development
 
 ```bash
-# Build
 cargo build
-
-# Run tests
 cargo test
-
-# Test a specific crate
 cargo test -p distri-core
 ```
-
-This repo is the Rust backend only. The TypeScript SDK (`@distri/core`,
-`@distri/react`, `@distri/components`) lives in
-[distrihub/distrijs](https://github.com/distrihub/distrijs).
-
----
-
-## Samples
-
-| Sample | Type | Description |
-|--------|------|-------------|
-| [scraper](./samples/scraper) | CLI/Rust | Web scraping and data extraction agent |
 
 ---
 
@@ -410,6 +242,7 @@ This repo is the Rust backend only. The TypeScript SDK (`@distri/core`,
 ## Links
 
 - [Documentation](https://distri.dev/docs/)
+- [Gallery](https://distri.dev/samples)
 - [Distri Cloud](https://app.distri.dev)
-- [GitHub Releases](https://github.com/distrihub/distri/releases)
+- [Releases](https://github.com/distrihub/distri/releases)
 - [Issues](https://github.com/distrihub/distri/issues)

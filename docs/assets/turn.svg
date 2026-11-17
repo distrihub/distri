@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-label="One turn: the user's message goes to Distri, the agent calls a tool, the handler runs in the user's browser, the result returns and the reply streams back.">
+  <defs>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#3b82f6"/></marker>
+    <marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8f968d"/></marker>
+  </defs>
+  <rect width="1200" height="540" rx="20" fill="#0c0f0d"/>
+  <rect x="0.5" y="0.5" width="1199" height="539" rx="19.5" fill="none" stroke="#2a322c"/>
+  <text x="48" y="58" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" letter-spacing="2.5" fill="#6ea4ff">ONE TURN</text>
+  <text x="48" y="92" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="26" font-weight="700" fill="#efe9df">The agent runs on Distri. Its tools run in your app.</text>
+
+  <!-- your app -->
+  <rect x="48" y="128" width="392" height="364" rx="14" fill="#121713" stroke="#2a322c"/>
+  <text x="72" y="166" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#efe9df">Your app</text>
+  <text x="72" y="190" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#8f968d">The user's browser or phone</text>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#efe9df">
+    <rect x="72" y="212" width="344" height="40" rx="8" fill="#0c0f0d" stroke="#2a322c"/><text x="88" y="237">Your screens and state</text>
+    <rect x="72" y="262" width="344" height="40" rx="8" fill="#0c0f0d" stroke="#2a322c"/><text x="88" y="287">The signed-in user's session</text>
+    <rect x="72" y="312" width="344" height="40" rx="8" fill="#0c0f0d" stroke="#2a322c"/><text x="88" y="337">Your auth and permissions</text>
+  </g>
+  <rect x="72" y="372" width="344" height="96" rx="8" fill="#101a2e" stroke="#3b82f6"/>
+  <text x="88" y="398" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" letter-spacing="1.5" fill="#6ea4ff">3 · YOUR HANDLER RUNS HERE</text>
+  <text x="88" y="424" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" fill="#efe9df">await cart.add(sku)</text>
+  <text x="88" y="450" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#8f968d">A function you already have</text>
+
+  <!-- distri -->
+  <rect x="760" y="128" width="392" height="364" rx="14" fill="#121713" stroke="#2a322c"/>
+  <text x="784" y="166" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#efe9df">Distri</text>
+  <text x="784" y="190" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#8f968d">Cloud, or self-hosted</text>
+  <rect x="1040" y="148" width="88" height="26" rx="13" fill="#0c0f0d" stroke="#2a322c"/>
+  <circle cx="1056" cy="161" r="4" fill="#c6f135"/><text x="1067" y="166" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#8f968d">running</text>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#efe9df">
+    <rect x="784" y="212" width="344" height="40" rx="8" fill="#0c0f0d" stroke="#2a322c"/><text x="800" y="237">Agent loop</text>
+    <rect x="784" y="262" width="344" height="40" rx="8" fill="#0c0f0d" stroke="#2a322c"/><text x="800" y="287">Agent definition (a markdown file)</text>
+    <rect x="784" y="312" width="344" height="40" rx="8" fill="#0c0f0d" stroke="#2a322c"/><text x="800" y="337">Threads, traces, usage per end user</text>
+    <rect x="784" y="372" width="344" height="40" rx="8" fill="#0c0f0d" stroke="#2a322c"/><text x="800" y="397">Server-side tools: MCP, HTTP, workflows</text>
+    <rect x="784" y="422" width="344" height="46" rx="8" fill="#0c0f0d" stroke="#2a322c"/><text x="800" y="450">Model call, on your provider keys</text>
+  </g>
+
+  <!-- lane -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
+    <text x="600" y="216" text-anchor="middle" fill="#8f968d">1 · user's message</text>
+    <line x1="452" y1="228" x2="748" y2="228" stroke="#8f968d" stroke-width="1.5" marker-end="url(#am)"/>
+    <text x="600" y="284" text-anchor="middle" fill="#efe9df">2 · tool call</text>
+    <text x="600" y="304" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#6ea4ff">add_to_cart({ sku })</text>
+    <line x1="748" y1="316" x2="452" y2="316" stroke="#3b82f6" stroke-width="2" marker-end="url(#ab)"/>
+    <text x="600" y="396" text-anchor="middle" fill="#efe9df">4 · result</text>
+    <text x="600" y="416" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#6ea4ff">{ ok: true, items: 3 }</text>
+    <line x1="452" y1="428" x2="748" y2="428" stroke="#3b82f6" stroke-width="2" marker-end="url(#ab)"/>
+    <text x="600" y="468" text-anchor="middle" fill="#8f968d">5 · reply, streamed</text>
+    <line x1="748" y1="480" x2="452" y2="480" stroke="#8f968d" stroke-width="1.5" marker-end="url(#am)"/>
+  </g>
+</svg>
