@@ -401,10 +401,9 @@ This repo is the Rust backend only. The TypeScript SDK (`@distri/core`,
 
 ---
 
-## Licensing
+## License
 
-- Root and common components: [MIT License](LICENSE)
-- Server components (`server/`): [Elastic License 2.0](server/LICENSE) — follows [fair-code principles](https://faircode.io/)
+[MIT License](LICENSE)
 
 ---
 

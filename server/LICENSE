@@ -1,20 +1,21 @@
-Elastic License 2.0 – Distri Edition
-------------------------------------
+MIT License
 
-Copyright (c) 2025 Distrihub
+Copyright (c) 2024 distri
 
-You may use, copy, modify, and redistribute the software, provided that you comply with the following limitations:
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-1. **No Managed Service Offerings**
-   - You **may not provide the software to third parties as a managed service or hosted offering** (e.g., SaaS) that exposes core functionality, unless you obtain a separate commercial license.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-2. **No Circumvention of License‑Key Features**
-   - You **must not circumvent**, remove, or obscure any license‑key checks or protected features in the software.
-
-3. **Preserve Notices**
-   - You **may not remove or alter** any copyright, trademark, attribution, or license notices in the source code or documentation.
-
-**For all other uses**—including use, modification, distribution, and self‑hosting—the software is available under these terms.
-
-**Commercial or hosted use requires a separate license.**  
-Contact: **hello@distri.dev**
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
