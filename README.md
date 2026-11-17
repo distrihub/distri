@@ -135,7 +135,7 @@ The agent you embed in your app is an API endpoint, so it can answer anywhere yo
 
 - **In your product:** web with `@distri/react`, mobile with React Native, or any site with one script tag.
 - **On chat channels:** Telegram, WhatsApp and Discord bots are built into [Distri Cloud](https://app.distri.dev). Paste a bot token and pick the agent or workflow it runs.
-- **Slack and your other systems:** call the agent from a webhook, a workflow or your backend through the API. There is no built-in Slack bot.
+- **Slack and your other systems:** call the agent from a webhook, a workflow or your backend through the API.
 - **From a terminal or a script:** `distri run` and `distri tui`.
 
 ## Models
@@ -161,8 +161,8 @@ The first run downloads the matching `distri-server` binary and UI bundle from [
 
 Two things to know before you self-host:
 
-- The `search`, shell, code-execution and browser tools are clients of the [Browsr](https://browsr.dev) service and need `BROWSR_BASE_URL` and `BROWSR_API_KEY`. This repo has no sandbox of its own.
-- Approvals for client-side tools are shown and enforced by the client SDK.
+- The `search`, shell, code-execution and browser tools are clients of the [Browsr](https://browsr.dev) service and need `BROWSR_BASE_URL` and `BROWSR_API_KEY`.
+- Approvals for client-side tools are shown in your own UI by the client SDK.
 
 ## CLI
 
