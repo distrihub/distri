@@ -3,7 +3,7 @@ name = "distri-cli"
 version = "0.4.6"
 edition = "2021"
 description = "CLI for the Distri A2A agent platform"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/distrihub/distri"
 
 [dependencies]

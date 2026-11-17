@@ -14,7 +14,7 @@ use utoipa::OpenApi;
         description = "Local/self-hosted Distri agent server. Provides agent management, \
             thread/conversation history, tool execution, session storage, secrets, \
             skills, workflows, and more.",
-        license(name = "MIT")
+        license(name = "Apache-2.0")
     ),
     servers(
         (url = "http://localhost:8081", description = "Default local server")

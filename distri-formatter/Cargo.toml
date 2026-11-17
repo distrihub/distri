@@ -3,7 +3,7 @@ name = "distri-formatter"
 version = "0.4.6"
 edition = "2024"
 description = "Shared event formatting logic for Distri (plain text, HTML, etc.)"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/distrihub/distri"
 
 [dependencies]

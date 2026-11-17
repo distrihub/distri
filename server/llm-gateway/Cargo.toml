@@ -3,6 +3,7 @@ name = "llm-gateway"
 version = "0.4.6"
 edition = "2021"
 description = "LLM gateway — unified provider definitions, TTS synthesis, STT transcription, and LLM client abstractions for OpenAI, Anthropic, Azure, ElevenLabs"
+license = "Apache-2.0"
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

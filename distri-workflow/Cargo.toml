@@ -3,7 +3,7 @@ name = "distri-workflow"
 version = "0.4.6"
 edition = "2021"
 description = "Workflow engine for Distri — define, execute, and track multi-step workflows"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/distrihub/distri"
 
 [dependencies]

@@ -3,6 +3,7 @@ name = "distri-server"
 version = "0.4.6"
 edition = "2021"
 build = "build.rs"
+license = "Apache-2.0"
 
 [features]
 default = ["sqlite"]
