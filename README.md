@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="Distri. Embedded agents for your end users. Bring the agent to your product, not your product to the agent." width="100%">
+  <img src="docs/assets/banner.svg" alt="Distri. Embedded agents for your end users. The agent runs on Distri; its tools run in your app." width="100%">
 </p>
 
 <p align="center">
