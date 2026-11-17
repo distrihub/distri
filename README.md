@@ -1,43 +1,68 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="Distri. Embedded agents for your end users. The agent runs on Distri; its tools run in your app." width="100%">
+  <img src="docs/assets/banner.svg" alt="Distri. Embedded agents for your end users." width="100%">
 </p>
 
 <p align="center">
-  <a href="https://distri.dev/docs/"><b>Documentation</b></a> ·
-  <a href="https://distri.dev/samples"><b>Gallery</b></a> ·
+  <a href="https://distri.dev/docs/"><b>Docs</b></a> ·
+  <a href="https://distri.dev/samples/"><b>Live samples</b></a> ·
   <a href="https://distri.dev/"><b>Website</b></a> ·
   <a href="https://app.distri.dev"><b>Distri Cloud</b></a>
 </p>
 
-Distri puts an agent inside your product, for the people who use it.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3b82f6" alt="MIT license"></a>
+  <a href="https://github.com/distrihub/distri/releases"><img src="https://img.shields.io/github/v/release/distrihub/distri?color=3b82f6" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/built%20in-Rust-3b82f6" alt="Built in Rust">
+  <img src="https://img.shields.io/badge/protocols-A2A%20%C2%B7%20MCP-3b82f6" alt="A2A and MCP">
+</p>
 
-Distri runs the agent. The agent works through what your product already has: its screens, its functions, its APIs, its auth and the signed-in user's session. You don't rebuild any of that for the agent, and your users don't leave your product to use it.
+<h3 align="center">The agent runs on Distri. Its tools run in your app.</h3>
+
+<p align="center">
+Coding agents have transformed the software industry.<br>
+Distri brings those agentic capabilities, embedded directly in your product.
+</p>
+
+<br>
+
+<table>
+  <tr>
+    <td width="50%"><a href="https://distri.dev/samples/?id=kyb-onboarding"><img src="docs/assets/samples/kyb-onboarding.jpg" alt="An agent filling a KYC / KYB onboarding form"></a></td>
+    <td width="50%"><a href="https://distri.dev/samples/?id=checkout"><img src="docs/assets/samples/checkout.jpg" alt="An agent building a cart and opening checkout"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><b>KYC / KYB</b><br>Reads two documents and fills the whole form.</td>
+    <td align="center"><b>Checkout</b><br>One sentence becomes a cart, a discount and a ready-to-pay sheet.</td>
+  </tr>
+  <tr>
+    <td><a href="https://distri.dev/samples/?id=design-canvas"><img src="docs/assets/samples/design-canvas.jpg" alt="An agent laying out mobile screens on a design canvas"></a></td>
+    <td><a href="https://distri.dev/samples/?id=3d-studio"><img src="docs/assets/samples/3d-studio.jpg" alt="An agent building a 3D model"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Design canvas</b><br>Lays out two mobile screens, then restyles them.</td>
+    <td align="center"><b>3D studio</b><br>Builds a model part by part in WebGL.</td>
+  </tr>
+</table>
+
+<p align="center"><a href="https://distri.dev/samples/"><b>Play them live →</b></a></p>
 
 ## How it works
 
-![One turn: the agent runs on Distri and its tools run in your app](docs/assets/turn.svg)
+<p align="center">
+  <img src="docs/assets/turn.svg" alt="One turn: the user asks, the agent on Distri calls a tool, the tool runs in your app, the result goes back" width="100%">
+</p>
 
-**The agent runs on Distri. Its tools run in your app.**
-
-1. An agent is a markdown file: instructions, a model and a list of tools.
-2. In your frontend you hand the chat component the functions the agent may call. These are functions you already have, such as `cart.add` or `form.setValues`.
-3. When the agent calls one, Distri sends the call to the user's browser or phone. Your handler runs there, with that user's session and permissions, and the result goes back to the agent.
-4. A tool can run on its own, or wait for the user to approve or decline it in your UI.
-
-The agent can also call server-side tools: remote MCP servers, declarative HTTP tools and sub-agents.
+- **An agent is a markdown file:** instructions, a model and a list of tools.
+- **A tool is a function your app already has,** like `cart.add` or `form.setValues`.
+- **When the agent calls it, your handler runs in the user's browser or phone,** in their session. The user sees every step and approves what matters.
 
 ## Quick start
 
-Install the CLI:
-
 ```bash
 curl -fsSL https://distri.dev/install.sh | sh
-# or: brew tap distrihub/distri && brew install distri
 ```
 
-### 1. Write the agent and push it
-
-`agents/shop_assistant.md`:
+**1. Write the agent and push it**
 
 ```markdown
 ---
@@ -56,121 +81,75 @@ You help shoppers on our store.
 ```
 
 ```bash
-distri login   # Distri Cloud; skip this when you self-host
-distri push    # syncs ./agents, ./skills and ./templates to your workspace
+distri login
+distri push
 ```
 
-### 2. Hand it your functions
-
-```bash
-npm install @distri/react @distri/core
-```
+**2. Hand it your functions**
 
 ```tsx
-import '@distri/react/styles.css';
-import { useMemo } from 'react';
 import { DistriProvider, Chat } from '@distri/react';
 import type { DistriFnTool } from '@distri/core';
-import { useCart } from './cart';
 
-export function ShopAssistant() {
-  const cart = useCart(); // your state, as it is
+const addToCart: DistriFnTool = {
+  name: 'add_to_cart',
+  description: 'Add a product to the cart',
+  type: 'function',
+  parameters: { type: 'object', properties: { sku: { type: 'string' } }, required: ['sku'] },
+  autoExecute: true,
+  handler: async ({ sku }) => {
+    await cart.add(sku); // your code, in the browser
+    return { ok: true, items: cart.count };
+  },
+};
 
-  const tools = useMemo<DistriFnTool[]>(() => [{
-    name: 'add_to_cart',
-    description: 'Add a product to the cart',
-    type: 'function',
-    parameters: {
-      type: 'object',
-      properties: { sku: { type: 'string' }, qty: { type: 'number' } },
-      required: ['sku'],
-    },
-    autoExecute: true, // leave out to ask the user first
-    handler: async ({ sku, qty = 1 }) => {
-      await cart.add(sku, qty); // runs in the browser
-      return { ok: true, items: cart.count };
-    },
-  }], [cart]);
-
-  return (
-    <DistriProvider config={{
-      baseUrl: 'https://api.distri.dev/v1', // or your own server, e.g. http://localhost:7777
-      clientId: 'dpc_…',
-      workspaceId: '…',
-    }}>
-      <Chat agentId="shop_assistant" externalTools={tools} />
-    </DistriProvider>
-  );
-}
+<DistriProvider config={{ baseUrl: 'https://api.distri.dev/v1', clientId: 'dpc_…', workspaceId: '…' }}>
+  <Chat agentId="shop_assistant" externalTools={[addToCart]} />
+</DistriProvider>
 ```
 
-### 3. Use it
+**3. Ask it something**
 
-Ask the assistant to add something to the cart. The call to `add_to_cart` crosses to the browser, your handler runs, and the cart on screen changes.
+> Add two oat milks to my cart
 
-The [Gallery](https://distri.dev/samples) has four products driven this way (a checkout, KYC/KYB onboarding, a design canvas and a 3D studio), each with its tools and agent file.
+The agent calls `add_to_cart`, your handler runs, and the cart on screen changes the way it does for a click.
 
-The TypeScript SDK (`@distri/core`, `@distri/react`, React Native, Angular) lives in [distrihub/distrijs](https://github.com/distrihub/distrijs). See the [in-product tools guide](https://distri.dev/docs/guides/agent/in-product-tools/).
+Full guide: [in-product tools](https://distri.dev/docs/guides/agent/in-product-tools/). The SDKs for React, React Native and Angular live in [distrihub/distrijs](https://github.com/distrihub/distrijs).
 
-## What's in the box
+## Everything an embedded agent needs, built in
 
-![Architecture: your users' surfaces, the Distri runtime, the gateway and your model providers](docs/assets/architecture.svg)
+<p align="center">
+  <img src="docs/assets/platform.png" alt="The Distri platform: where your users are, the embedded layer inside your app, the managed agent runtime, and your models and systems" width="100%">
+</p>
 
 | | |
 |---|---|
-| **Agents as markdown** | Instructions, model settings and tools in one `.md` file with TOML frontmatter. [Agent definition](https://distri.dev/docs/concepts/agent-definition) |
-| **Client-side tools** | Functions in your app that the agent calls. They run in the user's browser or phone. |
-| **Approve or decline** | Leave `autoExecute` off and the chat asks the user before the handler runs. |
-| **Server-side tools** | Remote MCP servers, declarative HTTP tools, and built-ins such as `search`, `load_skill` and `invoke_agent`. |
-| **Skills** | Instruction documents an agent loads on demand with `load_skill`. They are re-injected after context compaction. |
-| **Sub-agents** | An agent can delegate to a named or ad-hoc worker, in the foreground or background. |
-| **Workflows** | Fixed sequences of tool calls, agent runs, conditions and a `wait_for_input` step that pauses for a person. |
-| **Streaming and resume** | Typed events over SSE. A client that reconnects replays the task's history and then continues live. |
-| **Traces and usage** | OpenTelemetry spans for agent, step, model call and tool, and a usage record for every model call. |
-| **Open protocols** | Every agent is reachable over [A2A](https://google.github.io/a2a/) (JSON-RPC). Tools connect over MCP. |
+| **Embedded** | Auth handshake, client-side tools, and approvals in your own UI. For web, mobile, or any page with one script tag. |
+| **Runtime** | Durable runs, workflows, sub-agents, schedules, webhooks and steps that wait for a person. |
+| **Agents** | Agents as markdown, skills, templates, threads, sessions and end users. |
+| **Protocols and tools** | [A2A](https://google.github.io/a2a/) for every agent, MCP for tools, HTTP tools, OAuth connections and secrets. |
+| **AI Gateway** | Multi-provider connectivity, cost attribution per agent and end user, limits and budgets, OpenTelemetry traces. |
+| **Channels** | The same agent on Slack, Telegram, WhatsApp and Discord, or from your backend over the API. |
 
-## The same agent, wherever the work continues
+## Run it
 
-The agent you embed in your app is an API endpoint, so it can answer anywhere your users or your systems are.
+**Distri Cloud** is the fastest way to start: [app.distri.dev](https://app.distri.dev).
 
-- **In your product:** web with `@distri/react`, mobile with React Native, or any site with one script tag.
-- **On chat channels:** Telegram, WhatsApp and Discord bots are built into [Distri Cloud](https://app.distri.dev). Paste a bot token and pick the agent or workflow it runs.
-- **Slack and your other systems:** call the agent from a webhook, a workflow or your backend through the API.
-- **From a terminal or a script:** `distri run` and `distri tui`.
-
-## Models
-
-The model is set per agent, on your own provider keys.
-
-- **Native wire formats:** OpenAI Chat Completions, OpenAI Responses and Anthropic Messages.
-- **Everything else** connects through an OpenAI-compatible endpoint, including Gemini, Azure OpenAI and open models served that way. Which features work depends on the endpoint and the model.
-
-## Self-host or use Distri Cloud
-
-**Self-host.** One command starts the server and the web UI on SQLite:
+**Self-host** with one command. It starts the server and the web UI:
 
 ```bash
 distri serve            # http://localhost:7777
-distri serve --no-ui    # API only
-distri serve --port 8080
 ```
 
-The first run downloads the matching `distri-server` binary and UI bundle from [Releases](https://github.com/distrihub/distri/releases) into `~/.distri/`. Postgres is supported for larger deployments. The self-hosted server is single-tenant.
+**Models.** Set the model per agent, on your own keys: OpenAI, Anthropic, or any OpenAI-compatible endpoint.
 
-**Distri Cloud** adds workspaces and members, bots on chat channels, schedule and webhook triggers for workflows, usage and limits per end user, and stored traces. [app.distri.dev](https://app.distri.dev)
-
-Two things to know before you self-host:
-
-- The `search`, shell, code-execution and browser tools are clients of the [Browsr](https://browsr.dev) service and need `BROWSR_BASE_URL` and `BROWSR_API_KEY`.
-- Approvals for client-side tools are shown in your own UI by the client SDK.
-
-## CLI
+<details>
+<summary><b>CLI reference</b></summary>
 
 ```bash
 distri                                   # interactive TUI
 distri tui my_agent                      # chat with one agent
 distri run --agent my_agent --task "…"   # run a single task
-distri run --agent my_agent --task "…" --tag team=growth
 
 distri push                              # sync agents, skills and templates
 distri push --dry-run                    # preview what would upload
@@ -183,6 +162,8 @@ distri connections list
 distri update                            # pull the latest server and UI
 distri version
 ```
+
+</details>
 
 <details>
 <summary>Other install options</summary>
@@ -203,7 +184,8 @@ $Env:Path += ";$Env:LOCALAPPDATA\distri"
 ```
 </details>
 
-## Repository layout
+<details>
+<summary><b>Repository layout</b></summary>
 
 ```
 distri/
@@ -223,26 +205,13 @@ distri/
     └── agents/            # Built-in agent definitions
 ```
 
-## Development
-
 ```bash
 cargo build
 cargo test
-cargo test -p distri-core
 ```
 
----
+</details>
 
 ## License
 
-[MIT License](LICENSE)
-
----
-
-## Links
-
-- [Documentation](https://distri.dev/docs/)
-- [Gallery](https://distri.dev/samples)
-- [Distri Cloud](https://app.distri.dev)
-- [Releases](https://github.com/distrihub/distri/releases)
-- [Issues](https://github.com/distrihub/distri/issues)
+[MIT](LICENSE)
