@@ -20,6 +20,7 @@ mod hooks;
 
 pub mod auth;
 pub mod channels;
+pub mod coding_tools;
 pub mod context;
 mod core;
 mod errors;

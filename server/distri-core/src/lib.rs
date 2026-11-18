@@ -22,6 +22,7 @@ pub use llm_gateway::claude_client;
 pub use llm_gateway::gateway_config;
 pub use llm_gateway::openai_responses_client;
 pub use llm_gateway::provider_config;
+pub mod sandbox;
 pub mod servers;
 pub mod tools;
 pub mod types {

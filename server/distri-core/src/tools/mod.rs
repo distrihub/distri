@@ -30,6 +30,7 @@ pub mod mcp_tool;
 pub mod mock_tool;
 pub mod request;
 pub mod resolve;
+pub mod sandbox_tools;
 pub mod send_message;
 pub mod simulator;
 pub mod skill_script;
@@ -158,6 +159,18 @@ pub fn cast_to_executor_context_tool(
             tool_name
         ))),
     }
+}
+
+/// Adds tools to one run, decided from its context (workspace, thread).
+///
+/// The orchestrator calls every attached provider while it builds a run's
+/// tools. A tool whose name the agent already has is skipped, so an agent's
+/// own tools (or a client's external ones) win. Cloud uses this to give every
+/// agent of a sandbox-enabled workspace the sandbox tools without the agent
+/// declaring them.
+#[async_trait::async_trait]
+pub trait RunToolProvider: Send + Sync {
+    async fn tools_for_run(&self, ctx: &ExecutorContext) -> Vec<Arc<dyn Tool>>;
 }
 
 pub const APPROVAL_REQUEST_TOOL_NAME: &str = "approval_request";
