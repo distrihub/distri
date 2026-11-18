@@ -171,6 +171,12 @@ pub fn cast_to_executor_context_tool(
 #[async_trait::async_trait]
 pub trait RunToolProvider: Send + Sync {
     async fn tools_for_run(&self, ctx: &ExecutorContext) -> Vec<Arc<dyn Tool>>;
+
+    /// Tools to take away from a run this provider added tools to: the ones
+    /// its tools replace (the sandbox tools replace browsr's shell tools).
+    fn replaces(&self) -> &[&'static str] {
+        &[]
+    }
 }
 
 pub const APPROVAL_REQUEST_TOOL_NAME: &str = "approval_request";

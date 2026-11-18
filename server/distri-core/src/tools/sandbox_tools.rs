@@ -40,6 +40,15 @@ pub fn sandbox_tools(binder: Arc<dyn SandboxBinder>) -> Vec<Arc<dyn Tool>> {
     ]
 }
 
+/// The browsr-backed tools the sandbox tools replace: a run that has the
+/// sandbox tools does not also get these.
+pub const REPLACED_BROWSR_TOOLS: [&str; 4] = [
+    "start_shell",
+    "execute_shell",
+    "stop_shell",
+    "distri_execute_code",
+];
+
 /// Names of the sandbox tools, for de-duplication against an agent's own.
 pub const SANDBOX_TOOL_NAMES: [&str; 4] = [
     coding_tools::BASH,

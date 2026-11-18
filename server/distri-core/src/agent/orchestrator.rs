@@ -586,12 +586,21 @@ impl AgentOrchestrator {
     }
 
     /// Tools the attached [`crate::tools::RunToolProvider`]s add to this run.
-    pub async fn resolve_run_tools(&self, ctx: &ExecutorContext) -> Vec<Arc<dyn Tool>> {
+    /// Also returns the names of tools they replace on this run.
+    pub async fn resolve_run_tools(
+        &self,
+        ctx: &ExecutorContext,
+    ) -> (Vec<Arc<dyn Tool>>, Vec<&'static str>) {
         let mut out = Vec::new();
+        let mut replaced = Vec::new();
         for p in &self.run_tool_providers {
-            out.extend(p.tools_for_run(ctx).await);
+            let tools = p.tools_for_run(ctx).await;
+            if !tools.is_empty() {
+                replaced.extend_from_slice(p.replaces());
+            }
+            out.extend(tools);
         }
-        out
+        (out, replaced)
     }
 
     pub async fn register_agent_definition(
@@ -924,7 +933,13 @@ impl AgentOrchestrator {
                 let mut resolved = self
                     .get_agent_tools_with_pool(&definition, &external_tools, mcp_pool)
                     .await?;
-                for tool in self.resolve_run_tools(&context).await {
+                let (run_tools, replaced) = self.resolve_run_tools(&context).await;
+                if !replaced.is_empty() {
+                    resolved
+                        .all_tools
+                        .retain(|t| !replaced.contains(&t.get_name().as_str()));
+                }
+                for tool in run_tools {
                     let name = tool.get_name();
                     if !resolved.all_tools.iter().any(|t| t.get_name() == name) {
                         resolved.all_tools.push(tool);
