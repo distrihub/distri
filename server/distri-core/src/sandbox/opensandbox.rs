@@ -46,6 +46,11 @@ pub struct OpenSandboxConfig {
     pub use_server_proxy: bool,
     pub cpu: String,
     pub memory: String,
+    /// Guaranteed share (`resourceRequests`); the limits above are the cap.
+    /// Without it a sandbox reserves its whole limit, and a 2-vCPU node
+    /// holds one 1-CPU sandbox.
+    pub cpu_request: Option<String>,
+    pub memory_request: Option<String>,
     pub default_timeout_secs: Option<u64>,
     /// Ask for `secureAccess`: execd then needs the per-sandbox token the
     /// endpoint call returns. Required on sandbox-api.distri.dev, where
@@ -97,7 +102,9 @@ impl OpenSandboxConfig {
     ///   recreated on its volume at the next tool call);
     /// - `OPENSANDBOX_SECURE_ACCESS` (default on, except for a localhost URL:
     ///   OpenSandbox's Docker mode has no ingress gateway to enforce it);
-    /// - `OPENSANDBOX_VOLUME_SIZE` (default `5Gi`; ignored by Docker volumes).
+    /// - `OPENSANDBOX_VOLUME_SIZE` (default `5Gi`; ignored by Docker volumes);
+    /// - `OPENSANDBOX_CPU_REQUEST` (default `250m`), `OPENSANDBOX_MEMORY_REQUEST`
+    ///   (default `512Mi`): the reservation, below the limits (k8s only).
     ///
     /// `SANDBOX_IMAGE` belongs to the old browsr launcher and is not read.
     pub fn from_env() -> SandboxResult<Self> {
@@ -133,6 +140,12 @@ impl OpenSandboxConfig {
             ),
             cpu: env_first(&["OPENSANDBOX_CPU"]).unwrap_or_else(|| "1".into()),
             memory: env_first(&["OPENSANDBOX_MEMORY"]).unwrap_or_else(|| "1Gi".into()),
+            cpu_request: Some(
+                env_first(&["OPENSANDBOX_CPU_REQUEST"]).unwrap_or_else(|| "250m".into()),
+            ),
+            memory_request: Some(
+                env_first(&["OPENSANDBOX_MEMORY_REQUEST"]).unwrap_or_else(|| "512Mi".into()),
+            ),
             default_timeout_secs: Some(
                 env_first(&["OPENSANDBOX_TIMEOUT_SECS"])
                     .and_then(|v| v.parse().ok())
@@ -472,6 +485,16 @@ impl SandboxProvider for OpenSandboxProvider {
         if self.config.secure_access {
             body["secureAccess"] = json!(true);
         }
+        let mut requests = serde_json::Map::new();
+        if let Some(c) = &self.config.cpu_request {
+            requests.insert("cpu".into(), json!(c));
+        }
+        if let Some(m) = &self.config.memory_request {
+            requests.insert("memory".into(), json!(m));
+        }
+        if !requests.is_empty() {
+            body["resourceRequests"] = Value::Object(requests);
+        }
         if let Some(volume) = &spec.volume {
             let mut pvc = json!({ "claimName": volume, "createIfNotExists": true });
             if let Some(size) = &self.config.volume_size {
@@ -553,6 +576,50 @@ impl SandboxProvider for OpenSandboxProvider {
             return Ok(());
         }
         check(resp).await.map(|_| ())
+    }
+
+    async fn find_by_metadata(&self, key: &str, value: &str) -> SandboxResult<Vec<SandboxInfo>> {
+        // `metadata` is one url-encoded `k=v` (OpenSandbox's list filter).
+        let resp = self
+            .lifecycle(reqwest::Method::GET, "/sandboxes")
+            .query(&[
+                ("metadata", format!("{key}={value}")),
+                ("pageSize", "50".into()),
+            ])
+            .send()
+            .await
+            .map_err(transport)?;
+        #[derive(Deserialize)]
+        struct ListItem {
+            id: String,
+            status: Option<StatusResponse>,
+            #[serde(default, rename = "createdAt")]
+            created_at: Option<String>,
+            #[serde(default)]
+            metadata: HashMap<String, String>,
+        }
+        #[derive(Deserialize)]
+        struct ListResponse {
+            #[serde(default)]
+            items: Vec<ListItem>,
+        }
+        let list: ListResponse = check(resp).await?.json().await.map_err(transport)?;
+        let mut items: Vec<ListItem> = list
+            .items
+            .into_iter()
+            // Do not trust the server to have filtered.
+            .filter(|i| i.metadata.get(key).map(String::as_str) == Some(value))
+            .collect();
+        items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(items
+            .into_iter()
+            .map(|i| {
+                SandboxInfo::from(SandboxResponse {
+                    id: i.id,
+                    status: i.status,
+                })
+            })
+            .collect())
     }
 
     async fn wait_ready(&self, sandbox_id: &str, timeout: Duration) -> SandboxResult<()> {
@@ -736,6 +803,8 @@ mod tests {
             default_timeout_secs: None,
             secure_access: true,
             volume_size: None,
+            cpu_request: None,
+            memory_request: None,
         });
         assert_eq!(p.config.base_url, "https://sandbox-api.distri.dev/v1");
         assert_eq!(
