@@ -177,12 +177,12 @@ distri serve                                                     # run the serve
 ## Everything an embedded agent needs, built in
 
 <p align="center">
-  <img src="docs/assets/platform.png" alt="The Distri platform: where your users are, the embedded layer inside your app, the managed agent runtime, and your models and systems" width="100%">
+  <img src="docs/assets/platform.png" alt="The Distri platform: the Distri Client runs inside your apps and connects to the managed agent runtime; channels and the API connect to the same runtime" width="100%">
 </p>
 
 | | |
 |---|---|
-| **Embedded** | Auth handshake, client-side tools, and approvals in your own UI. For web, mobile, or any page with one script tag. |
+| **Distri Client** | Runs inside your app: chat components, client-side tools, approvals in your own UI and streaming. For web, mobile, or any page with one script tag. |
 | **Runtime** | Durable runs, workflows, sub-agents, schedules, webhooks and steps that wait for a person. |
 | **Agents** | Agents as markdown, skills, templates, threads, sessions and end users. |
 | **Protocols and tools** | [A2A](https://google.github.io/a2a/) for every agent, MCP for tools, HTTP tools, OAuth connections and secrets. |
