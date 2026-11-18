@@ -66,66 +66,36 @@ pub fn register_all(
 
 /// ToolDefinitions for the built-in local tools (with prompt instructions).
 pub fn tool_definitions() -> Vec<ToolDefinition> {
+    use distri_types::coding_tools;
     vec![
         ToolDefinition {
-            name: "Bash".into(),
-            description: "Execute a bash command and return its output.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "command": { "type": "string", "description": "The command to execute" },
-                    "timeout": { "type": "number", "description": "Optional timeout in milliseconds (max 600000)" }
-                },
-                "required": ["command"]
-            }),
+            name: coding_tools::BASH.into(),
+            description: coding_tools::bash_description().into(),
+            parameters: coding_tools::bash_parameters(),
             prompt: Some(prompts::BASH_PROMPT.into()),
             examples: None,
             output_schema: None,
         },
         ToolDefinition {
-            name: "Read".into(),
-            description: "Read a file from the local filesystem.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "file_path": { "type": "string", "description": "The path to the file to read" },
-                    "offset": { "type": "number", "description": "The line number to start reading from (0-based)" },
-                    "limit": { "type": "number", "description": "The number of lines to read" }
-                },
-                "required": ["file_path"]
-            }),
+            name: coding_tools::READ.into(),
+            description: coding_tools::read_description().into(),
+            parameters: coding_tools::read_parameters(),
             prompt: Some(prompts::READ_PROMPT.into()),
             examples: None,
             output_schema: None,
         },
         ToolDefinition {
-            name: "Write".into(),
-            description: "Write a file to the local filesystem.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "file_path": { "type": "string", "description": "The path to the file to write" },
-                    "content": { "type": "string", "description": "The content to write to the file" }
-                },
-                "required": ["file_path", "content"]
-            }),
+            name: coding_tools::WRITE.into(),
+            description: coding_tools::write_description().into(),
+            parameters: coding_tools::write_parameters(),
             prompt: Some(prompts::WRITE_PROMPT.into()),
             examples: None,
             output_schema: None,
         },
         ToolDefinition {
-            name: "Edit".into(),
-            description: "Perform exact string replacements in files.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "file_path": { "type": "string", "description": "The path to the file to edit" },
-                    "old_string": { "type": "string", "description": "The text to replace" },
-                    "new_string": { "type": "string", "description": "The replacement text" },
-                    "replace_all": { "type": "boolean", "description": "Replace all occurrences (default false)", "default": false }
-                },
-                "required": ["file_path", "old_string", "new_string"]
-            }),
+            name: coding_tools::EDIT.into(),
+            description: coding_tools::edit_description().into(),
+            parameters: coding_tools::edit_parameters(),
             prompt: Some(prompts::EDIT_PROMPT.into()),
             examples: None,
             output_schema: None,
