@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="Distri. Embedded agents for your end users." width="100%">
+  <img src="docs/assets/banner.svg" alt="Distri. Open-source embedded agents for your end users. Powering AI-native experiences with a managed agents platform." width="100%">
 </p>
 
 <p align="center">
@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/protocols-A2A%20%C2%B7%20MCP-3b82f6" alt="A2A and MCP">
 </p>
 
-<h3 align="center">The agent runs on Distri. Its tools run in your app.</h3>
+<h3 align="center">Powering AI-native experiences with a managed agents platform.</h3>
 
 <p align="center">
 Coding agents have transformed the software industry.<br>
@@ -45,6 +45,21 @@ Distri brings those agentic capabilities, embedded directly in your product.
 </table>
 
 <p align="center"><a href="https://distri.dev/samples/"><b>Play them live →</b></a></p>
+
+## An open-source alternative to Claude Managed Agents
+
+Claude Managed Agents runs Claude agents on Anthropic's managed infrastructure. Distri is a managed agents platform you can run anywhere, on any model, and it puts the agent inside your product.
+
+| | Distri | Claude Managed Agents |
+|---|---|---|
+| **Licence** | Open source, MIT | Proprietary, hosted by Anthropic |
+| **Where it runs** | Distri Cloud, your cloud, or fully self-hosted | Anthropic's managed infrastructure |
+| **Models** | OpenAI, Anthropic, Gemini, Qwen, GLM and any OpenAI-compatible endpoint | Claude |
+| **Where tools run** | In your app, in the signed-in user's session, plus MCP and HTTP tools on the server | In a managed sandbox; custom tools run in your backend |
+| **Your UI** | Chat components for React, React Native and Angular, or one script tag | You build the client |
+| **Platform fee** | Free | Token rates plus a fee per session-hour |
+
+Distri also tracks identity, cost and limits per end user, and runs the same agents on Slack, Telegram, WhatsApp and Discord.
 
 ## How it works
 
@@ -116,6 +131,49 @@ The agent calls `add_to_cart`, your handler runs, and the cart on screen changes
 
 Full guide: [in-product tools](https://distri.dev/docs/guides/agent/in-product-tools/). The SDKs for React, React Native and Angular live in [distrihub/distrijs](https://github.com/distrihub/distrijs).
 
+## Call an agent
+
+Every agent is an [A2A](https://google.github.io/a2a/) JSON-RPC endpoint.
+
+**Send a message**
+
+```bash
+curl -X POST https://api.distri.dev/v1/agents/shop_assistant \
+  -H "Authorization: Bearer $DISTRI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "kind": "message",
+        "role": "user",
+        "parts": [{ "kind": "text", "text": "What is in my cart?" }]
+      }
+    }
+  }'
+```
+
+**Stream the reply** over SSE: use `"method": "message/stream"` and `curl -N`.
+
+**Self-hosted:** the same calls work against `http://localhost:7777/v1/agents/shop_assistant`.
+
+```bash
+curl http://localhost:7777/agents                                          # list agents
+curl http://localhost:7777/agents/shop_assistant/.well-known/agent.json    # A2A agent card
+```
+
+**From the CLI**
+
+```bash
+distri run --agent shop_assistant --task "What is in my cart?"   # run one task
+distri tui shop_assistant                                        # chat in the terminal
+distri push                                                      # sync agents, skills and templates
+distri traces list                                               # inspect runs
+distri serve                                                     # run the server and UI locally
+```
+
 ## Everything an embedded agent needs, built in
 
 <p align="center">
@@ -131,6 +189,35 @@ Full guide: [in-product tools](https://distri.dev/docs/guides/agent/in-product-t
 | **AI Gateway** | Multi-provider connectivity, cost attribution per agent and end user, limits and budgets, OpenTelemetry traces. |
 | **Channels** | The same agent on Slack, Telegram, WhatsApp and Discord, or from your backend over the API. |
 
+## Providers and models
+
+Set the model per agent. Connect to frontier and open-source models, for text, voice, audio and images.
+
+```toml
+[model_settings]
+model = "claude-sonnet-4"
+
+[model_settings.provider]
+name = "anthropic"
+```
+
+| Provider | `name` | Models |
+|---|---|---|
+| **OpenAI** | `openai` | GPT-6 (Astra, Sol, Luna), GPT-5.6, GPT-5.5, GPT-5.4, GPT-5 mini and nano, GPT-4.1, GPT-4o, o3, o4-mini |
+| **Anthropic** | `anthropic` | Claude Opus, Sonnet and Haiku |
+| **Google Gemini** | `gemini` | Gemini 2.5 Pro and Flash |
+| **Azure OpenAI** | `azure_openai` | Your Azure deployments |
+| **Azure AI Foundry** | `azure_ai_foundry` | Models in your Foundry resource |
+| **AWS Bedrock** | `aws_bedrock` | Models in your Bedrock account |
+| **Google Vertex AI** | `google_vertex` | Models in your Vertex project |
+| **Alibaba Cloud** | `alibaba_cloud` | Qwen |
+| **Z.ai** | `zai` | GLM |
+| **fal.ai** | `fal_ai` | Image models such as FLUX |
+| **Any OpenAI-compatible endpoint** | `openai_compat` | Llama, Mistral, DeepSeek and others through Ollama, vLLM, OpenRouter, Together or Groq |
+
+**Voice and audio:** `gpt-4o-mini-tts`, `tts-1` and `tts-1-hd` for speech, `whisper-1` for transcription.
+**Images:** `gpt-image-1`, `gpt-image-2` and fal.ai models.
+
 ## Run it
 
 **Distri Cloud** is the fastest way to start: [app.distri.dev](https://app.distri.dev).
@@ -140,8 +227,6 @@ Full guide: [in-product tools](https://distri.dev/docs/guides/agent/in-product-t
 ```bash
 distri serve            # http://localhost:7777
 ```
-
-**Models.** Set the model per agent, on your own keys: OpenAI, Anthropic, or any OpenAI-compatible endpoint.
 
 <details>
 <summary><b>CLI reference</b></summary>
