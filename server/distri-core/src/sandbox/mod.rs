@@ -130,6 +130,13 @@ pub trait SandboxProvider: Send + Sync + std::fmt::Debug {
     async fn resume(&self, sandbox_id: &str) -> SandboxResult<()>;
     /// Delete the sandbox. Its volume is kept.
     async fn delete(&self, sandbox_id: &str) -> SandboxResult<()>;
+    /// Sandboxes whose metadata has `key = value`, newest first, so a host
+    /// can find one it created but never recorded (a create that timed out
+    /// at a proxy still makes the sandbox).
+    async fn find_by_metadata(&self, _key: &str, _value: &str) -> SandboxResult<Vec<SandboxInfo>> {
+        Ok(vec![])
+    }
+
     /// Wait until commands and files can be served (after create or
     /// resume the sandbox may be `Running` before its agent answers).
     async fn wait_ready(&self, _sandbox_id: &str, _timeout: Duration) -> SandboxResult<()> {
