@@ -560,7 +560,13 @@ impl SandboxProvider for OpenSandboxProvider {
         let mut delay = Duration::from_millis(100);
         loop {
             let ep = self.endpoint(sandbox_id).await?;
-            let res = self.data(&ep, reqwest::Method::GET, "/ping").send().await;
+            // A short per-try timeout: just after a resume the gateway can
+            // hold a request to the old pod for ~30 s before failing it.
+            let res = self
+                .data(&ep, reqwest::Method::GET, "/ping")
+                .timeout(Duration::from_secs(2))
+                .send()
+                .await;
             match res {
                 Ok(r) if r.status().is_success() => return Ok(()),
                 Ok(r) => tracing::debug!(sandbox_id, status = %r.status(), "execd not ready"),
