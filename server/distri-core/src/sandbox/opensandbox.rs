@@ -767,7 +767,6 @@ mod tests {
         let p = OpenSandboxProvider::new(OpenSandboxConfig {
             base_url: normalize_base("https://sandbox-api.distri.dev"),
             api_key: None,
-            extra_headers: vec![],
             default_image: "x".into(),
             use_server_proxy: true,
             cpu: "1".into(),
