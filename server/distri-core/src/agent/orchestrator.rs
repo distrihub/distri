@@ -92,6 +92,8 @@ pub struct AgentOrchestrator {
     /// `DefaultResolver` auth pipeline); the standalone OSS server leaves it
     /// `None` and uses the static `[[tools.mcp]]` registry only.
     pub mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
+    /// Per-run tool providers (see [`crate::tools::RunToolProvider`]).
+    pub run_tool_providers: Vec<Arc<dyn crate::tools::RunToolProvider>>,
     /// Workflow execution-state store — one trait covering both
     /// run-level state (definition snapshot, entry point, input,
     /// shared context) and per-step state (status, result, error,
@@ -236,6 +238,7 @@ pub struct AgentOrchestratorBuilder {
     spend_policy: Option<Arc<dyn distri_types::SpendPolicy>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
     mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
+    run_tool_providers: Vec<Arc<dyn crate::tools::RunToolProvider>>,
     workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
     workflow_trigger_registry: Option<Arc<dyn distri_workflow::WorkflowTriggerRegistry>>,
 }
@@ -394,6 +397,16 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Attach a [`crate::tools::RunToolProvider`]; its tools are added to
+    /// every run it returns them for.
+    pub fn with_run_tool_provider(
+        mut self,
+        provider: Arc<dyn crate::tools::RunToolProvider>,
+    ) -> Self {
+        self.run_tool_providers.push(provider);
+        self
+    }
+
     /// Attach the workflow execution-state store used by
     /// `WorkflowAgent`. One store, covering both run-level and
     /// step-level state; cloud wires `RedisWorkflowStore`, OSS/tests
@@ -496,6 +509,7 @@ impl AgentOrchestratorBuilder {
             spend_policy: self.spend_policy,
             oauth_handler: self.oauth_handler,
             mcp_pool_provider: self.mcp_pool_provider,
+            run_tool_providers: self.run_tool_providers,
             workflow_store: self.workflow_store,
             workflow_trigger_registry: self.workflow_trigger_registry,
         };
@@ -569,6 +583,24 @@ impl AgentOrchestrator {
     ) -> Option<Arc<crate::servers::McpClientPool>> {
         let provider = self.mcp_pool_provider.as_ref()?;
         provider.build_pool(ctx).await
+    }
+
+    /// Tools the attached [`crate::tools::RunToolProvider`]s add to this run.
+    /// Also returns the names of tools they replace on this run.
+    pub async fn resolve_run_tools(
+        &self,
+        ctx: &ExecutorContext,
+    ) -> (Vec<Arc<dyn Tool>>, Vec<&'static str>) {
+        let mut out = Vec::new();
+        let mut replaced = Vec::new();
+        for p in &self.run_tool_providers {
+            let tools = p.tools_for_run(ctx).await;
+            if !tools.is_empty() {
+                replaced.extend_from_slice(p.replaces());
+            }
+            out.extend(tools);
+        }
+        (out, replaced)
     }
 
     pub async fn register_agent_definition(
@@ -898,9 +930,21 @@ impl AgentOrchestrator {
                 // sees. Standalone hosts that don't attach a provider get
                 // `None` and the static `[[tools.mcp]]` registry still works.
                 let mcp_pool = self.resolve_mcp_pool(&context).await;
-                let resolved = self
+                let mut resolved = self
                     .get_agent_tools_with_pool(&definition, &external_tools, mcp_pool)
                     .await?;
+                let (run_tools, replaced) = self.resolve_run_tools(&context).await;
+                if !replaced.is_empty() {
+                    resolved
+                        .all_tools
+                        .retain(|t| !replaced.contains(&t.get_name().as_str()));
+                }
+                for tool in run_tools {
+                    let name = tool.get_name();
+                    if !resolved.all_tools.iter().any(|t| t.get_name() == name) {
+                        resolved.all_tools.push(tool);
+                    }
+                }
                 let deferred_names: std::collections::HashSet<String> = resolved
                     .deferred_tools
                     .iter()
