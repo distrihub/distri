@@ -19,7 +19,7 @@
 ## CLI / coding agent
 
 ```bash
-distri apply sre-agent --set service_url=<fixture>/health --wait --test
+distri apply sre-agent --set health_url=<fixture>/health --wait --test
 ```
 
 **Expect:** nothing is left pending, and the test message arrives on Telegram.

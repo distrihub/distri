@@ -383,7 +383,7 @@ async fn sre_agent_sample_workflow_end_to_end() {
     let bp = Blueprint::load_dir(&dir).unwrap();
     let mut params = BTreeMap::new();
     params.insert(
-        "service_url".to_string(),
+        "health_url".to_string(),
         format!("{}/health", server.uri()),
     );
     params.insert("service_name".to_string(), "Acme API".to_string());

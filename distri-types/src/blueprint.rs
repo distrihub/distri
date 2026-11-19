@@ -713,7 +713,7 @@ about = "Ask it from Telegram; it checks your health URL and alerts you."
 prompt = "Create an SRE agent for my API that I can ask from Telegram"
 category = "engineering"
 
-[params.service_url]
+[params.health_url]
 ask = "Which URL should I check?"
 example = "https://api.acme.com/health"
 
@@ -741,7 +741,7 @@ expect = "a test alert arrives on Telegram"
         vec![
             (
                 "agents/acme_sre.md".into(),
-                "---\nname = \"acme_sre\"\n---\nWatch {{params.service_url}}".into(),
+                "---\nname = \"acme_sre\"\n---\nWatch {{params.health_url}}".into(),
             ),
             (
                 "workflows/acme_health.json".into(),
@@ -752,7 +752,7 @@ expect = "a test alert arrives on Telegram"
                     "definition": {"id": "h", "steps": [
                         {"id": "check", "label": "c",
                          "kind": {"type": "code", "module": "tools/check.ts"},
-                         "input": {"url": "{{params.service_url}}"}}
+                         "input": {"url": "{{params.health_url}}"}}
                     ]}
                 })
                 .to_string(),
@@ -775,18 +775,18 @@ expect = "a test alert arrives on Telegram"
 
         let missing = bp.missing_params(&BTreeMap::new());
         assert_eq!(missing.len(), 1);
-        assert_eq!(missing[0].0, "service_url");
+        assert_eq!(missing[0].0, "health_url");
         assert_eq!(
             bp.render(&BTreeMap::new()).unwrap_err(),
             BlueprintError::MissingParam {
-                name: "service_url".into(),
+                name: "health_url".into(),
                 ask: "Which URL should I check?".into()
             }
         );
 
         let mut given = BTreeMap::new();
         given.insert(
-            "service_url".to_string(),
+            "health_url".to_string(),
             "https://x.dev/health".to_string(),
         );
         let r = bp.render(&given).unwrap();

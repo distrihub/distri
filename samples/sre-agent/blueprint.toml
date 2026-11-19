@@ -4,8 +4,8 @@ category = "engineering"
 about = "An on-call agent you can ask from Telegram. A health check runs on a schedule; when it fails you get one alert and the agent investigates, and you hear when it recovers."
 prompt = "Create an SRE agent for https://api.example.com that I can ask from Telegram; check /health every 5 minutes, and if it fails, alert me and start investigating."
 
-[params.service_url]
-ask = "Which URL should the health check call? It should return 200 when the service is healthy."
+[params.health_url]
+ask = "Which URL should the health check call (the full URL, e.g. https://api.acme.com/health)? It should return 200 when the service is healthy."
 example = "https://api.example.com/health"
 
 [params.service_name]

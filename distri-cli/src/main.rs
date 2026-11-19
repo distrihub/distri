@@ -152,7 +152,7 @@ enum Commands {
     Apply {
         /// Blueprint folder, sample URL or sample name.
         target: Option<String>,
-        /// A value for one of the blueprint's params: `--set service_url=https://…`.
+        /// A value for one of the blueprint's params: `--set health_url=https://…`.
         #[clap(long = "set", value_name = "NAME=VALUE")]
         set: Vec<String>,
         /// Show the plan; create nothing.

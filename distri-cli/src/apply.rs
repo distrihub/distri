@@ -1,6 +1,6 @@
 //! `distri apply`: set up an agent, its workflows and where it lives from a blueprint.
 //!
-//! `distri apply ./samples/sre-agent --set service_url=https://api.acme.com/health`
+//! `distri apply ./samples/sre-agent --set health_url=https://api.acme.com/health`
 //! `distri apply sre-agent` (a sample the server ships) · `distri apply --list`
 //!
 //! Applies through `POST /v1/blueprints/apply`, then prints what was created and what a

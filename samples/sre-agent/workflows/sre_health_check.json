@@ -1,7 +1,7 @@
 {
   "agent_type": "workflow_agent",
   "name": "sre_health_check",
-  "description": "Checks {{params.service_url}} every {{params.every_minutes}} minutes. Alerts the owner once when it goes down, asks sre_agent to investigate, and says when it recovers.",
+  "description": "Checks {{params.health_url}} every {{params.every_minutes}} minutes. Alerts the owner once when it goes down, asks sre_agent to investigate, and says when it recovers.",
   "version": "0.1.0",
   "definition": {
     "id": "sre_health_check",
@@ -12,7 +12,7 @@
         "kind": {
           "type": "api_call",
           "method": "GET",
-          "url": "{{params.service_url}}",
+          "url": "{{params.health_url}}",
           "expect_status": [
             200
           ],
@@ -42,7 +42,7 @@
         "kind": {
           "type": "notify",
           "to": "owner",
-          "text": "🔴 {{params.service_name}} is down: {{params.service_url}} returned {steps.check.status} after {steps.check.latency_ms} ms. Investigating…"
+          "text": "🔴 {{params.service_name}} is down: {{params.health_url}} returned {steps.check.status} after {steps.check.latency_ms} ms. Investigating…"
         }
       },
       {
@@ -55,7 +55,7 @@
         "kind": {
           "type": "agent_run",
           "agent_id": "sre_agent",
-          "prompt": "The health check for {{params.service_url}} failed: HTTP status {steps.check.status} (0 means the connection failed) after {steps.check.latency_ms} ms. Response: {steps.check.body}. Investigate and report."
+          "prompt": "The health check for {{params.health_url}} failed: HTTP status {steps.check.status} (0 means the connection failed) after {steps.check.latency_ms} ms. Response: {steps.check.body}. Investigate and report."
         }
       },
       {
@@ -94,7 +94,7 @@
         "kind": {
           "type": "notify",
           "to": "owner",
-          "text": "✅ {{params.service_name}} recovered: {{params.service_url}} returned {steps.check.status} in {steps.check.latency_ms} ms."
+          "text": "✅ {{params.service_name}} recovered: {{params.health_url}} returned {steps.check.status} in {steps.check.latency_ms} ms."
         }
       },
       {

@@ -13,7 +13,7 @@ You are setting up a hosted agent for the user on distri. Ask only for what you 
 4. **Apply:**
    ```bash
    distri apply sre-agent --json \
-     --set service_url=<url> --set service_name="<name>" --set repo=<owner/name>
+     --set health_url=<url> --set service_name="<name>" --set repo=<owner/name>
    ```
    If `status` is `needs_params`, ask the user each `missing_params[].ask` and run it again with `--set`.
 5. **Finish the steps that need the user.** For each item in `pending` where `done` is false, show the `title` and the `url`. The Telegram link must be opened on the user's phone or desktop. GitHub is optional. Then run `distri apply sre-agent --wait --test` with the same `--set` values. It waits for the links, then sends a test message on Telegram.

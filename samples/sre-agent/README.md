@@ -23,14 +23,14 @@ schedule ─► check (api_call, expect 200) ─┬─ went down? ─► alert �
 
 ```bash
 distri login
-distri apply samples/sre-agent --set service_url=https://api.example.com/health --wait --test
+distri apply samples/sre-agent --set health_url=https://api.example.com/health --wait --test
 ```
 
 `--wait` waits while you open the Telegram link it prints. `--test` then runs the workflow once in test mode, and you get "Your SRE agent … is connected" on Telegram.
 
 | Param | Default | |
 |---|---|---|
-| `service_url` | required | Must return 200 when healthy. |
+| `health_url` | required | Must return 200 when healthy. |
 | `service_name` | `the service` | Used in messages. |
 | `every_minutes` | `5` | |
 | `repo` | none | `owner/name`, used with the GitHub connection. |
