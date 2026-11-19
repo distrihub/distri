@@ -51,10 +51,16 @@ fn builtin_tools_have_no_filesystem_tools() {
         !tool_names.contains(&"list_artifacts".to_string()),
         "builtin tools should not include artifact tools"
     );
-    // Shell tools should still be present
-    assert!(tool_names.contains(&"start_shell".to_string()));
-    assert!(tool_names.contains(&"execute_shell".to_string()));
-    assert!(tool_names.contains(&"stop_shell".to_string()));
+    // browsr's shell and code tools are gone: code runs in the thread's
+    // sandbox (Bash/Read/Write/Edit, added per run by the host).
+    for gone in [
+        "start_shell",
+        "execute_shell",
+        "stop_shell",
+        "distri_execute_code",
+    ] {
+        assert!(!tool_names.contains(&gone.to_string()), "{gone} is removed");
+    }
 }
 
 #[tokio::test]

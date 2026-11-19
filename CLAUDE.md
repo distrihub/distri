@@ -53,7 +53,7 @@ User message → AgentOrchestrator.execute()
 
 ### Connection token passthrough
 
-`inject_connection_env` tool fetches a connection token and injects it as env var on `ExecutorContext.env_vars`. Shell sessions auto-inject these env vars on `start_shell`. Child agents inherit env vars via `new_task()`.
+`inject_connection_env` tool fetches a connection token and injects it as env var on `ExecutorContext.env_vars`. Child agents inherit env vars via `new_task()`.
 
 ## Build & test commands
 

@@ -3,13 +3,9 @@ use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
 use crate::AgentError;
 use base64::{engine::general_purpose, Engine as _};
-use browsr_types::ShellExecRequest;
 use distri_types::{FileMetadata, Part, Tool, ToolContext};
 use serde_json::{json, Value};
 use std::sync::Arc;
-
-use super::shell::get_shell_session_id;
-use browsr_client::BrowsrClient;
 
 /// Tool for saving any file from the agent's workspace as a persistent
 /// artifact. The file is persisted in the artifact store and returned as
@@ -25,7 +21,7 @@ impl Tool for SaveArtifactTool {
     }
 
     fn get_description(&self) -> String {
-        "Save an artifact to share with the user. Provide EITHER `path` (reads a file from the shell workspace or local filesystem) OR `content` (a string to save directly). The artifact is persisted and rendered by each channel according to its MIME type (images inline, markdown/JSON as previews, etc.).".to_string()
+        "Save an artifact to share with the user. Provide EITHER `path` (reads a file from the sandbox when the run has one, else the local filesystem) OR `content` (a string to save directly). The artifact is persisted and rendered by each channel according to its MIME type (images inline, markdown/JSON as previews, etc.).".to_string()
     }
 
     fn needs_executor_context(&self) -> bool {
@@ -66,6 +62,64 @@ impl Tool for SaveArtifactTool {
     }
 }
 
+/// What a `save_artifact` call asks for, before its bytes are read.
+pub(crate) struct ArtifactRequest {
+    pub path: Option<String>,
+    pub content: Option<String>,
+    pub filename: String,
+    pub caption: Option<String>,
+}
+
+impl ArtifactRequest {
+    pub(crate) fn parse(tool_call: &ToolCall) -> Result<Self, AgentError> {
+        let get = |k: &str| {
+            tool_call
+                .input
+                .get(k)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        };
+        let (path, content) = (get("path"), get("content"));
+        if path.is_some() && content.is_some() {
+            return Err(AgentError::ToolExecution(
+                "Provide either 'path' or 'content', not both".to_string(),
+            ));
+        }
+        if path.is_none() && content.is_none() {
+            return Err(AgentError::ToolExecution(
+                "Must provide either 'path' or 'content'".to_string(),
+            ));
+        }
+        // Explicit override > basename(path) > required-for-content.
+        let filename = match (get("filename"), path.as_deref()) {
+            (Some(f), _) => f,
+            (None, Some(p)) => std::path::Path::new(p)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "artifact.bin".to_string()),
+            (None, None) => {
+                return Err(AgentError::ToolExecution(
+                    "'filename' is required when using 'content' mode".to_string(),
+                ));
+            }
+        };
+        Ok(Self {
+            path,
+            content,
+            filename,
+            caption: get("caption"),
+        })
+    }
+}
+
+/// The error for a file that is missing or empty, worded so the model
+/// checks that its code really wrote the file.
+pub(crate) fn missing_file(path: &str, why: &str) -> AgentError {
+    AgentError::ToolExecution(format!(
+        "save_artifact: file '{path}' {why}. Verify with `ls -la {path}` and ensure your code actually writes the file (e.g. matplotlib needs `plt.savefig('{path}')`: printing the path is not enough)."
+    ))
+}
+
 #[async_trait::async_trait]
 impl ExecutorContextTool for SaveArtifactTool {
     async fn execute_with_executor_context(
@@ -73,152 +127,82 @@ impl ExecutorContextTool for SaveArtifactTool {
         tool_call: ToolCall,
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
-        let path = tool_call.input.get("path").and_then(|v| v.as_str());
-        let content_field = tool_call.input.get("content").and_then(|v| v.as_str());
-        let caption: Option<&str> = tool_call.input.get("caption").and_then(|v| v.as_str());
-
-        // Enforce exactly one of path/content
-        if path.is_some() && content_field.is_some() {
-            return Err(AgentError::ToolExecution(
-                "Provide either 'path' or 'content', not both".to_string(),
-            ));
-        }
-
-        // Resolve filename: explicit override > basename(path) > required-for-content
-        let filename: String = match tool_call
-            .input
-            .get("filename")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-        {
-            Some(f) => f,
-            None => match path {
-                Some(p) => std::path::Path::new(p)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "artifact.bin".to_string()),
-                None => {
-                    return Err(AgentError::ToolExecution(
-                        "'filename' is required when using 'content' mode".to_string(),
-                    ));
-                }
-            },
+        let req = ArtifactRequest::parse(&tool_call)?;
+        let bytes = match (&req.content, &req.path) {
+            (Some(content), _) => content.as_bytes().to_vec(),
+            (None, Some(path)) => tokio::fs::read(path)
+                .await
+                .map_err(|e| missing_file(path, &format!("does not exist ({e})")))?,
+            (None, None) => unreachable!("parse requires path or content"),
         };
-
-        // Acquire base64-encoded bytes in both modes
-        let (base64_str, raw_size) = if let Some(content) = content_field {
-            let raw_bytes = content.as_bytes();
-            let size = raw_bytes.len() as u64;
-            (general_purpose::STANDARD.encode(raw_bytes), size)
-        } else if let Some(path) = path {
-            if let Ok(Some(session_id)) = get_shell_session_id(&context).await {
-                let client = BrowsrClient::from_env();
-                let response = client
-                    .shell_exec(ShellExecRequest {
-                        session_id: session_id.clone(),
-                        command: format!("base64 -w0 {}", shell_quote(path)),
-                        timeout_secs: Some(30),
-                        working_dir: None,
-                    })
-                    .await
-                    .map_err(|e| {
-                        AgentError::ToolExecution(format!("Failed to read file from shell: {}", e))
-                    })?;
-
-                if response.result.exit_code != Some(0) {
-                    return Err(AgentError::ToolExecution(format!(
-                        "Failed to read file '{}': {}",
-                        path, response.result.stderr
-                    )));
-                }
-
-                let s = response.result.stdout.trim().to_string();
-                if s.is_empty() {
-                    return Err(AgentError::ToolExecution(format!(
-                        "File '{}' is empty or does not exist",
-                        path
-                    )));
-                }
-                let decoded = general_purpose::STANDARD.decode(&s).map_err(|e| {
-                    AgentError::ToolExecution(format!("Invalid base64 data: {}", e))
-                })?;
-                let size = decoded.len() as u64;
-                (s, size)
-            } else {
-                let raw_bytes = tokio::fs::read(path).await.map_err(|e| {
-                    AgentError::ToolExecution(format!(
-                        "save_artifact: file '{}' does not exist ({}). The file was not written before save_artifact was called. Verify with `ls -la {}` and ensure your code actually writes the file (e.g. matplotlib needs `plt.savefig('{}')` — printing the path is not enough).",
-                        path, e, path, path
-                    ))
-                })?;
-                if raw_bytes.is_empty() {
-                    return Err(AgentError::ToolExecution(format!(
-                        "save_artifact: file '{}' exists but is empty (0 bytes). Re-run the code that produces it and confirm with `ls -la {}` before retrying.",
-                        path, path
-                    )));
-                }
-                let size = raw_bytes.len() as u64;
-                (general_purpose::STANDARD.encode(&raw_bytes), size)
-            }
-        } else {
-            return Err(AgentError::ToolExecution(
-                "Must provide either 'path' or 'content'".to_string(),
-            ));
-        };
-
-        let mime_type = mime_from_filename(&filename);
-
-        // Persist to artifact store
-        let artifact_path = if let Ok(orchestrator) = context.get_orchestrator() {
-            let base_path = distri_filesystem::ArtifactWrapper::task_namespace(
-                &context.thread_id,
-                &context.task_id,
-            );
-            let wrapper = match orchestrator.session_filesystem() {
-                Ok(fs) => fs.create_artifact_wrapper(base_path).await,
-                Err(e) => Err(e),
-            };
-            match wrapper {
-                Ok(wrapper) => {
-                    let ap = format!("{}/content/{}", wrapper.prefix_path(), filename);
-                    if let Err(e) = wrapper.save_artifact(&filename, &base64_str).await {
-                        tracing::warn!("Failed to save artifact: {}", e);
-                    }
-                    Some(ap)
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to create artifact wrapper: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        tracing::info!(
-            filename = %filename,
-            size = raw_size,
-            mime = %mime_type,
-            artifact_path = ?artifact_path,
-            mode = if path.is_some() { "path" } else { "content" },
-            "save_artifact: artifact saved"
-        );
-
-        let metadata = FileMetadata {
-            file_id: filename.clone(),
-            relative_path: artifact_path.unwrap_or_default(),
-            size: raw_size,
-            content_type: Some(mime_type.to_string()),
-            original_filename: Some(filename),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            checksum: None,
-            stats: None,
-            preview: caption.map(|c| c.to_string()),
-        };
-
-        Ok(vec![Part::Artifact(metadata)])
+        store_artifact(&context, req, bytes).await
     }
+}
+
+/// Persist `bytes` as the call's artifact and return it as a part.
+pub(crate) async fn store_artifact(
+    context: &ExecutorContext,
+    req: ArtifactRequest,
+    bytes: Vec<u8>,
+) -> Result<Vec<Part>, AgentError> {
+    if let (Some(path), true) = (&req.path, bytes.is_empty()) {
+        return Err(missing_file(path, "exists but is empty (0 bytes)"));
+    }
+    let raw_size = bytes.len() as u64;
+    let base64_str = general_purpose::STANDARD.encode(&bytes);
+    let filename = req.filename;
+    let mime_type = mime_from_filename(&filename);
+
+    // Persist to artifact store
+    let artifact_path = if let Ok(orchestrator) = context.get_orchestrator() {
+        let base_path = distri_filesystem::ArtifactWrapper::task_namespace(
+            &context.thread_id,
+            &context.task_id,
+        );
+        let wrapper = match orchestrator.session_filesystem() {
+            Ok(fs) => fs.create_artifact_wrapper(base_path).await,
+            Err(e) => Err(e),
+        };
+        match wrapper {
+            Ok(wrapper) => {
+                let ap = format!("{}/content/{}", wrapper.prefix_path(), filename);
+                if let Err(e) = wrapper.save_artifact(&filename, &base64_str).await {
+                    tracing::warn!("Failed to save artifact: {}", e);
+                }
+                Some(ap)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create artifact wrapper: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    tracing::info!(
+        filename = %filename,
+        size = raw_size,
+        mime = %mime_type,
+        artifact_path = ?artifact_path,
+        mode = if req.path.is_some() { "path" } else { "content" },
+        "save_artifact: artifact saved"
+    );
+
+    let metadata = FileMetadata {
+        file_id: filename.clone(),
+        relative_path: artifact_path.unwrap_or_default(),
+        size: raw_size,
+        content_type: Some(mime_type.to_string()),
+        original_filename: Some(filename),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        checksum: None,
+        stats: None,
+        preview: req.caption,
+    };
+
+    Ok(vec![Part::Artifact(metadata)])
 }
 
 /// Infer MIME type from filename extension.
@@ -244,20 +228,4 @@ fn mime_from_filename(filename: &str) -> &'static str {
         Some("webm") => "video/webm",
         _ => "application/octet-stream",
     }
-}
-
-/// Escape a path for safe inclusion in a POSIX shell command.
-/// Wraps in single quotes; any embedded single quote becomes `'\''`.
-fn shell_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for c in s.chars() {
-        if c == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(c);
-        }
-    }
-    out.push('\'');
-    out
 }

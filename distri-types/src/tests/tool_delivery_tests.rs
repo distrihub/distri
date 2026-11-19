@@ -24,7 +24,7 @@ fn serde_backwards_compat_tool_search() {
 fn core_tools_list_contains_essentials() {
     assert!(CORE_TOOLS.contains(&"final"));
     assert!(CORE_TOOLS.contains(&"tool_search"));
-    assert!(CORE_TOOLS.contains(&"execute_shell"));
+    assert!(CORE_TOOLS.contains(&"Bash"));
     assert!(CORE_TOOLS.contains(&"load_skill"));
 }
 

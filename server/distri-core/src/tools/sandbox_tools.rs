@@ -36,18 +36,18 @@ pub fn sandbox_tools(binder: Arc<dyn SandboxBinder>) -> Vec<Arc<dyn Tool>> {
         Arc::new(DynExecutorTool::new(Arc::new(SandboxWriteTool {
             binder: binder.clone(),
         }))),
-        Arc::new(DynExecutorTool::new(Arc::new(SandboxEditTool { binder }))),
+        Arc::new(DynExecutorTool::new(Arc::new(SandboxEditTool {
+            binder: binder.clone(),
+        }))),
+        Arc::new(DynExecutorTool::new(Arc::new(SandboxSaveArtifactTool {
+            binder,
+        }))),
     ]
 }
 
-/// The browsr-backed tools the sandbox tools replace: a run that has the
-/// sandbox tools does not also get these.
-pub const REPLACED_BROWSR_TOOLS: [&str; 4] = [
-    "start_shell",
-    "execute_shell",
-    "stop_shell",
-    "distri_execute_code",
-];
+/// Tools a run with the sandbox does not keep: the sandbox's own version
+/// replaces them (`save_artifact` reads its `path` from the sandbox).
+pub const REPLACED_TOOLS: [&str; 1] = ["save_artifact"];
 
 /// Names of the sandbox tools, for de-duplication against an agent's own.
 pub const SANDBOX_TOOL_NAMES: [&str; 4] = [
@@ -416,5 +416,66 @@ mod tests {
         assert_eq!(resolve_path("/workspace", "fib.py"), "/workspace/fib.py");
         assert_eq!(resolve_path("/workspace/", "./a/b"), "/workspace/a/b");
         assert_eq!(resolve_path("/workspace", "/etc/x"), "/etc/x");
+    }
+}
+
+/// `save_artifact` for a run with a sandbox: a `path` is read from the
+/// thread's sandbox (relative to its working directory), `content` is saved
+/// as given.
+#[derive(Debug)]
+pub struct SandboxSaveArtifactTool {
+    binder: Arc<dyn SandboxBinder>,
+}
+
+#[async_trait::async_trait]
+impl Tool for SandboxSaveArtifactTool {
+    fn get_name(&self) -> String {
+        crate::tools::save_artifact::SaveArtifactTool.get_name()
+    }
+    fn get_description(&self) -> String {
+        crate::tools::save_artifact::SaveArtifactTool.get_description()
+    }
+    fn get_parameters(&self) -> serde_json::Value {
+        crate::tools::save_artifact::SaveArtifactTool.get_parameters()
+    }
+    fn needs_executor_context(&self) -> bool {
+        true
+    }
+
+    async fn execute(
+        &self,
+        _tool_call: ToolCall,
+        _context: Arc<ToolContext>,
+    ) -> Result<Vec<Part>, anyhow::Error> {
+        Err(anyhow::anyhow!(
+            "{} needs the executor context",
+            self.get_name()
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl ExecutorContextTool for SandboxSaveArtifactTool {
+    async fn execute_with_executor_context(
+        &self,
+        tool_call: ToolCall,
+        context: Arc<ExecutorContext>,
+    ) -> Result<Vec<Part>, AgentError> {
+        use crate::tools::save_artifact::{missing_file, store_artifact, ArtifactRequest};
+        let req = ArtifactRequest::parse(&tool_call)?;
+        let bytes = match (&req.content, &req.path) {
+            (Some(content), _) => content.as_bytes().to_vec(),
+            (None, Some(path)) => {
+                let bound = bind(&self.binder, &context).await?;
+                let full = resolve_path(&bound.cwd, path);
+                bound
+                    .provider
+                    .read_file(&bound.sandbox_id, &full)
+                    .await
+                    .map_err(|e| missing_file(&full, &format!("could not be read ({e})")))?
+            }
+            (None, None) => unreachable!("parse requires path or content"),
+        };
+        store_artifact(&context, req, bytes).await
     }
 }
