@@ -485,9 +485,21 @@ fn is_error(e: &AgentEventType) -> bool {
     matches!(e, AgentEventType::RunError { .. })
 }
 
-/// S32: every assistant `tool_use` is answered by a `tool_result` in the
-/// messages right after it, in call order, before the next assistant turn.
-fn assert_valid_transcript(messages: &[Message]) {
+/// S32: the request carries an assistant message calling each of `expect`
+/// (the transcript does not merely omit the step), and every assistant
+/// `tool_use` is answered by a `tool_result` in the messages right after it,
+/// in call order, before the next assistant turn.
+fn assert_valid_transcript(messages: &[Message], expect: &[&str]) {
+    let roles: Vec<String> = messages.iter().map(|m| format!("{:?}", m.role)).collect();
+    for id in expect {
+        assert!(
+            messages.iter().any(|m| m.role == MessageRole::Assistant
+                && m.parts
+                    .iter()
+                    .any(|p| matches!(p, Part::ToolCall(c) if c.tool_call_id == *id))),
+            "no assistant message calls {id}; roles {roles:?}"
+        );
+    }
     for (i, m) in messages.iter().enumerate() {
         if m.role != MessageRole::Assistant {
             continue;
@@ -619,7 +631,7 @@ async fn s2_completion_resumes_and_completes() {
 
     assert_eq!(h.llm.calls(), 2);
     let second = h.llm.seen(2);
-    assert_valid_transcript(&second);
+    assert_valid_transcript(&second, &["call_pick"]);
     assert!(tool_result_text(&second, "call_pick").contains("teal"));
 
     wait_for("stream close", || async {
@@ -718,7 +730,7 @@ async fn s5_deadline_expires_and_late_result_is_refused() {
     assert_eq!(report.expired, vec!["call_pick".to_string()]);
     wait_status(&h, &task_id, TaskStatus::Completed).await;
     let second = h.llm.seen(2);
-    assert_valid_transcript(&second);
+    assert_valid_transcript(&second, &["call_pick"]);
     assert!(tool_result_text(&second, "call_pick").contains("timed out"));
 
     let late = h
@@ -767,7 +779,7 @@ async fn s7_crashed_segment_interrupts_in_flight_tool() {
 
     wait_status(&h, &task_id, TaskStatus::Completed).await;
     let second = h.llm.seen(2);
-    assert_valid_transcript(&second);
+    assert_valid_transcript(&second, &["call_hang"]);
     assert!(tool_result_text(&second, "call_hang").contains("interrupted"));
     assert_eq!(h.store.get_entry_sync(&task_id).unwrap().attempts, 1);
 
@@ -787,6 +799,29 @@ async fn s7_crashed_segment_interrupts_in_flight_tool() {
         .await
         .unwrap());
     assert!(!h.store.renew(&zombie).await.unwrap());
+}
+
+/// S32 (durable off): a multi-step run's next model request carries the
+/// previous step's assistant tool call and its tool result, in order.
+#[tokio::test]
+async fn s32_non_durable_next_step_sees_the_tool_call_and_result() {
+    let h = harness(
+        ScriptedLlm::new(vec![
+            call("call_echo", "echo", json!({})),
+            final_answer("echo done"),
+        ]),
+        Opts {
+            durable: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    let (task_id, _frames) = start(&h, "echo something").await;
+    wait_status(&h, &task_id, TaskStatus::Completed).await;
+    assert_eq!(h.llm.calls(), 2);
+    let second = h.llm.seen(2);
+    assert_valid_transcript(&second, &["call_echo"]);
+    assert!(tool_result_text(&second, "call_echo").contains("echoed"));
 }
 
 /// S11: (durable off) a client call that times out at step 2+ leaves the
@@ -922,7 +957,7 @@ async fn s19_completed_before_park_continues() {
     let (task_id, _frames) = start(&h, "pick").await;
     wait_status(&h, &task_id, TaskStatus::Completed).await;
     let second = h.llm.seen(2);
-    assert_valid_transcript(&second);
+    assert_valid_transcript(&second, &["call_pick", "call_answer"]);
     assert!(tool_result_text(&second, "call_pick").contains("early"));
     assert!(tool_result_text(&second, "call_answer").contains("answered"));
 }
