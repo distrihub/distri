@@ -24,6 +24,7 @@ pub struct ApplyArgs {
     pub wait: bool,
     pub test: bool,
     pub list: bool,
+    pub export: bool,
 }
 
 /// `k=v` pairs into a map.
@@ -75,6 +76,17 @@ async fn load_target(target: &str) -> Result<(Option<Blueprint>, Option<String>)
 }
 
 pub async fn handle_apply(client: &Distri, args: ApplyArgs) -> Result<()> {
+    if args.export {
+        let target = args
+            .target
+            .clone()
+            .context("--export needs a blueprint folder")?;
+        let (Some(bp), _) = load_target(&target).await? else {
+            bail!("--export needs a blueprint folder or URL, not a sample name");
+        };
+        println!("{}", serde_json::to_string_pretty(&bp)?);
+        return Ok(());
+    }
     if args.list || args.target.is_none() {
         let samples = client.list_blueprint_samples().await?;
         if args.json {

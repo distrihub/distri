@@ -170,6 +170,9 @@ enum Commands {
         /// List the samples the server ships.
         #[clap(long)]
         list: bool,
+        /// Print the blueprint folder as one JSON document (what `apply` sends); no server.
+        #[clap(long)]
+        export: bool,
     },
 
     /// Sync the entire `agents/`, `skills/`, `templates/` tree to the
@@ -1149,6 +1152,7 @@ async fn main() -> Result<()> {
             wait,
             test,
             list,
+            export,
         } => {
             apply::handle_apply(
                 &client,
@@ -1160,6 +1164,7 @@ async fn main() -> Result<()> {
                     wait,
                     test,
                     list,
+                    export,
                 },
             )
             .await?;
