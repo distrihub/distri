@@ -1110,6 +1110,12 @@ pub struct McpToolConfig {
     /// Exclude patterns (glob-style, e.g., ["delete_*", "rm_*"])
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude: Vec<String>,
+
+    /// MCP Apps (SEP-1865): show the server's `ui://` apps in the chat when
+    /// its tools are called. Unset means on: a server that ships apps shows
+    /// them. `apps = false` keeps the tools and hides their apps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apps: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -2275,6 +2281,7 @@ impl ToolsConfig {
                 server: server.to_string(),
                 include: vec!["*".to_string()],
                 exclude: vec![],
+                apps: None,
             }],
             ..Default::default()
         }
@@ -2287,6 +2294,7 @@ impl ToolsConfig {
                 server: server.to_string(),
                 include: include.into_iter().map(|s| s.to_string()).collect(),
                 exclude: exclude.into_iter().map(|s| s.to_string()).collect(),
+                apps: None,
             }],
             ..Default::default()
         }

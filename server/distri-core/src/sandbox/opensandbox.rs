@@ -20,8 +20,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::{
-    ExecChunk, ExecOutput, ExecRequest, SandboxError, SandboxInfo, SandboxProvider, SandboxResult,
-    SandboxSpec, SandboxState, WORKSPACE_DIR,
+    ExecChunk, ExecOutput, ExecRequest, PortEndpoint, SandboxError, SandboxInfo, SandboxProvider,
+    SandboxResult, SandboxSpec, SandboxState, WORKSPACE_DIR,
 };
 
 /// The port `execd` listens on inside every OpenSandbox sandbox.
@@ -193,7 +193,14 @@ impl OpenSandboxProvider {
         if let Some(ep) = self.endpoints.get(sandbox_id) {
             return Ok(ep.clone());
         }
-        let mut path = format!("/sandboxes/{sandbox_id}/endpoints/{EXECD_PORT}");
+        let ep = self.resolve_endpoint(sandbox_id, EXECD_PORT).await?;
+        self.endpoints.insert(sandbox_id.to_string(), ep.clone());
+        Ok(ep)
+    }
+
+    /// Ask the lifecycle API where `port` of a sandbox is reached.
+    async fn resolve_endpoint(&self, sandbox_id: &str, port: u16) -> SandboxResult<Endpoint> {
+        let mut path = format!("/sandboxes/{sandbox_id}/endpoints/{port}");
         if self.config.use_server_proxy {
             path.push_str("?use_server_proxy=true");
         }
@@ -218,9 +225,7 @@ impl OpenSandboxProvider {
                 headers.push(("OPEN-SANDBOX-API-KEY".into(), key.clone()));
             }
         }
-        let ep = Endpoint { url, headers };
-        self.endpoints.insert(sandbox_id.to_string(), ep.clone());
-        Ok(ep)
+        Ok(Endpoint { url, headers })
     }
 
     /// OpenSandbox returns endpoints without a scheme (`127.0.0.1:57487/proxy/44772`).
@@ -696,6 +701,14 @@ impl SandboxProvider for OpenSandboxProvider {
             },
             None => collect.await,
         }
+    }
+
+    async fn port_endpoint(&self, sandbox_id: &str, port: u16) -> SandboxResult<PortEndpoint> {
+        let ep = self.resolve_endpoint(sandbox_id, port).await?;
+        Ok(PortEndpoint {
+            url: ep.url,
+            headers: ep.headers,
+        })
     }
 
     async fn read_file(&self, sandbox_id: &str, path: &str) -> SandboxResult<Vec<u8>> {

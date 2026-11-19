@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use crate::agent::ExecutorContext;
-use crate::servers::{McpClientPool, McpToolHandle};
+use crate::servers::{mcp_apps, McpClientPool, McpToolHandle};
 use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
 use crate::AgentError;
@@ -32,6 +32,10 @@ pub struct McpToolAdapter {
     /// across all adapters built in one run means a single connection per
     /// remote server, shared by every tool from it.
     pool: Arc<McpClientPool>,
+    /// Whether this server's MCP Apps are switched on for the agent
+    /// (`[[tools.mcp]] apps`). Off: the call returns text only and no
+    /// `ui://` resource link, so no app is shown.
+    apps: bool,
 }
 
 impl std::fmt::Debug for McpToolAdapter {
@@ -39,6 +43,7 @@ impl std::fmt::Debug for McpToolAdapter {
         f.debug_struct("McpToolAdapter")
             .field("handle", &self.handle)
             .field("exposed_name", &self.exposed_name)
+            .field("apps", &self.apps)
             .finish()
     }
 }
@@ -49,7 +54,14 @@ impl McpToolAdapter {
             handle,
             exposed_name,
             pool,
+            apps: true,
         }
+    }
+
+    /// Switch this tool's MCP App on or off (default on).
+    pub fn with_apps(mut self, apps: bool) -> Self {
+        self.apps = apps;
+        self
     }
 
     pub fn server(&self) -> &str {
@@ -134,12 +146,48 @@ impl ExecutorContextTool for McpToolAdapter {
         if !result.text.is_empty() {
             parts.push(Part::Text(result.text.clone()));
         }
-        parts.extend(extract_resource_links(&result.raw));
+        if self.apps {
+            parts.extend(app_resource_links(&self.handle, &result.raw));
+        }
         if parts.is_empty() {
             parts.push(Part::Text(String::new()));
         }
         Ok(parts)
     }
+}
+
+/// The resource links an MCP App host needs for one call: the ones the
+/// result carries, plus the tool definition's `_meta.ui.resourceUri` (the
+/// spec's place for it). Every link gets `meta.distri` naming the server and
+/// tool and carrying the call's result, so the host can read the resource
+/// and send the app `tool-result`.
+fn app_resource_links(handle: &McpToolHandle, raw: &serde_json::Value) -> Vec<Part> {
+    let mut out = extract_resource_links(raw);
+    if let Some(uri) = mcp_apps::ui_resource_uri(handle.meta.as_ref()) {
+        let present = out
+            .iter()
+            .any(|p| matches!(p, Part::ResourceLink(r) if r.uri == uri));
+        if !present {
+            out.push(Part::ResourceLink(ResourceLink {
+                uri: uri.to_string(),
+                mime_type: Some(mcp_apps::APP_MIME_TYPE.to_string()),
+                text: None,
+                meta: handle.meta.clone(),
+            }));
+        }
+    }
+    let host = mcp_apps::host_meta(&handle.server, &handle.name, raw);
+    for part in out.iter_mut() {
+        if let Part::ResourceLink(link) = part {
+            let mut meta = match link.meta.take() {
+                Some(serde_json::Value::Object(m)) => m,
+                _ => serde_json::Map::new(),
+            };
+            meta.insert("distri".to_string(), host.clone());
+            link.meta = Some(serde_json::Value::Object(meta));
+        }
+    }
+    out
 }
 
 /// Walk the raw `tools/call` response and pull out any MCP resource

@@ -1,3 +1,4 @@
+pub mod mcp_apps;
 pub mod mcp_client;
 pub mod pool_provider;
 pub mod registry;

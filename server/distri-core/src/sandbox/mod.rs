@@ -115,6 +115,15 @@ pub enum SandboxError {
 
 pub type SandboxResult<T> = Result<T, SandboxError>;
 
+/// How to reach a port inside a sandbox from outside it: a URL (scheme,
+/// host and any path prefix the gateway needs) and the headers every request
+/// to it must carry (gateway routing, secure-access token).
+#[derive(Debug, Clone, Default)]
+pub struct PortEndpoint {
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+}
+
 /// Lifecycle plus exec and file access for one kind of sandbox.
 #[async_trait::async_trait]
 pub trait SandboxProvider: Send + Sync + std::fmt::Debug {
@@ -151,6 +160,14 @@ pub trait SandboxProvider: Send + Sync + std::fmt::Debug {
         req: &ExecRequest,
         on_chunk: Option<tokio::sync::mpsc::UnboundedSender<ExecChunk>>,
     ) -> SandboxResult<ExecOutput>;
+
+    /// Where a port a process in the sandbox listens on (`0.0.0.0:<port>`)
+    /// is reached from the host, e.g. a headless browser's CDP port.
+    async fn port_endpoint(&self, _sandbox_id: &str, port: u16) -> SandboxResult<PortEndpoint> {
+        Err(SandboxError::NotConfigured(format!(
+            "this sandbox provider does not expose ports (asked for {port})"
+        )))
+    }
 
     async fn read_file(&self, sandbox_id: &str, path: &str) -> SandboxResult<Vec<u8>>;
     /// Write a file, creating parent directories.
