@@ -31,6 +31,10 @@ pub const EXECD_PORT: u16 = 44772;
 /// yet (just after create or resume).
 const EXECD_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Seconds a sandbox lives after it was created or last renewed, unless
+/// `OPENSANDBOX_TIMEOUT_SECS` says otherwise.
+pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
+
 /// The header the ingress gateway puts on an endpoint it serves.
 const INGRESS_HEADER: &str = "OpenSandbox-Ingress-To";
 
@@ -88,7 +92,9 @@ impl OpenSandboxConfig {
     /// - `OPENSANDBOX_IMAGE` (default `python:3.12-slim`);
     /// - `SANDBOX_USE_SERVER_PROXY` (`true`/`1`);
     /// - `OPENSANDBOX_CPU` (default `1`), `OPENSANDBOX_MEMORY` (default `1Gi`),
-    ///   `OPENSANDBOX_TIMEOUT_SECS` (default 3600; a sandbox that expired is
+    ///   `OPENSANDBOX_TIMEOUT_SECS` (default 900, at least 60: the sandbox
+    ///   expires this long after it was created or last renewed; the host
+    ///   renews it while its thread is in use, and a sandbox that expired is
     ///   recreated on its volume at the next tool call);
     /// - `OPENSANDBOX_SECURE_ACCESS` (default on, except for a localhost URL:
     ///   OpenSandbox's Docker mode has no ingress gateway to enforce it);
@@ -129,8 +135,9 @@ impl OpenSandboxConfig {
             ),
             default_timeout_secs: Some(
                 env_first(&["OPENSANDBOX_TIMEOUT_SECS"])
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(3_600),
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(DEFAULT_TIMEOUT_SECS)
+                    .max(60),
             ),
         })
     }
@@ -572,6 +579,30 @@ impl SandboxProvider for OpenSandboxProvider {
             return Ok(());
         }
         check(resp).await.map(|_| ())
+    }
+
+    async fn renew(&self, sandbox_id: &str, extend: Duration) -> SandboxResult<()> {
+        let expires_at = chrono::Utc::now()
+            + chrono::Duration::from_std(extend).unwrap_or(chrono::Duration::seconds(900));
+        let resp = self
+            .lifecycle(
+                reqwest::Method::POST,
+                &format!("/sandboxes/{sandbox_id}/renew-expiration"),
+            )
+            .json(&json!({
+                "expiresAt": expires_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+            }))
+            .send()
+            .await
+            .map_err(transport)?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(SandboxError::NotFound(sandbox_id.to_string()));
+        }
+        check(resp).await.map(|_| ())
+    }
+
+    fn default_timeout(&self) -> Option<Duration> {
+        self.config.default_timeout_secs.map(Duration::from_secs)
     }
 
     async fn find_by_metadata(&self, key: &str, value: &str) -> SandboxResult<Vec<SandboxInfo>> {
