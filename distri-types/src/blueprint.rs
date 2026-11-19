@@ -558,11 +558,28 @@ pub struct ApplyBlueprintRequest {
     /// A sample the server ships (`sre-agent`), when `blueprint` is not given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<String>,
-    #[serde(default)]
+    /// Values for the blueprint's params. Numbers and booleans are taken as their text
+    /// (`5` → `"5"`); `null` is left out.
+    #[serde(default, deserialize_with = "lenient_params")]
     pub params: BTreeMap<String, String>,
     /// Only plan: nothing is created.
     #[serde(default)]
     pub dry_run: bool,
+}
+
+fn lenient_params<'de, D>(d: D) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: BTreeMap<String, serde_json::Value> = BTreeMap::deserialize(d)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|(k, v)| match v {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(s) => Some((k, s)),
+            other => Some((k, other.to_string())),
+        })
+        .collect())
 }
 
 /// One thing applying created, updated or left as it was.
@@ -623,6 +640,10 @@ pub struct ApplyBlueprintResponse {
     pub pending: Vec<PendingAction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_params: Vec<MissingParam>,
+    /// Params given that the blueprint does not have (ignored). The known ones are in
+    /// `missing_params` or the sample's `params`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unknown_params: Vec<String>,
     /// The first run to try once ready.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<BlueprintTest>,
@@ -856,5 +877,17 @@ expect = "a test alert arrives on Telegram"
             }
         }
         assert!(seen >= 2, "expected samples under {}", root.display());
+    }
+
+    #[test]
+    fn params_accept_numbers_and_booleans() {
+        let r: ApplyBlueprintRequest = serde_json::from_value(serde_json::json!({
+            "sample": "sre-agent",
+            "params": {"every_minutes": 5, "on": true, "url": "x", "gone": null}
+        }))
+        .unwrap();
+        assert_eq!(r.params["every_minutes"], "5");
+        assert_eq!(r.params["on"], "true");
+        assert!(!r.params.contains_key("gone"));
     }
 }
