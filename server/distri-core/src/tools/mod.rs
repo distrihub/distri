@@ -415,18 +415,23 @@ pub async fn resolve_tools_config_with_pool(
                         continue;
                     }
                 };
+                let apps = mcp_cfg.apps.unwrap_or(true);
                 for handle in tools {
                     if !mcp_filter_matches(&handle.name, &mcp_cfg.include, &mcp_cfg.exclude) {
+                        continue;
+                    }
+                    // MCP Apps: a tool whose `_meta.ui.visibility` lacks
+                    // "model" is for its app only, never offered to the LLM.
+                    if !crate::servers::mcp_apps::visibility(handle.meta.as_ref()).model {
                         continue;
                     }
                     // Namespace remote tool names by server so two servers with
                     // a `search` tool can coexist. Convention: `<server>__<tool>`.
                     let exposed_name = format!("{}__{}", server_name, handle.name);
-                    all_tools.push(Arc::new(mcp_tool::McpToolAdapter::new(
-                        handle,
-                        exposed_name,
-                        pool.clone(),
-                    )));
+                    all_tools.push(Arc::new(
+                        mcp_tool::McpToolAdapter::new(handle, exposed_name, pool.clone())
+                            .with_apps(apps),
+                    ));
                 }
             }
         }

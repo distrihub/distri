@@ -16,7 +16,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use distri_types::{McpClientTransport, McpServerHandle};
-use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation, Tool};
+use rmcp::model::{
+    CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation,
+    ReadResourceRequestParams, Tool,
+};
 use rmcp::service::{RoleClient, RunningService};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
@@ -29,6 +32,9 @@ pub struct McpToolHandle {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+    /// The tool definition's `_meta` as the server sent it. MCP Apps put
+    /// `ui.resourceUri` and `ui.visibility` here (see `servers::mcp_apps`).
+    pub meta: Option<serde_json::Value>,
 }
 
 /// A connected MCP client. `Service` is the rmcp `RunningService` future-poller.
@@ -56,6 +62,11 @@ impl RemoteMcpClient {
                 name: t.name.to_string(),
                 description: t.description.map(|d| d.to_string()).unwrap_or_default(),
                 input_schema: serde_json::Value::Object((*t.input_schema).clone()),
+                meta: t
+                    .meta
+                    .as_ref()
+                    .and_then(|m| serde_json::to_value(m).ok())
+                    .filter(|v| !v.is_null()),
             })
             .collect())
     }
@@ -103,6 +114,18 @@ impl RemoteMcpClient {
         })
     }
 
+    /// `resources/read` — fetch a resource (an MCP App's `ui://` HTML, for
+    /// one). Returns the raw `ReadResourceResult` as JSON: `{ contents: [{
+    /// uri, mimeType, text | blob, _meta }] }`.
+    pub async fn read_resource(&self, uri: &str) -> Result<serde_json::Value> {
+        let resp = self
+            .service
+            .read_resource(ReadResourceRequestParams::new(uri))
+            .await
+            .with_context(|| format!("reading '{}' from '{}'", uri, self.server_name))?;
+        serde_json::to_value(&resp).context("serializing resources/read result")
+    }
+
     /// Gracefully cancel the underlying connection.
     pub async fn shutdown(self) {
         let _ = self.service.cancel().await;
@@ -117,9 +140,18 @@ pub struct McpCallResult {
 }
 
 /// Build a client identity advertised to the remote server during initialize.
+///
+/// Declares the MCP Apps extension (`io.modelcontextprotocol/ui`) so servers
+/// know distri hosts render `text/html;profile=mcp-app` resources.
 fn client_info() -> ClientInfo {
+    let mut capabilities = ClientCapabilities::default();
+    let mut extensions = rmcp::model::ExtensionCapabilities::new();
+    if let serde_json::Value::Object(ui) = super::mcp_apps::client_extension() {
+        extensions.insert(super::mcp_apps::EXTENSION_ID.to_string(), ui);
+    }
+    capabilities.extensions = Some(extensions);
     ClientInfo::new(
-        ClientCapabilities::default(),
+        capabilities,
         Implementation::new("distri", env!("CARGO_PKG_VERSION")),
     )
 }
