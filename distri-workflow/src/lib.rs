@@ -31,8 +31,8 @@ pub mod types;
 pub mod workflow_store;
 
 pub use resolve::{
-    build_execution_context, evaluate_skip_condition, resolve_step_input, resolve_template,
-    resolve_value,
+    build_execution_context, evaluate_expression, evaluate_skip_condition, resolve_step_input,
+    resolve_template, resolve_value,
 };
 pub use trigger_registry::{
     InMemoryWorkflowTriggerRegistry, TriggerBinding, WorkflowTriggerRegistry,

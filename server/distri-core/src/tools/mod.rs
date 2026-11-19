@@ -25,6 +25,7 @@ pub mod inject_env;
 pub mod invoke_agent;
 pub mod mcp_tool;
 pub mod mock_tool;
+pub mod notify;
 pub mod request;
 pub mod resolve;
 pub mod sandbox_tools;
@@ -145,6 +146,7 @@ pub fn cast_to_executor_context_tool(
         "get_task_result" => Ok(Box::new(GetTaskResultTool)),
         // Inter-agent communication
         "send_message" => Ok(Box::new(SendMessageTool)),
+        "notify" => Ok(Box::new(notify::NotifyTool)),
         _ => Err(AgentError::ToolExecution(format!(
             "Tool '{}' cannot be cast to ExecutorContextTool",
             tool_name

@@ -49,6 +49,7 @@ pub fn get_builtin_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(crate::tools::supervisor::ListMyTasksTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::supervisor::GetTaskResultTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::invoke_agent::InvokeAgentTool) as Arc<dyn Tool>,
+        Arc::new(crate::tools::notify::NotifyTool) as Arc<dyn Tool>,
         // load_skill is castable in `cast_to_executor_context_tool` but was
         // missing from this registry — agents that declared
         // `builtin = ["load_skill"]` (e.g. `_adhoc_base`) had the tool

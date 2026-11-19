@@ -67,15 +67,19 @@ pub async fn init_orchestrator(
         Arc::new(distri_filesystem::create_file_system(fs_config).await?)
     };
 
-    let orchestrator = AgentOrchestratorBuilder::default()
+    let mut builder = AgentOrchestratorBuilder::default()
         .with_browser_config(BrowsrClientConfig::default())
         .with_stores(stores)
         .with_prompt_registry(prompt_registry)
         .with_store_config(store_config)
         .with_session_storage_path(workspace_path.join(".distri/session_storage"))
-        .with_workspace_filesystem(workspace_fs)
-        .build()
-        .await?;
+        .with_workspace_filesystem(workspace_fs);
+    // Workflow `code` steps run with this machine's Deno (the person running the server owns it).
+    match distri_core::code_runner::LocalDenoRunner::detect() {
+        Some(runner) => builder = builder.with_code_runner(Arc::new(runner)),
+        None => tracing::info!("deno not found: workflow code steps are unavailable"),
+    }
+    let orchestrator = builder.build().await?;
 
     let orchestrator = Arc::new(orchestrator);
     seed::seed_bundled_defaults(orchestrator.as_ref()).await?;
