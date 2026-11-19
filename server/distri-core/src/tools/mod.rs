@@ -376,8 +376,21 @@ pub async fn resolve_tools_config_with_pool(
     }
 
     // Create dynamic factory tools — skip any whose name collides with an
-    // external tool (external wins).
+    // external tool (external wins). A client that sends both a factory and its own
+    // handler under one name (distrijs auto-registers an HTTP `distri_request` factory;
+    // the web app hands in a `distri_request` that runs in the page with the person's
+    // session and asks before changes) means its own handler: it wins even when the agent
+    // does not list it in `external`.
     for factory_def in &config.dynamic {
+        if !external_names.contains(&factory_def.name) {
+            if let Some(tool) = external_tools
+                .iter()
+                .find(|t| t.get_name() == factory_def.name)
+            {
+                external_names.insert(tool.get_name());
+                all_tools.push(tool.clone());
+            }
+        }
         if external_names.contains(&factory_def.name) {
             tracing::debug!(
                 "Skipping dynamic factory tool '{}' — overridden by external tool",
@@ -864,5 +877,43 @@ mod tests {
             .filter(|t| t.get_name() == "other_factory")
             .collect();
         assert_eq!(other.len(), 1, "non-colliding factory tool should remain");
+    }
+
+    /// A client that sends a factory and its own handler under one name gets its handler,
+    /// even when the agent lists no `external` tools (the web app's `distri_request`).
+    #[tokio::test]
+    async fn client_handler_beats_same_named_factory_without_external_config() {
+        let external: Vec<Arc<dyn Tool>> = vec![Arc::new(MockTool {
+            name: "distri_request".to_string(),
+            description: "external:distri_request".to_string(),
+        })];
+        let config = ToolsConfig {
+            dynamic: vec![
+                make_http_factory("distri_request"),
+                make_http_factory("other"),
+            ],
+            ..Default::default()
+        };
+        let registry = Arc::new(RwLock::new(McpServerRegistry::default()));
+        let tools = resolve_tools_config(&config, registry, &external)
+            .await
+            .unwrap();
+        let dr: Vec<_> = tools
+            .iter()
+            .filter(|t| t.get_name() == "distri_request")
+            .collect();
+        assert_eq!(dr.len(), 1);
+        assert_eq!(dr[0].get_description(), "external:distri_request");
+        assert!(
+            tools.iter().any(|t| t.get_name() == "other"),
+            "other factories stay"
+        );
+        // An external tool with no factory of its name is still not added.
+        let config = ToolsConfig::default();
+        let registry = Arc::new(RwLock::new(McpServerRegistry::default()));
+        let tools = resolve_tools_config(&config, registry, &external)
+            .await
+            .unwrap();
+        assert!(!tools.iter().any(|t| t.get_name() == "distri_request"));
     }
 }
