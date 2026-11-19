@@ -170,6 +170,28 @@ impl InMemoryDurableStore {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The queue entry of `task_id` (synchronous; tests and status pages).
+    pub fn get_entry_sync(&self, task_id: &str) -> Option<QueueEntry> {
+        self.lock().entries.get(task_id).map(|e| QueueEntry {
+            task_id: task_id.to_string(),
+            workspace_id: e.workspace_id(),
+            ready_at: e.ready_at,
+            lease_owner: e.lease_owner.clone(),
+            lease_until: e.lease_until,
+            lease_id: e.lease_id,
+            waiting_on: e.waiting_on.clone(),
+            attempts: e.attempts,
+        })
+    }
+
+    /// The run state of `task_id` (synchronous).
+    pub fn get_state_sync(&self, task_id: &str) -> Option<RunState> {
+        self.lock()
+            .entries
+            .get(task_id)
+            .and_then(|e| e.state.clone())
+    }
+
     /// Test helper: force a task's lease to have expired at `at`.
     pub fn expire_lease_for_test(&self, task_id: &str, at: DateTime<Utc>) {
         if let Some(e) = self.lock().entries.get_mut(task_id) {

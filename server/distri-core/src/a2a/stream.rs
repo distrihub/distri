@@ -253,6 +253,11 @@ pub(crate) async fn run_and_settle<F>(
         }
         RunEnd::Failed(e) => {
             tracing::error!("Background execution error for task {}: {}", task_id, e);
+            // The loop already recorded the failure and its terminal event:
+            // a second RunError would be a second end.
+            if executor_context.get_status().await == Some(crate::types::TaskStatus::Failed) {
+                return;
+            }
             // Emit a terminal RunError so SSE subscribers (gateway,
             // web client) see the real failure instead of watching the
             // stream close silently.

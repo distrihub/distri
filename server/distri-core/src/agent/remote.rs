@@ -209,7 +209,16 @@ impl RemoteAgent {
                 ) {
                     received_terminal = true;
                 }
+                // The remote run parked: this run is input-required (B5).
+                let parked = matches!(&event.event, AgentEventType::RunParked { .. });
                 context.emit(event.event).await;
+                if parked {
+                    context
+                        .update_status(crate::types::TaskStatus::InputRequired)
+                        .await;
+                    received_terminal = true;
+                    break;
+                }
             }
 
             if !received_terminal {

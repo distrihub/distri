@@ -219,10 +219,14 @@ impl ExecutorContextTool for WaitTaskTool {
 
         let timed_out = tokio::time::timeout(timeout, async {
             while let Some(event) = stream.next().await {
+                // A parked task waits on input: return its input-required
+                // status rather than blocking until the timeout (B5).
                 if event.task_id == input.id
                     && matches!(
                         &event.event,
-                        AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
+                        AgentEventType::RunFinished { .. }
+                            | AgentEventType::RunError { .. }
+                            | AgentEventType::RunParked { .. }
                     )
                 {
                     return false;

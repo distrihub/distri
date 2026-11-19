@@ -115,6 +115,12 @@ pub struct AgentOrchestrator {
     /// scheduler tick, event bus, and workflow-as-tool A2A dispatch
     /// consult to find the workflow run a stimulus targets.
     pub workflow_trigger_registry: Option<Arc<dyn distri_workflow::WorkflowTriggerRegistry>>,
+    /// Durable runs (run queue, pending calls, wake notifier, resume hook).
+    /// `None`: runs are in-memory tasks and client tools wait on a oneshot.
+    pub durable: Option<Arc<crate::durable::DurableRuntime>>,
+    /// Builds the planning LLM executor instead of the provider factory
+    /// (tests, hosts with their own LLM routing). `None`: the provider's.
+    pub llm_executor_factory: Option<Arc<dyn crate::llm::LlmExecutorFactory>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -252,9 +258,36 @@ pub struct AgentOrchestratorBuilder {
     notifier: Option<Arc<dyn distri_types::Notifier>>,
     code_runner: Option<Arc<dyn distri_types::CodeRunner>>,
     workflow_state_store: Option<Arc<dyn distri_types::WorkflowStateStore>>,
+    durable_runs: bool,
+    durable_runtime: Option<crate::durable::DurableRuntime>,
+    llm_executor_factory: Option<Arc<dyn crate::llm::LlmExecutorFactory>>,
 }
 
 impl AgentOrchestratorBuilder {
+    /// Turn durable runs on or off (default off). On without
+    /// [`with_durable_runtime`](Self::with_durable_runtime): in-memory stores.
+    pub fn with_durable_runs(mut self, enabled: bool) -> Self {
+        self.durable_runs = enabled;
+        self
+    }
+
+    /// The stores, notifier and resume hook durable mode uses (implies
+    /// `with_durable_runs(true)`).
+    pub fn with_durable_runtime(mut self, runtime: crate::durable::DurableRuntime) -> Self {
+        self.durable_runs = true;
+        self.durable_runtime = Some(runtime);
+        self
+    }
+
+    /// Build planning LLM executors with `factory` (tests, custom routing).
+    pub fn with_llm_executor_factory(
+        mut self,
+        factory: Arc<dyn crate::llm::LlmExecutorFactory>,
+    ) -> Self {
+        self.llm_executor_factory = Some(factory);
+        self
+    }
+
     pub fn with_user_id(mut self, user_id: impl Into<String>) -> Self {
         self.user_id = Some(user_id.into());
         self
@@ -549,6 +582,15 @@ impl AgentOrchestratorBuilder {
             workflow_state_store: self
                 .workflow_state_store
                 .unwrap_or_else(|| Arc::new(distri_types::InMemoryWorkflowStateStore::default())),
+            durable: if self.durable_runs {
+                Some(Arc::new(
+                    self.durable_runtime
+                        .unwrap_or_else(crate::durable::DurableRuntime::in_memory),
+                ))
+            } else {
+                None
+            },
+            llm_executor_factory: self.llm_executor_factory,
         };
 
         // Sync system prompts to the store
@@ -2323,7 +2365,23 @@ impl AgentOrchestrator {
     ///     registered via `ExternalToolCallsStore`. Fire the oneshot.
     ///     (Slated for deletion once external tool calls migrate to
     ///     the wait-task model.)
+    ///
+    /// In durable mode a pending call is checked first (N3); see
+    /// [`complete_tool_call`](Self::complete_tool_call) for the typed
+    /// outcome (duplicate / conflict / expired). Here a duplicate is `Ok`.
     pub async fn complete_tool(
+        self: Arc<Self>,
+        tool_call_id: &str,
+        tool_response: distri_types::ToolResponse,
+    ) -> Result<(), String> {
+        self.complete_tool_call(tool_call_id, tool_response)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Workflow wait, then the legacy oneshot receiver.
+    pub(crate) async fn complete_tool_legacy(
         self: Arc<Self>,
         tool_call_id: &str,
         tool_response: distri_types::ToolResponse,
@@ -2558,7 +2616,7 @@ impl AgentOrchestrator {
 
     /// Whether the task store returns `task_id` to the current caller (a multi-tenant host's
     /// task store scopes reads to the caller).
-    async fn caller_can_read_task(&self, task_id: &str) -> bool {
+    pub(crate) async fn caller_can_read_task(&self, task_id: &str) -> bool {
         matches!(self.stores.task_store.get_task(task_id).await, Ok(Some(_)))
     }
 

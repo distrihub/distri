@@ -586,7 +586,7 @@ impl AgentOrchestrator {
     /// Flip a detached child's row to Failed if its loop ended without
     /// reaching a terminal state. No-op when the row is already terminal
     /// (the normal success path) or missing.
-    async fn settle_detached_task(self: &Arc<Self>, task_id: &str) {
+    pub(crate) async fn settle_detached_task(self: &Arc<Self>, task_id: &str) {
         let terminal = self
             .stores
             .task_store
@@ -594,7 +594,9 @@ impl AgentOrchestrator {
             .await
             .ok()
             .flatten()
-            .map(|t| t.status.is_terminal())
+            // InputRequired is settled too: the child waits on input (it
+            // parked), it did not fail (B1).
+            .map(|t| t.status.is_terminal() || t.status == distri_types::TaskStatus::InputRequired)
             .unwrap_or(true);
         if !terminal {
             if let Err(e) = self
@@ -638,6 +640,8 @@ impl AgentOrchestrator {
             .await
             .map_err(|e| AgentError::Session(format!("cancel_task_cascade failed: {e}")))?;
 
+        let ids: Vec<String> = cancelled.iter().map(|t| t.id.clone()).collect();
+        self.cancel_durable(&ids).await;
         let coordinator = self.coordinator();
         for task in &cancelled {
             // Errors from coordinator.cancel are best-effort: the

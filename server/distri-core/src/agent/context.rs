@@ -210,6 +210,10 @@ pub struct ExecutorContext {
     /// up-front by `preload_skills` so the run skips the `load_skill`
     /// round-trip. Empty by default.
     pub load_skills: Vec<String>,
+
+    /// The durable segment this context runs (root runs in durable mode).
+    /// Never inherited by child contexts.
+    pub durable: Option<Arc<crate::durable::DurableRun>>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -291,6 +295,7 @@ impl Default for ExecutorContext {
             span_name: None,
             summary_executor: Arc::new(RwLock::new(None)),
             load_skills: Vec::new(),
+            durable: None,
         }
     }
 }
@@ -1228,6 +1233,7 @@ impl ExecutorContext {
     /// This allows copying selective history and creating new execution strands
     pub async fn fork(&self, options: ForkOptions) -> Self {
         let mut forked_context = self.clone();
+        forked_context.durable = None;
 
         // Create new IDs based on fork type
         match options.fork_type {
@@ -1360,6 +1366,7 @@ impl ExecutorContext {
             // A forked child already had its skills handled at dispatch time;
             // don't re-trigger metadata preload in the inner context.
             load_skills: Vec::new(),
+            durable: None,
         };
 
         (inner_context, inner_rx)
