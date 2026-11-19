@@ -111,6 +111,10 @@ pub enum SandboxError {
     Provider(String),
     #[error("sandbox not configured: {0}")]
     NotConfigured(String),
+    /// The host's limit on live sandboxes is reached, or the provider has no
+    /// room: the tool fails at once with this message instead of waiting.
+    #[error("{0}")]
+    Unavailable(String),
 }
 
 pub type SandboxResult<T> = Result<T, SandboxError>;
@@ -139,6 +143,16 @@ pub trait SandboxProvider: Send + Sync + std::fmt::Debug {
     async fn resume(&self, sandbox_id: &str) -> SandboxResult<()>;
     /// Delete the sandbox. Its volume is kept.
     async fn delete(&self, sandbox_id: &str) -> SandboxResult<()>;
+    /// Move the sandbox's expiry to `extend` from now, so a sandbox in use
+    /// is not expired by the provider. Providers without expiry do nothing.
+    async fn renew(&self, _sandbox_id: &str, _extend: Duration) -> SandboxResult<()> {
+        Ok(())
+    }
+    /// How long a new sandbox lives without a renew; `None` when the
+    /// provider does not expire sandboxes.
+    fn default_timeout(&self) -> Option<Duration> {
+        None
+    }
     /// Sandboxes whose metadata has `key = value`, newest first, so a host
     /// can find one it created but never recorded (a create that timed out
     /// at a proxy still makes the sandbox).
