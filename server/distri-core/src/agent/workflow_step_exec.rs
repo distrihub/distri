@@ -68,9 +68,14 @@ pub(crate) async fn execute_step(
             url,
             body,
             headers,
+            expect_status,
+            timeout_secs,
         } => {
             let resolved_url = resolve_template(url, wf_context);
-            let client = reqwest::Client::new();
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(timeout_secs.unwrap_or(30)))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
             let mut request = match method.to_uppercase().as_str() {
                 "GET" => client.get(&resolved_url),
                 "POST" => client.post(&resolved_url),
@@ -101,6 +106,38 @@ pub(crate) async fn execute_step(
             if let Some(b) = body {
                 let resolved = resolve_value(b, wf_context);
                 request = request.json(&resolved);
+            }
+
+            if let Some(expected) = expect_status {
+                // Probe mode: the HTTP status is data, never a failure.
+                let started = std::time::Instant::now();
+                return Ok(match request.send().await {
+                    Ok(resp) => {
+                        let status_code = resp.status().as_u16();
+                        let text = resp.text().await.unwrap_or_default();
+                        let body =
+                            serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|_| {
+                                serde_json::Value::String(text.chars().take(2000).collect())
+                            });
+                        let ok = if expected.is_empty() {
+                            (200..300).contains(&status_code)
+                        } else {
+                            expected.contains(&status_code)
+                        };
+                        StepResult::done(serde_json::json!({
+                            "ok": ok,
+                            "status": status_code,
+                            "body": body,
+                            "latency_ms": started.elapsed().as_millis() as u64,
+                        }))
+                    }
+                    Err(e) => StepResult::done(serde_json::json!({
+                        "ok": false,
+                        "status": 0,
+                        "error": e.to_string(),
+                        "latency_ms": started.elapsed().as_millis() as u64,
+                    })),
+                });
             }
 
             match request.send().await {
@@ -351,10 +388,128 @@ pub(crate) async fn execute_step(
             }
         }
 
-        StepKind::Condition { expression, .. } => Ok(StepResult::done(serde_json::json!({
-            "expression": expression,
-            "evaluated": true
-        }))),
+        StepKind::Condition {
+            expression,
+            if_true,
+            if_false,
+            ..
+        } => {
+            // Evaluated against the whole run context, not the step's input mapping.
+            let value = distri_workflow::resolve::evaluate_expression(expression, wf_context);
+            let inline = if value { if_true } else { if_false };
+            let inline_result = match inline {
+                Some(kind) => {
+                    let mut inner = step.clone();
+                    inner.kind = (**kind).clone();
+                    let r = Box::pin(execute_step(&inner, wf_context, context.clone())).await?;
+                    if r.status == TaskStatus::Failed {
+                        return Ok(r);
+                    }
+                    r.result
+                }
+                None => None,
+            };
+            Ok(StepResult::done(serde_json::json!({
+                "expression": expression,
+                "value": value,
+                "result": inline_result,
+            })))
+        }
+
+        StepKind::Notify { to, text, buttons } => {
+            let reply =
+                super::workflow_agent::resolve_reply_step(text, buttons, &None, &None, wf_context);
+            let target = distri_types::NotifyTarget::parse(&resolve_template(to, wf_context));
+            notify(&context, target, reply).await
+        }
+
+        StepKind::Code {
+            source,
+            module,
+            timeout_secs,
+        } => {
+            let Some(source) = source.as_ref().filter(|s| !s.trim().is_empty()) else {
+                return Ok(StepResult::failed(&format!(
+                    "code step '{}' has no source{}; load the workflow with `distri apply` or a blueprint so the module is inlined",
+                    step.id,
+                    module
+                        .as_ref()
+                        .map(|m| format!(" (module {m})"))
+                        .unwrap_or_default()
+                )));
+            };
+            let (permissions, declared_timeout) =
+                match distri_types::workflow_services::parse_code_permissions(source) {
+                    Ok(p) => p,
+                    Err(e) => return Ok(StepResult::failed(&e)),
+                };
+            let Some(runner) = context
+                .orchestrator
+                .as_ref()
+                .and_then(|o| o.code_runner.clone())
+            else {
+                return Ok(StepResult::failed(
+                    "no code runner on this server: code steps need Deno (OSS) or a sandbox (cloud)",
+                ));
+            };
+            // The input is the step's resolved input mapping, minus the `env` namespace the
+            // driver adds (secrets reach code only when the mapping names them).
+            let mut input = wf_context.clone();
+            if step.input.is_some() {
+                if let Some(obj) = input.as_object_mut() {
+                    obj.remove("env");
+                }
+            } else {
+                input = serde_json::json!({
+                    "input": wf_context.get("input").cloned().unwrap_or_default(),
+                    "steps": wf_context.get("steps").cloned().unwrap_or_default(),
+                    "state": wf_context.get("state").cloned().unwrap_or_default(),
+                });
+            }
+            let request = distri_types::CodeRunRequest {
+                source: source.clone(),
+                name: module.clone().unwrap_or_else(|| step.id.clone()),
+                input,
+                permissions,
+                timeout_secs: timeout_secs.or(declared_timeout).unwrap_or(60),
+                workspace_id: context.workspace_id.clone(),
+                owner_id: context.agent_id.clone(),
+            };
+            match runner.run_code(request).await {
+                Ok(out) => {
+                    for line in out.logs.iter().take(20) {
+                        tracing::debug!(step = %step.id, "code: {line}");
+                    }
+                    Ok(StepResult::done(out.value))
+                }
+                Err(e) => Ok(StepResult::failed(&e)),
+            }
+        }
+
+        StepKind::SetState { values } => {
+            let patch = resolve_value(values, wf_context);
+            if !patch.is_object() {
+                return Ok(StepResult::failed("set_state values must be an object"));
+            }
+            let Some(orchestrator) = context.orchestrator.as_ref() else {
+                return Ok(StepResult::failed("no orchestrator for workflow state"));
+            };
+            let key = distri_types::WorkflowStateKey::new(
+                context.workspace_id.as_deref(),
+                &context.agent_id,
+            );
+            match orchestrator
+                .workflow_state_store
+                .merge_state(&key, patch.clone())
+                .await
+            {
+                Ok(state) => Ok(StepResult::done_with_context(
+                    serde_json::json!({ "set": patch, "state": state.clone() }),
+                    serde_json::json!({ "state": state }),
+                )),
+                Err(e) => Ok(StepResult::failed(&format!("set_state: {e}"))),
+            }
+        }
 
         StepKind::WaitForInput { message, schema } => {
             // Should be intercepted by the driver (it parks the run
@@ -394,5 +549,61 @@ pub(crate) async fn execute_step(
                 serde_json::to_value(&reply).expect("ChannelReply is always serializable"),
             ))
         }
+    }
+}
+
+/// Deliver a notification through the orchestrator's notifier; without one, emit it as a
+/// channel reply on the run's own channel (a bot-attached or `deliver_to` run).
+pub(crate) async fn notify(
+    context: &Arc<ExecutorContext>,
+    target: distri_types::NotifyTarget,
+    reply: distri_types::channel_commands::ChannelReply,
+) -> Result<StepResult, String> {
+    let notifier = context
+        .orchestrator
+        .as_ref()
+        .and_then(|o| o.notifier.clone());
+    let Some(notifier) = notifier else {
+        context
+            .emit(distri_types::AgentEventType::ChannelReply {
+                reply: reply.clone(),
+            })
+            .await;
+        return Ok(StepResult::done(serde_json::json!({
+            "ok": true,
+            "delivered": [],
+            "via": "reply",
+            "text": reply.text,
+        })));
+    };
+    let origin = distri_types::NotifyOrigin {
+        workspace_id: context.workspace_id.clone(),
+        user_id: Some(context.user_id.clone()),
+        agent_id: context.agent_id.clone(),
+        thread_id: Some(context.thread_id.clone()),
+        channel_id: context.channel_id.clone(),
+    };
+    let buttons = reply.buttons.clone();
+    let request = distri_types::NotifyRequest {
+        to: target,
+        text: reply.text.clone(),
+        buttons,
+    };
+    match notifier.notify(&origin, &request).await {
+        Ok(outcome) if outcome.ok() => Ok(StepResult::done(serde_json::json!({
+            "ok": true,
+            "delivered": outcome.delivered,
+            "errors": outcome.errors,
+            "text": reply.text,
+        }))),
+        Ok(outcome) => Ok(StepResult::failed(&format!(
+            "notify: delivered nowhere{}",
+            if outcome.errors.is_empty() {
+                " (no channel for the owner; connect Telegram or WhatsApp)".to_string()
+            } else {
+                format!(": {}", outcome.errors.join("; "))
+            }
+        ))),
+        Err(e) => Ok(StepResult::failed(&format!("notify: {e}"))),
     }
 }

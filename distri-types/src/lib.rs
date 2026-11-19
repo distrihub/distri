@@ -2,7 +2,14 @@ pub mod a2a {
     // Re-export distri-a2a
     pub use distri_a2a::*;
 }
+pub mod blueprint;
+pub mod workflow_services;
 pub mod workflow_triggers;
+pub use workflow_services::{
+    CodePermissions, CodeRunOutput, CodeRunRequest, CodeRunner, InMemoryWorkflowStateStore,
+    Notifier, NotifyOrigin, NotifyOutcome, NotifyRequest, NotifyTarget, WorkflowStateKey,
+    WorkflowStateStore,
+};
 pub use workflow_triggers::{ScheduleDelivery, WebhookAuth, WebhookResponse, WorkflowTrigger};
 mod agent;
 pub mod api_error;

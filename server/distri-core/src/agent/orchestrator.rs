@@ -101,6 +101,14 @@ pub struct AgentOrchestrator {
     /// `None` when not wired (OSS tests etc.); the cloud sets an
     /// `InMemoryWorkflowStore`/`RedisWorkflowStore` here.
     pub workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
+    /// Delivers `notify` steps and the `notify` tool. `None`: a notify step falls back to a
+    /// channel reply on the run's own channel.
+    pub notifier: Option<Arc<dyn distri_types::Notifier>>,
+    /// Runs workflow `code` steps. `None`: code steps fail with "no code runner".
+    pub code_runner: Option<Arc<dyn distri_types::CodeRunner>>,
+    /// Per-workflow state kept between runs (`{state.x}`, `set_state`). In memory unless the
+    /// host gives a durable one.
+    pub workflow_state_store: Arc<dyn distri_types::WorkflowStateStore>,
     /// Routing index from declared `WorkflowTrigger`s back to
     /// `(agent_id, entry_point_id)`. Built on boot from every
     /// `WorkflowAgentDefinition`; what the cloud's webhook route,
@@ -241,6 +249,9 @@ pub struct AgentOrchestratorBuilder {
     run_tool_providers: Vec<Arc<dyn crate::tools::RunToolProvider>>,
     workflow_store: Option<Arc<dyn distri_workflow::WorkflowStore>>,
     workflow_trigger_registry: Option<Arc<dyn distri_workflow::WorkflowTriggerRegistry>>,
+    notifier: Option<Arc<dyn distri_types::Notifier>>,
+    code_runner: Option<Arc<dyn distri_types::CodeRunner>>,
+    workflow_state_store: Option<Arc<dyn distri_types::WorkflowStateStore>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -411,6 +422,27 @@ impl AgentOrchestratorBuilder {
     /// `WorkflowAgent`. One store, covering both run-level and
     /// step-level state; cloud wires `RedisWorkflowStore`, OSS/tests
     /// use `InMemoryWorkflowStore`.
+    /// Deliver `notify` steps and the `notify` tool through `notifier`.
+    pub fn with_notifier(mut self, notifier: Arc<dyn distri_types::Notifier>) -> Self {
+        self.notifier = Some(notifier);
+        self
+    }
+
+    /// Run workflow `code` steps through `runner`.
+    pub fn with_code_runner(mut self, runner: Arc<dyn distri_types::CodeRunner>) -> Self {
+        self.code_runner = Some(runner);
+        self
+    }
+
+    /// Keep workflow state (`set_state`, `{state.x}`) in `store` instead of memory.
+    pub fn with_workflow_state_store(
+        mut self,
+        store: Arc<dyn distri_types::WorkflowStateStore>,
+    ) -> Self {
+        self.workflow_state_store = Some(store);
+        self
+    }
+
     pub fn with_workflow_store(mut self, store: Arc<dyn distri_workflow::WorkflowStore>) -> Self {
         self.workflow_store = Some(store);
         self
@@ -512,6 +544,11 @@ impl AgentOrchestratorBuilder {
             run_tool_providers: self.run_tool_providers,
             workflow_store: self.workflow_store,
             workflow_trigger_registry: self.workflow_trigger_registry,
+            notifier: self.notifier,
+            code_runner: self.code_runner,
+            workflow_state_store: self
+                .workflow_state_store
+                .unwrap_or_else(|| Arc::new(distri_types::InMemoryWorkflowStateStore::default())),
         };
 
         // Sync system prompts to the store

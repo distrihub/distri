@@ -1,0 +1,308 @@
+//! [`LocalDenoRunner`]: runs workflow `code` steps with the `deno` binary on this machine.
+//!
+//! For the OSS server and the CLI, where the person running distri owns the machine. The
+//! module runs under the `@distri/tool` harness with `--no-prompt`, a cleared environment,
+//! no read/write/env/run/ffi permission and `--allow-net` only for the hosts its frontmatter
+//! declares. Multi-tenant hosts (distri-cloud) run code in a sandbox instead and only use
+//! this runner when an operator turns it on.
+
+use async_trait::async_trait;
+use distri_types::{CodeRunOutput, CodeRunRequest, CodeRunner};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
+
+const HARNESS: &[(&str, &str)] = &[
+    (
+        "mod.ts",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../distri-tool/mod.ts"
+        )),
+    ),
+    (
+        "run.ts",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../distri-tool/run.ts"
+        )),
+    ),
+];
+
+/// The most stderr kept per run, in lines.
+const MAX_LOG_LINES: usize = 200;
+
+pub struct LocalDenoRunner {
+    binary: PathBuf,
+    /// Where the harness, import map and `DENO_DIR` live.
+    root: PathBuf,
+}
+
+impl LocalDenoRunner {
+    /// `DISTRI_DENO` or `deno` on `PATH`; `None` when there is none.
+    pub fn detect() -> Option<Self> {
+        let binary = std::env::var_os("DISTRI_DENO")
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.is_file())
+            .or_else(|| find_on_path("deno"))?;
+        Some(Self::new(
+            binary,
+            std::env::temp_dir().join("distri-code-runner"),
+        ))
+    }
+
+    pub fn new(binary: PathBuf, root: PathBuf) -> Self {
+        Self { binary, root }
+    }
+
+    fn prepare(&self) -> std::io::Result<(PathBuf, PathBuf)> {
+        let tool_dir = self.root.join("tool");
+        std::fs::create_dir_all(&tool_dir)?;
+        for (name, content) in HARNESS {
+            let p = tool_dir.join(name);
+            if std::fs::read_to_string(&p).ok().as_deref() != Some(*content) {
+                write_atomic(&p, content.as_bytes())?;
+            }
+        }
+        let mod_url = format!("file://{}", tool_dir.join("mod.ts").display());
+        let map = serde_json::json!({"imports": {
+            "jsr:@distri/tool": mod_url,
+            "@distri/tool": mod_url,
+        }});
+        let import_map = self.root.join("import_map.json");
+        let body = serde_json::to_vec_pretty(&map).unwrap_or_default();
+        if std::fs::read(&import_map).ok().as_deref() != Some(body.as_slice()) {
+            write_atomic(&import_map, &body)?;
+        }
+        Ok((tool_dir.join("run.ts"), import_map))
+    }
+}
+
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|d| d.join(name))
+            .find(|p| p.is_file())
+    })
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// The `deno run` argv for one run: a pure function so tests can pin it.
+pub fn deno_code_argv(
+    import_map: &Path,
+    harness: &Path,
+    script: &Path,
+    cwd: &Path,
+    net: &[String],
+) -> Vec<String> {
+    let mut argv = vec![
+        "run".to_string(),
+        "--no-prompt".to_string(),
+        "--quiet".to_string(),
+        "--no-lock".to_string(),
+        format!("--import-map={}", import_map.display()),
+        // The harness imports the module dynamically: read access to exactly the module
+        // file and the harness folder, nothing else.
+        format!(
+            "--allow-read={},{}",
+            script.display(),
+            harness.parent().unwrap_or(harness).display()
+        ),
+    ];
+    if net.iter().any(|h| h == "*") {
+        argv.push("--allow-net".to_string());
+    } else if !net.is_empty() {
+        argv.push(format!("--allow-net={}", net.join(",")));
+    }
+    argv.push(harness.display().to_string());
+    argv.push(format!("file://{}", script.display()));
+    argv.push(cwd.display().to_string());
+    argv
+}
+
+#[async_trait]
+impl CodeRunner for LocalDenoRunner {
+    async fn run_code(&self, request: CodeRunRequest) -> Result<CodeRunOutput, String> {
+        let (harness, import_map) = self
+            .prepare()
+            .map_err(|e| format!("code runner: prepare harness: {e}"))?;
+        let run_dir = self
+            .root
+            .join("runs")
+            .join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&run_dir).map_err(|e| format!("code runner: {e}"))?;
+        let script = run_dir.join("module.ts");
+        std::fs::write(&script, &request.source).map_err(|e| format!("code runner: {e}"))?;
+
+        let net: Vec<String> = request.permissions.net.iter().cloned().collect();
+        let mut cmd = tokio::process::Command::new(&self.binary);
+        cmd.env_clear()
+            .env("DENO_DIR", self.root.join("deno_dir"))
+            .env("NO_COLOR", "1")
+            .env("DENO_NO_UPDATE_CHECK", "1")
+            .current_dir(&run_dir)
+            .args(deno_code_argv(
+                &import_map,
+                &harness,
+                &script,
+                &run_dir,
+                &net,
+            ))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        // HOME is needed by deno to resolve its cache on some platforms.
+        if let Some(home) = std::env::var_os("HOME") {
+            cmd.env("HOME", home);
+        }
+
+        let started = Instant::now();
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("code runner: start deno: {e}"))?;
+        let input = serde_json::to_vec(&request.input).unwrap_or_else(|_| b"null".to_vec());
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(&input).await;
+            drop(stdin);
+        }
+        let timeout = Duration::from_secs(request.timeout_secs.max(1));
+        let output = tokio::time::timeout(timeout, child.wait_with_output()).await;
+        let _ = std::fs::remove_dir_all(&run_dir);
+        let output = match output {
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) => return Err(format!("code '{}' failed to run: {e}", request.name)),
+            Err(_) => {
+                return Err(format!(
+                    "code '{}' timed out after {}s",
+                    request.name,
+                    timeout.as_secs()
+                ))
+            }
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let logs: Vec<String> = stderr
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .take(MAX_LOG_LINES)
+            .map(String::from)
+            .collect();
+        if !output.status.success() {
+            let tail = logs
+                .iter()
+                .rev()
+                .take(12)
+                .rev()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(format!(
+                "code '{}' exited with {}: {}",
+                request.name,
+                output.status.code().unwrap_or(-1),
+                if tail.is_empty() { stdout } else { tail }
+            ));
+        }
+        let value = serde_json::from_str::<serde_json::Value>(&stdout)
+            .unwrap_or_else(|_| serde_json::json!({ "output": stdout }));
+        Ok(CodeRunOutput {
+            value,
+            logs,
+            duration_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use distri_types::CodePermissions;
+
+    #[test]
+    fn argv_grants_only_declared_hosts() {
+        let argv = deno_code_argv(
+            Path::new("/r/import_map.json"),
+            Path::new("/r/tool/run.ts"),
+            Path::new("/r/runs/x/module.ts"),
+            Path::new("/r/runs/x"),
+            &["api.acme.com".to_string()],
+        );
+        assert!(argv.contains(&"--allow-net=api.acme.com".to_string()));
+        assert!(argv.contains(&"--no-prompt".to_string()));
+        assert!(argv.contains(&"--allow-read=/r/runs/x/module.ts,/r/tool".to_string()));
+        assert!(!argv.iter().any(|a| a.starts_with("--allow-env")
+            || a.starts_with("--allow-run")
+            || a.starts_with("--allow-write")));
+        let none = deno_code_argv(
+            Path::new("/m"),
+            Path::new("/h"),
+            Path::new("/s"),
+            Path::new("/c"),
+            &[],
+        );
+        assert!(!none.iter().any(|a| a.starts_with("--allow-net")));
+    }
+
+    fn request(source: &str) -> CodeRunRequest {
+        CodeRunRequest {
+            source: source.to_string(),
+            name: "test".into(),
+            input: serde_json::json!({"n": 2}),
+            permissions: CodePermissions::default(),
+            timeout_secs: 60,
+            workspace_id: None,
+            owner_id: "wf".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn runs_default_export_with_input() {
+        let Some(runner) = LocalDenoRunner::detect() else {
+            eprintln!("deno not installed; skipping");
+            return;
+        };
+        let out = runner
+            .run_code(request(
+                "export default async function (input: { n: number }) { return { doubled: input.n * 2 }; }",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(out.value, serde_json::json!({"doubled": 4}));
+    }
+
+    #[tokio::test]
+    async fn network_is_denied_without_permission() {
+        let Some(runner) = LocalDenoRunner::detect() else {
+            return;
+        };
+        let err = runner
+            .run_code(request(
+                "export default async function () { await fetch('https://example.com'); return {}; }",
+            ))
+            .await
+            .unwrap_err();
+        assert!(err.contains("NotCapable") || err.contains("net"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_throw_is_an_error() {
+        let Some(runner) = LocalDenoRunner::detect() else {
+            return;
+        };
+        let err = runner
+            .run_code(request(
+                "export default function () { throw new Error('boom'); }",
+            ))
+            .await
+            .unwrap_err();
+        assert!(err.contains("boom"), "{err}");
+    }
+}

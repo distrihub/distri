@@ -148,6 +148,34 @@ async fn commit_step(
     let step_id = run.definition.steps[idx].id.clone();
     let now = Utc::now();
 
+    // `on_failure: continue`: the failure becomes the step's result (`{ok: false, error}`)
+    // and the run carries on, so later steps can branch on `{steps.<id>.ok}`.
+    let mut result = result;
+    if result.status == TaskStatus::Failed
+        && run.definition.steps[idx].on_failure == distri_workflow::OnFailure::Continue
+    {
+        let error = result
+            .error
+            .clone()
+            .unwrap_or_else(|| "step failed".to_string());
+        let mut obj = result
+            .result
+            .clone()
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        obj.insert("ok".to_string(), serde_json::Value::Bool(false));
+        obj.insert(
+            "error".to_string(),
+            serde_json::Value::String(error.clone()),
+        );
+        result = StepResult {
+            status: TaskStatus::Completed,
+            result: Some(serde_json::Value::Object(obj)),
+            error: Some(error),
+            context_updates: result.context_updates,
+        };
+    }
+
     let new_status = if result.status == TaskStatus::Failed {
         TaskStatus::Failed
     } else {
@@ -196,6 +224,29 @@ async fn commit_step(
     };
     upsert_step_state(workflow_store, run_task_id, state_row).await;
 
+    if new_status != TaskStatus::Failed {
+        if let StepKind::Condition {
+            then, otherwise, ..
+        } = &run.definition.steps[idx].kind
+        {
+            if !then.is_empty() || !otherwise.is_empty() {
+                let value = result
+                    .result
+                    .as_ref()
+                    .and_then(|r| r.get("value"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                tracing::debug!(step = %step_id, value, "workflow condition evaluated");
+                let losing = if value {
+                    otherwise.clone()
+                } else {
+                    then.clone()
+                };
+                skip_branch(run, workflow_store, run_task_id, &losing).await;
+            }
+        }
+    }
+
     if new_status == TaskStatus::Failed {
         emit_step_failed(
             context,
@@ -207,6 +258,61 @@ async fn commit_step(
     } else {
         emit_step_completed(context, &step_id, idx, result.result).await;
     }
+}
+
+/// Skip the losing branch of a condition: the listed steps, then every pending step whose
+/// dependencies are all skipped branch steps (so `alert → investigate` both skip).
+async fn skip_branch(
+    run: &mut WorkflowRun,
+    workflow_store: &Option<Arc<dyn WorkflowStore>>,
+    run_task_id: &str,
+    losing: &[String],
+) {
+    let mut skipped: std::collections::HashSet<String> = losing.iter().cloned().collect();
+    loop {
+        let mut changed = false;
+        for i in 0..run.definition.steps.len() {
+            if run.step_runs[i].status != TaskStatus::Pending {
+                continue;
+            }
+            let step = &run.definition.steps[i];
+            let listed = skipped.contains(&step.id);
+            let orphaned =
+                !step.depends_on.is_empty() && step.depends_on.iter().all(|d| skipped.contains(d));
+            if listed || orphaned {
+                let step_id = step.id.clone();
+                skipped.insert(step_id.clone());
+                mark_skipped(run, workflow_store, run_task_id, i).await;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+async fn mark_skipped(
+    run: &mut WorkflowRun,
+    workflow_store: &Option<Arc<dyn WorkflowStore>>,
+    run_task_id: &str,
+    idx: usize,
+) {
+    let step_id = run.definition.steps[idx].id.clone();
+    tracing::debug!(step = %step_id, "workflow step skipped");
+    run.step_runs[idx].status = TaskStatus::Canceled;
+    run.step_runs[idx].completed_at = Some(Utc::now());
+    upsert_step_state(
+        workflow_store,
+        run_task_id,
+        WorkflowStepState {
+            step_id,
+            status: TaskStatus::Canceled,
+            completed_at: Some(Utc::now()),
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// Drive a `WorkflowRun` to its next terminal or parked state.
@@ -233,6 +339,8 @@ where
     F: Fn() -> Fut + Send + Sync,
     Fut: std::future::Future<Output = Option<String>> + Send,
 {
+    // Resumed runs were created before; make sure branch edges are there too.
+    run.definition.add_branch_dependencies();
     run.detect_cycles()?;
 
     loop {
@@ -252,30 +360,27 @@ where
             return Ok(run.status.clone());
         }
 
-        // Evaluate skip_if conditions on remaining pending steps.
-        for i in 0..run.definition.steps.len() {
-            if run.step_runs[i].status != TaskStatus::Pending {
-                continue;
+        // `skip_if` / `when` are evaluated once a step's dependencies are done (so they can
+        // read `{steps.<dep>.x}`); a skipped step counts as done for its dependents.
+        let ready: Vec<usize> = run.runnable_steps().into_iter().map(|(i, _)| i).collect();
+        let mut skipped_any = false;
+        for i in ready {
+            let step = &run.definition.steps[i];
+            let skip = step
+                .skip_if
+                .as_deref()
+                .is_some_and(|e| resolve::evaluate_skip_condition(e, &run.context))
+                || step
+                    .when
+                    .as_deref()
+                    .is_some_and(|e| !resolve::evaluate_expression(e, &run.context));
+            if skip {
+                mark_skipped(run, workflow_store, run_task_id, i).await;
+                skipped_any = true;
             }
-            let skip_expr = run.definition.steps[i].skip_if.clone();
-            if let Some(skip_expr) = skip_expr {
-                if resolve::evaluate_skip_condition(&skip_expr, &run.context) {
-                    let step_id = run.definition.steps[i].id.clone();
-                    run.step_runs[i].status = TaskStatus::Canceled;
-                    run.step_runs[i].completed_at = Some(Utc::now());
-                    upsert_step_state(
-                        workflow_store,
-                        run_task_id,
-                        WorkflowStepState {
-                            step_id,
-                            status: TaskStatus::Canceled,
-                            completed_at: Some(Utc::now()),
-                            ..Default::default()
-                        },
-                    )
-                    .await;
-                }
-            }
+        }
+        if skipped_any {
+            continue;
         }
 
         let runnable: Vec<(usize, String, StepExecution, WorkflowStep)> = run

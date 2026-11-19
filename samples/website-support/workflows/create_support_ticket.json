@@ -1,0 +1,74 @@
+{
+  "agent_type": "workflow_agent",
+  "name": "create_support_ticket",
+  "description": "Files a Linear ticket for a website visitor's request and tells the owner on Telegram. Called by support_guide as a tool.",
+  "version": "0.1.0",
+  "connections": [
+    { "provider": "linear", "env_var": "LINEAR_TOKEN", "required": false }
+  ],
+  "definition": {
+    "id": "create_support_ticket",
+    "steps": [
+      {
+        "id": "ticket",
+        "label": "File the Linear issue",
+        "on_failure": "continue",
+        "input": {
+          "token": "{env.LINEAR_TOKEN}",
+          "team_key": "{{params.linear_team_key}}",
+          "email": "{input.email}",
+          "summary": "{input.summary}",
+          "details": "{input.details}",
+          "page": "{input.page}"
+        },
+        "kind": { "type": "code", "module": "tools/create_ticket.ts" }
+      },
+      {
+        "id": "tell_owner",
+        "label": "Tell the owner",
+        "depends_on": ["ticket"],
+        "when": "{steps.ticket.ok}",
+        "kind": {
+          "type": "notify",
+          "to": "owner",
+          "text": "🎫 {steps.ticket.identifier} from {input.email}: {input.summary}\n{steps.ticket.url}"
+        }
+      },
+      {
+        "id": "tell_owner_failed",
+        "label": "Tell the owner (no ticket)",
+        "depends_on": ["ticket"],
+        "when": "!{steps.ticket.ok}",
+        "kind": {
+          "type": "notify",
+          "to": "owner",
+          "text": "📨 Support request from {input.email}: {input.summary}\n\n{input.details}\n\n(The Linear ticket could not be created: {steps.ticket.error})"
+        }
+      }
+    ],
+    "entry_points": [
+      {
+        "id": "main",
+        "label": "New support request",
+        "starts_at": "ticket",
+        "triggers": [
+          {
+            "type": "tool",
+            "name": "create_support_ticket",
+            "description": "File a support ticket for a website visitor",
+            "input_schema": {
+              "type": "object",
+              "required": ["email", "summary"],
+              "properties": {
+                "email": { "type": "string" },
+                "summary": { "type": "string" },
+                "details": { "type": "string" },
+                "page": { "type": "string" }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

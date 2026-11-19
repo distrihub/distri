@@ -395,6 +395,22 @@ impl WorkflowAgent {
             }
         }
 
+        // Load the workflow's state (kept between runs) as the `state` namespace.
+        if let Some(orchestrator) = context.orchestrator.as_ref() {
+            let key = distri_types::WorkflowStateKey::new(
+                context.workspace_id.as_deref(),
+                &context.agent_id,
+            );
+            match orchestrator.workflow_state_store.get_state(&key).await {
+                Ok(state) => {
+                    if let Some(ctx_obj) = run.context.as_object_mut() {
+                        ctx_obj.insert("state".to_string(), state);
+                    }
+                }
+                Err(e) => tracing::warn!(error = %e, "workflow state load failed"),
+            }
+        }
+
         // Drive the workflow directly. The driver walks the DAG,
         // calls `workflow_step_exec::execute_step` per node, emits
         // `AgentEventType::Step*` through `context.emit`, and persists

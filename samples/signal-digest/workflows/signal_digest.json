@@ -1,0 +1,66 @@
+{
+  "agent_type": "workflow_agent",
+  "name": "signal_digest",
+  "description": "Weekday digest of new Hacker News and Reddit posts about {{params.topic}}, sent to the owner on Telegram.",
+  "version": "0.1.0",
+  "definition": {
+    "id": "signal_digest",
+    "steps": [
+      {
+        "id": "fetch",
+        "label": "Fetch new posts",
+        "input": { "topic": "{{params.topic}}", "seen": "{state.seen}" },
+        "kind": { "type": "code", "module": "tools/fetch_posts.ts" }
+      },
+      {
+        "id": "anything_new",
+        "label": "Anything new?",
+        "depends_on": ["fetch"],
+        "kind": {
+          "type": "condition",
+          "expression": "{steps.fetch.count} > 0",
+          "then": ["write", "send", "remember"],
+          "else": ["quiet"]
+        }
+      },
+      {
+        "id": "write",
+        "label": "Write the digest",
+        "kind": {
+          "type": "agent_run",
+          "agent_id": "digest_writer",
+          "prompt": "New posts about {{params.topic}} (JSON): {steps.fetch.posts}"
+        }
+      },
+      {
+        "id": "send",
+        "label": "Send it",
+        "depends_on": ["write"],
+        "kind": { "type": "notify", "to": "owner", "text": "📰 *{{params.topic}}*\n\n{steps.write.output}" }
+      },
+      {
+        "id": "remember",
+        "label": "Remember what was sent",
+        "depends_on": ["send"],
+        "when": "!{input.test}",
+        "kind": { "type": "set_state", "values": { "seen": "{steps.fetch.seen_next}" } }
+      },
+      {
+        "id": "quiet",
+        "label": "Nothing new",
+        "when": "{input.test}",
+        "kind": { "type": "notify", "to": "owner", "text": "📰 Nothing new about {{params.topic}} in the last day. The digest is set up and will arrive on weekdays at {{params.hour}}:00." }
+      }
+    ],
+    "entry_points": [
+      {
+        "id": "main",
+        "label": "Morning digest",
+        "starts_at": "fetch",
+        "triggers": [
+          { "type": "schedule", "cron": "0 0 {{params.hour}} * * 1-5", "timezone": "{{params.timezone}}", "enabled": true, "input": {} }
+        ]
+      }
+    ]
+  }
+}

@@ -137,8 +137,10 @@ pub enum WebhookAuth {
 /// How the webhook HTTP response is shaped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum WebhookResponse {
     /// 202 returned immediately; the workflow runs async.
+    #[default]
     Ack,
     /// Wait for the workflow to run a `RespondToTrigger` step and
     /// return its body; times out after `timeout_secs`.
@@ -148,11 +150,6 @@ pub enum WebhookResponse {
     },
 }
 
-impl Default for WebhookResponse {
-    fn default() -> Self {
-        Self::Ack
-    }
-}
 
 #[cfg(test)]
 mod tests {

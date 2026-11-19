@@ -7,6 +7,8 @@
 //! - `{item.X}` — current element when expanding a Reply step's `buttons_from` template;
 //!   injected per-element by the Reply executor before resolving each `button_template`
 //!
+//! - `{state.X}` — the workflow's state, kept between runs (written by `set_state` steps)
+//!
 //! Backward compatible: `{context.X}` still works (checks all namespaces).
 
 use serde_json::Value;
@@ -83,7 +85,7 @@ fn resolve_reference(reference: &str, context: &Value) -> Option<Value> {
     let path = parts.get(1).copied();
 
     match namespace {
-        "input" | "steps" | "env" | "item" => {
+        "input" | "steps" | "env" | "item" | "state" => {
             let ns_value = context.get(namespace)?;
             match path {
                 Some(p) => resolve_path(ns_value, p),
@@ -124,6 +126,10 @@ pub fn resolve_value(value: &Value, context: &Value) -> Value {
                 if let Some(resolved) = resolve_reference(reference, context) {
                     return resolved;
                 }
+                // State starts empty: a key never set is `null`, not the literal text.
+                if reference.starts_with("state.") {
+                    return Value::Null;
+                }
             }
             // String interpolation
             Value::String(resolve_template(s, context))
@@ -147,62 +153,259 @@ pub fn resolve_step_input(step_input: Option<&Value>, context: &Value) -> Value 
     }
 }
 
-/// Evaluate a skip_if expression against the workflow context.
+/// Evaluate a `skip_if` / `when` / condition expression against the workflow context.
 ///
-/// Expression format:
-/// - `{input.field}` or `{steps.X.field}` — truthy if field exists and is not null/false/empty string/0
-/// - `!{input.field}` — truthy if field is absent or falsy
-/// - `{input.field} == "value"` — equality check
+/// Grammar (loosest binding first): `a || b`, `a && b`, `!a`, `(a)`, `x == y`, `x != y`,
+/// `x < y`, `x <= y`, `x > y`, `x >= y`, or a bare operand (truthy check). Operands are
+/// `{namespace.path}` references, bare `namespace.path` references (`input`, `steps`, `env`,
+/// `state`, `item`, `context`), `"quoted"` / `'quoted'` strings, numbers, `true`, `false`,
+/// `null`, or any other bare word (a string).
+///
+/// Equality is loose (`{steps.x.ok} == "true"` matches a boolean `true`); a missing
+/// reference is never equal to anything and always unequal. Ordering compares numbers when
+/// both sides are numeric, strings otherwise; a missing side makes it false.
 pub fn evaluate_skip_condition(expression: &str, context: &Value) -> bool {
-    let expr = expression.trim();
-
-    // Negation: !{ref}
-    if let Some(inner) = expr.strip_prefix('!') {
-        return !evaluate_skip_condition(inner.trim(), context);
-    }
-
-    // Equality: {ref} == "value"
-    if let Some((lhs, rhs)) = expr.split_once("==") {
-        let lhs = lhs.trim();
-        let rhs = rhs.trim().trim_matches('"');
-        let resolved = resolve_single_ref(lhs, context);
-        return match resolved {
-            Some(Value::String(s)) => s == rhs,
-            Some(Value::Number(n)) => n.to_string() == rhs,
-            Some(Value::Bool(b)) => b.to_string() == rhs,
-            _ => false,
-        };
-    }
-
-    // Inequality: {ref} != "value"
-    if let Some((lhs, rhs)) = expr.split_once("!=") {
-        let lhs = lhs.trim();
-        let rhs = rhs.trim().trim_matches('"');
-        let resolved = resolve_single_ref(lhs, context);
-        return match resolved {
-            Some(Value::String(s)) => s != rhs,
-            Some(Value::Number(n)) => n.to_string() != rhs,
-            Some(Value::Bool(b)) => b.to_string() != rhs,
-            None => true,
-            _ => true,
-        };
-    }
-
-    // Simple truthy check: {ref}
-    let resolved = resolve_single_ref(expr, context);
-    is_truthy(&resolved)
+    evaluate_expression(expression, context)
 }
 
-/// Resolve a `{namespace.path}` reference, stripping the braces.
-fn resolve_single_ref(expr: &str, context: &Value) -> Option<Value> {
-    let trimmed = expr.trim();
-    if trimmed.starts_with('{') && trimmed.ends_with('}') {
-        let reference = &trimmed[1..trimmed.len() - 1];
-        resolve_reference(reference, context)
-    } else {
-        // Try as bare reference without braces
-        resolve_reference(trimmed, context)
+/// See [`evaluate_skip_condition`].
+pub fn evaluate_expression(expression: &str, context: &Value) -> bool {
+    let tokens = tokenize(expression);
+    let mut p = ExprParser {
+        tokens: &tokens,
+        pos: 0,
+        context,
+    };
+    p.or()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Tok {
+    Ref(String),
+    Str(String),
+    Word(String),
+    Op(&'static str),
+}
+
+fn tokenize(src: &str) -> Vec<Tok> {
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if c == '{' {
+            let start = i + 1;
+            while i < chars.len() && chars[i] != '}' {
+                i += 1;
+            }
+            out.push(Tok::Ref(chars[start..i.min(chars.len())].iter().collect()));
+            i += 1;
+            continue;
+        }
+        if c == '"' || c == '\'' {
+            let q = c;
+            let start = i + 1;
+            i += 1;
+            while i < chars.len() && chars[i] != q {
+                i += 1;
+            }
+            out.push(Tok::Str(chars[start..i.min(chars.len())].iter().collect()));
+            i += 1;
+            continue;
+        }
+        let two: String = chars[i..(i + 2).min(chars.len())].iter().collect();
+        let op2 = match two.as_str() {
+            "==" => Some("=="),
+            "!=" => Some("!="),
+            "<=" => Some("<="),
+            ">=" => Some(">="),
+            "&&" => Some("&&"),
+            "||" => Some("||"),
+            _ => None,
+        };
+        if let Some(op) = op2 {
+            out.push(Tok::Op(op));
+            i += 2;
+            continue;
+        }
+        let op1 = match c {
+            '!' => Some("!"),
+            '<' => Some("<"),
+            '>' => Some(">"),
+            '(' => Some("("),
+            ')' => Some(")"),
+            _ => None,
+        };
+        if let Some(op) = op1 {
+            out.push(Tok::Op(op));
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && !chars[i].is_whitespace() && !"{}\"'=!<>&|()".contains(chars[i]) {
+            i += 1;
+        }
+        if i == start {
+            // A lone `=`, `&` or `|`: skip it rather than loop forever.
+            i += 1;
+            continue;
+        }
+        out.push(Tok::Word(chars[start..i].iter().collect()));
     }
+    out
+}
+
+struct ExprParser<'a> {
+    tokens: &'a [Tok],
+    pos: usize,
+    context: &'a Value,
+}
+
+impl ExprParser<'_> {
+    fn peek_op(&self) -> Option<&'static str> {
+        match self.tokens.get(self.pos) {
+            Some(Tok::Op(op)) => Some(op),
+            _ => None,
+        }
+    }
+
+    fn or(&mut self) -> bool {
+        let mut v = self.and();
+        while self.peek_op() == Some("||") {
+            self.pos += 1;
+            let r = self.and();
+            v = v || r;
+        }
+        v
+    }
+
+    fn and(&mut self) -> bool {
+        let mut v = self.unary();
+        while self.peek_op() == Some("&&") {
+            self.pos += 1;
+            let r = self.unary();
+            v = v && r;
+        }
+        v
+    }
+
+    fn unary(&mut self) -> bool {
+        match self.peek_op() {
+            Some("!") => {
+                self.pos += 1;
+                !self.unary()
+            }
+            Some("(") => {
+                self.pos += 1;
+                let v = self.or();
+                if self.peek_op() == Some(")") {
+                    self.pos += 1;
+                }
+                v
+            }
+            _ => self.comparison(),
+        }
+    }
+
+    fn operand(&mut self) -> Option<Value> {
+        let tok = self.tokens.get(self.pos)?.clone();
+        self.pos += 1;
+        match tok {
+            Tok::Ref(r) => resolve_reference(r.trim(), self.context),
+            Tok::Str(s) => Some(Value::String(s)),
+            Tok::Word(w) => Some(word_value(&w, self.context)),
+            Tok::Op(_) => {
+                self.pos -= 1;
+                None
+            }
+        }
+    }
+
+    fn comparison(&mut self) -> bool {
+        let lhs = self.operand();
+        let op = match self.peek_op() {
+            Some(op @ ("==" | "!=" | "<" | "<=" | ">" | ">=")) => op,
+            _ => return is_truthy(&lhs),
+        };
+        self.pos += 1;
+        let rhs = self.operand();
+        match op {
+            "==" => loose_eq(&lhs, &rhs),
+            "!=" => !loose_eq(&lhs, &rhs),
+            _ => {
+                let (Some(l), Some(r)) = (lhs, rhs) else {
+                    return false;
+                };
+                let ord = match (as_number(&l), as_number(&r)) {
+                    (Some(a), Some(b)) => a.partial_cmp(&b),
+                    _ => Some(value_text(&l).cmp(&value_text(&r))),
+                };
+                let Some(ord) = ord else { return false };
+                match op {
+                    "<" => ord.is_lt(),
+                    "<=" => ord.is_le(),
+                    ">" => ord.is_gt(),
+                    _ => ord.is_ge(),
+                }
+            }
+        }
+    }
+}
+
+/// A bare word: a namespaced reference, a literal, or a plain string.
+fn word_value(w: &str, context: &Value) -> Value {
+    let ns = w.split('.').next().unwrap_or("");
+    if matches!(ns, "input" | "steps" | "env" | "state" | "item" | "context") {
+        return resolve_reference(w, context).unwrap_or(Value::Null);
+    }
+    match w {
+        "true" => Value::Bool(true),
+        "false" => Value::Bool(false),
+        "null" => Value::Null,
+        _ => w
+            .parse::<f64>()
+            .ok()
+            .and_then(|n| {
+                if n.fract() == 0.0 && n.abs() < 9e15 {
+                    Some(Value::from(n as i64))
+                } else {
+                    serde_json::Number::from_f64(n).map(Value::Number)
+                }
+            })
+            .unwrap_or_else(|| Value::String(w.to_string())),
+    }
+}
+
+fn value_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn as_number(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn loose_eq(lhs: &Option<Value>, rhs: &Option<Value>) -> bool {
+    let (Some(l), Some(r)) = (lhs, rhs) else {
+        return false;
+    };
+    if l == r {
+        return true;
+    }
+    if let (Some(a), Some(b)) = (as_number(l), as_number(r)) {
+        return a == b;
+    }
+    value_text(l) == value_text(r)
 }
 
 /// Check if a JSON value is "truthy".
@@ -465,5 +668,45 @@ mod tests {
         assert_eq!(ctx["input"]["doc_id"], "abc");
         assert_eq!(ctx["steps"]["s1"]["result"], true);
         assert_eq!(ctx["env"]["api_base"], "http://localhost");
+    }
+
+    #[test]
+    fn expression_and_or_comparisons() {
+        let ctx = json!({
+            "steps": {"check": {"ok": false, "status": 503, "latency_ms": 1200}},
+            "state": {"was_ok": true},
+            "input": {}
+        });
+        assert!(evaluate_expression(
+            "!{steps.check.ok} && {state.was_ok}",
+            &ctx
+        ));
+        assert!(!evaluate_expression(
+            "{steps.check.ok} || !{state.was_ok}",
+            &ctx
+        ));
+        assert!(evaluate_expression("{steps.check.status} >= 500", &ctx));
+        assert!(evaluate_expression(
+            "{steps.check.latency_ms} > 1000 && {steps.check.status} != 200",
+            &ctx
+        ));
+        assert!(evaluate_expression("{steps.check.ok} == false", &ctx));
+        assert!(evaluate_expression("{steps.check.ok} == \"false\"", &ctx));
+        assert!(evaluate_expression(
+            "!({steps.check.ok} || {steps.check.status} < 500)",
+            &ctx
+        ));
+        // A missing state key (first run) is falsy and unequal.
+        assert!(evaluate_expression("{state.never_set} != false", &ctx));
+        assert!(!evaluate_expression("{state.never_set}", &ctx));
+        // Bare namespaced references work too.
+        assert!(evaluate_expression("steps.check.status == 503", &ctx));
+    }
+
+    #[test]
+    fn state_namespace_resolves() {
+        let ctx = json!({"state": {"seen": ["a"]}});
+        assert_eq!(resolve_value(&json!("{state.seen}"), &ctx), json!(["a"]));
+        assert_eq!(resolve_value(&json!("{state.never}"), &ctx), Value::Null);
     }
 }

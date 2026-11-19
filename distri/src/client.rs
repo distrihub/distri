@@ -383,6 +383,65 @@ impl Distri {
         Ok(resp.json().await?)
     }
 
+    /// Apply a blueprint (or a shipped sample): `POST /v1/blueprints/apply`.
+    pub async fn apply_blueprint(
+        &self,
+        request: &distri_types::blueprint::ApplyBlueprintRequest,
+    ) -> Result<distri_types::blueprint::ApplyBlueprintResponse, ClientError> {
+        let url = format!("{}/blueprints/apply", self.base_url);
+        let resp = self.http.post(&url).json(request).send().await?;
+        Self::json_or_error(resp, "apply blueprint").await
+    }
+
+    /// The samples the server ships: `GET /v1/blueprints/samples`.
+    pub async fn list_blueprint_samples(
+        &self,
+    ) -> Result<Vec<distri_types::blueprint::BlueprintSummary>, ClientError> {
+        let url = format!("{}/blueprints/samples", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        Self::json_or_error(resp, "list blueprint samples").await
+    }
+
+    /// An install's current state (pending actions refreshed):
+    /// `GET /v1/blueprints/installs/{id}`.
+    pub async fn get_blueprint_install(
+        &self,
+        install_id: &str,
+    ) -> Result<distri_types::blueprint::ApplyBlueprintResponse, ClientError> {
+        let url = format!("{}/blueprints/installs/{}", self.base_url, install_id);
+        let resp = self.http.get(&url).send().await?;
+        Self::json_or_error(resp, "get blueprint install").await
+    }
+
+    /// Run an install's test (its `[test]` workflow): `POST /v1/blueprints/installs/{id}/test`.
+    pub async fn test_blueprint_install(
+        &self,
+        install_id: &str,
+    ) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/blueprints/installs/{}/test", self.base_url, install_id);
+        let resp = self
+            .http
+            .post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+        Self::json_or_error(resp, "test blueprint install").await
+    }
+
+    async fn json_or_error<T: serde::de::DeserializeOwned>(
+        resp: reqwest::Response,
+        what: &str,
+    ) -> Result<T, ClientError> {
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "{what} failed (status {status}): {text}"
+            )));
+        }
+        Ok(resp.json().await?)
+    }
+
     /// The run rooted at `task_id` (a child id gives that child's subtree).
     /// `GET /v1/runs/{task_id}`; `None` on 404.
     pub async fn get_run(

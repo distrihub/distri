@@ -37,7 +37,7 @@ chrono = { version = "0.4", features = ["serde"] }
 comfy-table = "7.0"
 futures-util = "0.3"
 async-stream = "0.3"
-tokio = { version = "1.0", features = ["fs"] }
+tokio = { version = "1.0", features = ["fs", "sync"] }
 crossbeam-channel = "0.5"
 base64 = "0.22.1"
 rand.workspace = true
@@ -58,3 +58,6 @@ native = []
 # from route handlers with `?`. Off by default to keep this leaf crate
 # light for non-server consumers.
 actix = ["dep:actix-web"]
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["fs", "sync", "macros", "rt"] }

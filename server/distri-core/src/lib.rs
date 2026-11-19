@@ -1,6 +1,7 @@
 pub mod a2a;
 pub mod agent;
 pub mod broadcast;
+pub mod code_runner;
 pub mod connections;
 pub mod decision_service;
 

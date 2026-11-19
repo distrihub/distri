@@ -72,6 +72,30 @@ pub const BUILTIN_CHANNEL_COMMANDS: &[&str] = &[
 ];
 
 impl WorkflowDefinition {
+    /// Steps named in a condition's `then` / `else` depend on the condition: add the edge
+    /// where the definition leaves it out, so they wait for it and count as reachable from
+    /// an entry point that reaches the condition.
+    pub fn add_branch_dependencies(&mut self) {
+        let mut edges: Vec<(String, String)> = Vec::new();
+        for step in &self.steps {
+            if let StepKind::Condition {
+                then, otherwise, ..
+            } = &step.kind
+            {
+                for target in then.iter().chain(otherwise.iter()) {
+                    edges.push((target.clone(), step.id.clone()));
+                }
+            }
+        }
+        for (target, cond) in edges {
+            if let Some(step) = self.steps.iter_mut().find(|s| s.id == target) {
+                if !step.depends_on.contains(&cond) {
+                    step.depends_on.push(cond);
+                }
+            }
+        }
+    }
+
     pub fn new(steps: Vec<WorkflowStep>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -344,7 +368,8 @@ pub struct WorkflowStepRun {
 impl WorkflowRun {
     /// Build a fresh run from a definition. All step_runs start `Pending`,
     /// context is `{}`, status is `Pending`.
-    pub fn new(definition: WorkflowDefinition) -> Self {
+    pub fn new(mut definition: WorkflowDefinition) -> Self {
+        definition.add_branch_dependencies();
         let step_runs = definition
             .steps
             .iter()
@@ -717,6 +742,30 @@ pub struct WorkflowStep {
     /// Supports negation: `!{input.field_name}` — skip if field is absent/falsy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip_if: Option<String>,
+    /// Run this step only when the expression is true (the inverse of `skip_if`). Evaluated
+    /// once the step's dependencies are done, with the same syntax as `skip_if` plus
+    /// `&&`, `||`, `<`, `>`, `<=`, `>=` and literals (`true`, `false`, numbers, `"text"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+    /// What a failure of this step does to the run. `fail` (default) ends the run;
+    /// `continue` records `{ok: false, error}` as the step's result and carries on.
+    #[serde(default, skip_serializing_if = "OnFailure::is_fail")]
+    pub on_failure: OnFailure,
+}
+
+/// What a step's failure does to the run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnFailure {
+    #[default]
+    Fail,
+    Continue,
+}
+
+impl OnFailure {
+    pub fn is_fail(&self) -> bool {
+        matches!(self, OnFailure::Fail)
+    }
 }
 
 impl WorkflowStep {
@@ -730,6 +779,8 @@ impl WorkflowStep {
             requires: vec![],
             input: None,
             skip_if: None,
+            when: None,
+            on_failure: OnFailure::Fail,
         }
     }
 
@@ -742,6 +793,8 @@ impl WorkflowStep {
                 url: url.to_string(),
                 body: None,
                 headers: None,
+                expect_status: None,
+                timeout_secs: None,
             },
         )
     }
@@ -801,8 +854,10 @@ impl WorkflowStep {
             label,
             StepKind::Condition {
                 expression: expression.to_string(),
-                if_true: Box::new(if_true),
+                if_true: Some(Box::new(if_true)),
                 if_false: if_false.map(Box::new),
+                then: vec![],
+                otherwise: vec![],
             },
         )
     }
@@ -887,6 +942,61 @@ impl WorkflowStep {
         self.skip_if = Some(expression.to_string());
         self
     }
+
+    pub fn with_when(mut self, expression: &str) -> Self {
+        self.when = Some(expression.to_string());
+        self
+    }
+
+    pub fn continue_on_failure(mut self) -> Self {
+        self.on_failure = OnFailure::Continue;
+        self
+    }
+
+    /// A branch: evaluates `expression`; the steps in `then` run when it is true, the steps
+    /// in `otherwise` when it is false. The other branch is skipped, along with every step
+    /// that only depends on skipped branch steps.
+    pub fn branch(id: &str, expression: &str, then: Vec<&str>, otherwise: Vec<&str>) -> Self {
+        Self::new_step(
+            id,
+            id,
+            StepKind::Condition {
+                expression: expression.to_string(),
+                if_true: None,
+                if_false: None,
+                then: then.into_iter().map(String::from).collect(),
+                otherwise: otherwise.into_iter().map(String::from).collect(),
+            },
+        )
+    }
+
+    pub fn notify(id: &str, to: &str, text: &str) -> Self {
+        Self::new_step(
+            id,
+            id,
+            StepKind::Notify {
+                to: to.to_string(),
+                text: text.to_string(),
+                buttons: vec![],
+            },
+        )
+    }
+
+    pub fn code(id: &str, source: &str) -> Self {
+        Self::new_step(
+            id,
+            id,
+            StepKind::Code {
+                source: Some(source.to_string()),
+                module: None,
+                timeout_secs: None,
+            },
+        )
+    }
+
+    pub fn set_state(id: &str, values: serde_json::Value) -> Self {
+        Self::new_step(id, id, StepKind::SetState { values })
+    }
 }
 
 // ============================================================================
@@ -904,6 +1014,14 @@ pub enum StepKind {
         body: Option<serde_json::Value>,
         #[serde(skip_serializing_if = "Option::is_none")]
         headers: Option<HashMap<String, String>>,
+        /// Status codes that count as success. When set, the call never fails on an HTTP
+        /// status: the result is `{ok, status, body, latency_ms}` and a network error is
+        /// `{ok: false, status: 0, error}`. A health check sets `[200]` and branches on `ok`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expect_status: Option<Vec<u16>>,
+        /// Request timeout (default 30s).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_secs: Option<u64>,
     },
 
     /// Shell script / command
@@ -951,13 +1069,50 @@ pub enum StepKind {
         agent_id: Option<String>,
     },
 
-    /// Conditional branch — evaluates expression against context
+    /// Conditional branch — evaluates `expression` against the context. The result is
+    /// `{value: bool}`. Steps listed in `then` run only when it is true and steps listed in
+    /// `else` only when it is false; the losing branch (and steps that depend only on it) is
+    /// skipped. `if_true` / `if_false` run an inline step kind instead (legacy form).
     Condition {
         expression: String,
-        if_true: Box<StepKind>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_true: Option<Box<StepKind>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         if_false: Option<Box<StepKind>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        then: Vec<String>,
+        #[serde(default, rename = "else", skip_serializing_if = "Vec::is_empty")]
+        otherwise: Vec<String>,
     },
+
+    /// Send a message to a person or a channel through the host's notifier. `to` is
+    /// `"owner"` (default: the workflow's owner, e.g. their Telegram chat) or
+    /// `"channel:<id>"`. Without a notifier the text is emitted as a channel reply.
+    Notify {
+        #[serde(default = "default_notify_to")]
+        to: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        buttons: Vec<Vec<distri_types::channel_commands::ReplyButtonSpec>>,
+    },
+
+    /// Run a `@distri/tool` TypeScript module with Deno through the host's code runner (the
+    /// run's sandbox in the cloud). The step's resolved `input` is the module's input; its
+    /// output is the step result. Permissions come from the module's frontmatter (`net` only).
+    Code {
+        /// The module source. `distri apply` and the blueprint loader fill it from `module`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        /// Path of the module relative to the workflow's folder (e.g. `tools/check.ts`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        module: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_secs: Option<u64>,
+    },
+
+    /// Merge `values` (templated) into the workflow's state, kept between runs and read as
+    /// `{state.x}`. A `null` value removes the key.
+    SetState { values: serde_json::Value },
 
     /// No-op / marker step (for documentation or manual checkpoints)
     Checkpoint { message: String },
@@ -990,6 +1145,10 @@ pub enum StepKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         button_template: Option<distri_types::channel_commands::ReplyButtonSpec>,
     },
+}
+
+fn default_notify_to() -> String {
+    "owner".to_string()
 }
 
 // ============================================================================

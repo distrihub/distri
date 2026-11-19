@@ -1,0 +1,29 @@
+name = "signal-digest"
+title = "Signal digest"
+category = "gtm"
+about = "A morning digest on Telegram of the Hacker News and Reddit posts worth your time on a topic. Never repeats a link."
+prompt = "Every weekday at 8am, send me a Telegram digest of the posts worth reading about AI agents for SRE on Hacker News and Reddit."
+
+[params.topic]
+ask = "What topic should the digest follow?"
+example = "AI agents for SRE"
+
+[params.hour]
+ask = "At what hour should it arrive (0-23, in your time zone)?"
+default = "8"
+required = false
+
+[params.timezone]
+ask = "Which time zone (IANA name)?"
+default = "UTC"
+required = false
+
+[channel]
+kind = "telegram"
+agent = "digest_writer"
+workflows = ["signal_digest"]
+
+[test]
+workflow = "signal_digest"
+input = { test = true }
+expect = "A digest with links about the topic arrives on Telegram"
