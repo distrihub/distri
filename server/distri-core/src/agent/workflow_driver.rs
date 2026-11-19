@@ -236,6 +236,7 @@ async fn commit_step(
                     .and_then(|r| r.get("value"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                tracing::debug!(step = %step_id, value, "workflow condition evaluated");
                 let losing = if value {
                     otherwise.clone()
                 } else {
@@ -298,6 +299,7 @@ async fn mark_skipped(
     idx: usize,
 ) {
     let step_id = run.definition.steps[idx].id.clone();
+    tracing::debug!(step = %step_id, "workflow step skipped");
     run.step_runs[idx].status = TaskStatus::Canceled;
     run.step_runs[idx].completed_at = Some(Utc::now());
     upsert_step_state(
@@ -311,29 +313,6 @@ async fn mark_skipped(
         },
     )
     .await;
-}
-
-/// Steps named in a condition's `then` / `else` wait for the condition: add the dependency
-/// when the definition leaves it out.
-fn add_branch_dependencies(run: &mut WorkflowRun) {
-    let mut deps: Vec<(String, String)> = Vec::new();
-    for step in &run.definition.steps {
-        if let StepKind::Condition {
-            then, otherwise, ..
-        } = &step.kind
-        {
-            for target in then.iter().chain(otherwise.iter()) {
-                deps.push((target.clone(), step.id.clone()));
-            }
-        }
-    }
-    for (target, cond) in deps {
-        if let Some(step) = run.definition.steps.iter_mut().find(|s| s.id == target) {
-            if !step.depends_on.contains(&cond) {
-                step.depends_on.push(cond);
-            }
-        }
-    }
 }
 
 /// Drive a `WorkflowRun` to its next terminal or parked state.
@@ -360,7 +339,8 @@ where
     F: Fn() -> Fut + Send + Sync,
     Fut: std::future::Future<Output = Option<String>> + Send,
 {
-    add_branch_dependencies(run);
+    // Resumed runs were created before; make sure branch edges are there too.
+    run.definition.add_branch_dependencies();
     run.detect_cycles()?;
 
     loop {

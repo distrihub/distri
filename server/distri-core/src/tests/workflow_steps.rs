@@ -399,7 +399,12 @@ async fn sre_agent_sample_workflow_end_to_end() {
         .respond_with(ResponseTemplate::new(200))
         .mount_as_scoped(&server)
         .await;
-    run(&orch, "sre_health_check", serde_json::json!({"test": true})).await;
+    run(
+        &orch,
+        "sre_health_check",
+        serde_json::json!({"entry_point": "main", "test": true}),
+    )
+    .await;
     let texts = notifier.texts();
     assert_eq!(texts.len(), 1, "{texts:?}");
     assert!(
@@ -408,7 +413,12 @@ async fn sre_agent_sample_workflow_end_to_end() {
     );
     assert!(texts[0].contains("returned 200"), "{texts:?}");
     // A test run does not touch the state.
-    run(&orch, "sre_health_check", serde_json::json!({})).await;
+    run(
+        &orch,
+        "sre_health_check",
+        serde_json::json!({"entry_point": "main"}),
+    )
+    .await;
     assert_eq!(notifier.texts().len(), 1);
     drop(up);
 
@@ -417,7 +427,12 @@ async fn sre_agent_sample_workflow_end_to_end() {
         .respond_with(ResponseTemplate::new(502))
         .mount_as_scoped(&server)
         .await;
-    let s = run(&orch, "sre_health_check", serde_json::json!({})).await;
+    let s = run(
+        &orch,
+        "sre_health_check",
+        serde_json::json!({"entry_point": "main"}),
+    )
+    .await;
     assert_eq!(
         s["status"].as_str().unwrap().to_lowercase(),
         "completed",
@@ -431,7 +446,12 @@ async fn sre_agent_sample_workflow_end_to_end() {
         "{texts:?}"
     );
     assert_eq!(texts.len(), 3, "{texts:?}");
-    run(&orch, "sre_health_check", serde_json::json!({})).await;
+    run(
+        &orch,
+        "sre_health_check",
+        serde_json::json!({"entry_point": "main"}),
+    )
+    .await;
     assert_eq!(
         notifier.texts().len(),
         3,
@@ -444,7 +464,12 @@ async fn sre_agent_sample_workflow_end_to_end() {
         .respond_with(ResponseTemplate::new(200))
         .mount_as_scoped(&server)
         .await;
-    run(&orch, "sre_health_check", serde_json::json!({})).await;
+    run(
+        &orch,
+        "sre_health_check",
+        serde_json::json!({"entry_point": "main"}),
+    )
+    .await;
     let texts = notifier.texts();
     assert_eq!(texts.len(), 4, "{texts:?}");
     assert!(texts[3].starts_with("✅ Acme API recovered"), "{texts:?}");
@@ -504,4 +529,55 @@ async fn workflow_called_as_a_tool() {
     );
     // The workflow ran as itself, so its state and notifications are its own.
     assert_eq!(notifier.sent.lock().unwrap()[0].0.agent_id, "create_ticket");
+}
+
+/// The shipped `samples/signal-digest` workflow: new posts → the `then` branch runs
+/// (writer, send) and `else` is skipped; nothing new on a test run → `quiet` runs.
+#[tokio::test]
+async fn signal_digest_sample_branches() {
+    use distri_types::blueprint::Blueprint;
+    use std::collections::BTreeMap;
+
+    struct Posts(usize);
+    #[async_trait]
+    impl CodeRunner for Posts {
+        async fn run_code(&self, _r: CodeRunRequest) -> Result<CodeRunOutput, String> {
+            Ok(CodeRunOutput {
+                value: serde_json::json!({"count": self.0, "posts": [], "seen_next": ["hn:1"]}),
+                logs: vec![],
+                duration_ms: 1,
+            })
+        }
+    }
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/signal-digest");
+    let mut params = BTreeMap::new();
+    params.insert("topic".to_string(), "AI agents".to_string());
+    let bp = Blueprint::load_dir(&dir).unwrap().render(&params).unwrap();
+    let wf: serde_json::Value = serde_json::from_str(&bp.workflows[0].content).unwrap();
+
+    for (count, test, expect_write, expect_quiet) in [
+        (3usize, false, true, false),
+        (0, true, false, true),
+        (30, true, true, false),
+    ] {
+        let notifier = Arc::new(RecordingNotifier::default());
+        let orch = orchestrator(notifier.clone(), Some(Arc::new(Posts(count)))).await;
+        register(&orch, "signal_digest", wf["definition"].clone()).await;
+        // Through the entry point, as triggered runs start (steps unreachable from it are
+        // skipped up front, so the branch edges must count).
+        let s = run(
+            &orch,
+            "signal_digest",
+            serde_json::json!({"entry_point": "main", "test": test}),
+        )
+        .await;
+        let write = step_status(&s, "write");
+        // No LLM in this test: `write` runs and fails; what matters is that it ran.
+        assert_eq!(write != "canceled", expect_write, "count={count}: {s}");
+        assert_eq!(
+            step_status(&s, "quiet") == "completed",
+            expect_quiet,
+            "count={count}: {s}"
+        );
+    }
 }

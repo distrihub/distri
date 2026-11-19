@@ -72,6 +72,30 @@ pub const BUILTIN_CHANNEL_COMMANDS: &[&str] = &[
 ];
 
 impl WorkflowDefinition {
+    /// Steps named in a condition's `then` / `else` depend on the condition: add the edge
+    /// where the definition leaves it out, so they wait for it and count as reachable from
+    /// an entry point that reaches the condition.
+    pub fn add_branch_dependencies(&mut self) {
+        let mut edges: Vec<(String, String)> = Vec::new();
+        for step in &self.steps {
+            if let StepKind::Condition {
+                then, otherwise, ..
+            } = &step.kind
+            {
+                for target in then.iter().chain(otherwise.iter()) {
+                    edges.push((target.clone(), step.id.clone()));
+                }
+            }
+        }
+        for (target, cond) in edges {
+            if let Some(step) = self.steps.iter_mut().find(|s| s.id == target) {
+                if !step.depends_on.contains(&cond) {
+                    step.depends_on.push(cond);
+                }
+            }
+        }
+    }
+
     pub fn new(steps: Vec<WorkflowStep>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -344,7 +368,8 @@ pub struct WorkflowStepRun {
 impl WorkflowRun {
     /// Build a fresh run from a definition. All step_runs start `Pending`,
     /// context is `{}`, status is `Pending`.
-    pub fn new(definition: WorkflowDefinition) -> Self {
+    pub fn new(mut definition: WorkflowDefinition) -> Self {
+        definition.add_branch_dependencies();
         let step_runs = definition
             .steps
             .iter()
