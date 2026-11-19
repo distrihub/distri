@@ -983,6 +983,8 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     "search",
     // Tool discovery
     "tool_search",
+    // Message the owner (their Telegram / WhatsApp chat) through the host's notifier
+    "notify",
     // Skills (load body into current agent context; sub-agents call this
     // themselves after being dispatched via invoke_agent).
     "load_skill",
@@ -1036,6 +1038,13 @@ pub struct ToolsConfig {
     /// External tools to include from client
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external: Option<Vec<String>>,
+
+    /// Workflows this agent can call as tools, by workflow name. A call runs the workflow on
+    /// the server (with the workspace's connections and the host's notifier) and returns its
+    /// run summary. Allowed in every environment: this is how an embedded (web) agent files a
+    /// ticket or sends a notification it could not make from the browser.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workflows: Vec<String>,
 
     /// How tools are delivered to the model. Defaults to `Full`.
     /// When set to `Deferred`, only core tools get full schemas;

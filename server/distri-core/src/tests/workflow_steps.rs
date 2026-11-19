@@ -449,3 +449,59 @@ async fn sre_agent_sample_workflow_end_to_end() {
     assert_eq!(texts.len(), 4, "{texts:?}");
     assert!(texts[3].starts_with("✅ Acme API recovered"), "{texts:?}");
 }
+
+/// `tools.workflows`: a workflow called as a tool runs on the server with the call's input
+/// and returns its run summary; the tool config resolves it by name.
+#[tokio::test]
+async fn workflow_called_as_a_tool() {
+    use crate::tools::ExecutorContextTool;
+    let notifier = Arc::new(RecordingNotifier::default());
+    let orch = orchestrator(notifier.clone(), None).await;
+    register(
+        &orch,
+        "create_ticket",
+        serde_json::json!({"id": "create_ticket", "steps": [
+            {"id": "tell", "label": "tell",
+             "kind": {"type": "notify", "text": "New ticket from {input.email}: {input.summary}"}}
+        ]}),
+    )
+    .await;
+
+    let config = distri_types::ToolsConfig {
+        workflows: vec!["create_ticket".into()],
+        ..Default::default()
+    };
+    let tools = crate::tools::resolve_tools_config(&config, orch.mcp_registry.clone(), &[])
+        .await
+        .unwrap();
+    assert!(tools.iter().any(|t| t.get_name() == "create_ticket"));
+
+    let mut ctx = ExecutorContext::default();
+    ctx.orchestrator = Some(orch.clone());
+    ctx.agent_id = "support_guide".into();
+    ctx.workspace_id = Some("ws-1".into());
+    let parts = crate::tools::workflow_tool::WorkflowTool::new("create_ticket")
+        .execute_with_executor_context(
+            distri_types::ToolCall {
+                tool_call_id: "1".into(),
+                tool_name: "create_ticket".into(),
+                input: serde_json::json!({"email": "a@b.co", "summary": "SSO broken"}),
+            },
+            Arc::new(ctx),
+        )
+        .await
+        .unwrap();
+    let Part::Data(summary) = &parts[0] else {
+        panic!("{parts:?}")
+    };
+    assert_eq!(
+        summary["status"].as_str().unwrap().to_lowercase(),
+        "completed"
+    );
+    assert_eq!(
+        notifier.texts(),
+        vec!["New ticket from a@b.co: SSO broken".to_string()]
+    );
+    // The workflow ran as itself, so its state and notifications are its own.
+    assert_eq!(notifier.sent.lock().unwrap()[0].0.agent_id, "create_ticket");
+}

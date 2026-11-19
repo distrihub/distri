@@ -34,6 +34,7 @@ pub mod simulator;
 pub mod skill_script;
 pub mod supervisor;
 pub mod tool_search;
+pub mod workflow_tool;
 pub use builtin::{get_builtin_tools, ConsoleLogTool, FinalTool};
 pub use inject_env::InjectConnectionEnvTool;
 pub use invoke_agent::InvokeAgentTool;
@@ -118,6 +119,9 @@ pub fn cast_to_executor_context_tool(
 
     if let Some(dyn_tool) = (tool as &dyn Any).downcast_ref::<DynExecutorTool>() {
         return Ok(Box::new(dyn_tool.clone()));
+    }
+    if let Some(wf_tool) = (tool as &dyn Any).downcast_ref::<workflow_tool::WorkflowTool>() {
+        return Ok(Box::new(wf_tool.clone()));
     }
 
     // Check hardcoded tool names
@@ -346,6 +350,13 @@ pub async fn resolve_tools_config_with_pool(
                     )
                 })?;
             all_tools.push(tool.clone());
+        }
+    }
+
+    // Workflows called as tools.
+    for workflow in &config.workflows {
+        if !all_tools.iter().any(|t| t.get_name() == *workflow) {
+            all_tools.push(Arc::new(workflow_tool::WorkflowTool::new(workflow.clone())));
         }
     }
 
