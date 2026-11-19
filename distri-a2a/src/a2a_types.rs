@@ -44,6 +44,15 @@ pub struct AgentCard {
     /// The security requirements for the agent.
     #[serde(default)]
     pub security: Vec<HashMap<String, Vec<String>>>,
+    /// Distri: runs outlive the process. Client tool calls are pending calls
+    /// a client finds again after a reload (`GET .../pending-calls`) and
+    /// claims before running (`POST /pending-calls/{id}/claim`).
+    #[serde(
+        rename = "durable_runs",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub durable_runs: bool,
 }
 
 /// Provides information about the organization or individual that created the agent.

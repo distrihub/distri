@@ -80,7 +80,31 @@ pub struct AgentEvent {
     pub channel_id: Option<String>,
 }
 
+/// Suffix of `AgentEvent::run_id` carrying the segment attempt of a re-run
+/// (crashed) segment: `{run_id}#attempt={n}`. Kept in the run id so the
+/// event struct stays as it is.
+pub const ATTEMPT_RUN_ID_MARK: &str = "#attempt=";
+
+/// The run id of a segment re-run as `attempt` (unchanged for 0).
+pub fn run_id_for_attempt(run_id: &str, attempt: i32) -> String {
+    let base = run_id.split(ATTEMPT_RUN_ID_MARK).next().unwrap_or(run_id);
+    if attempt > 0 {
+        format!("{base}{ATTEMPT_RUN_ID_MARK}{attempt}")
+    } else {
+        base.to_string()
+    }
+}
+
 impl AgentEvent {
+    /// Segment attempt that emitted this event (0 unless a crashed segment
+    /// re-ran), read from the run id.
+    pub fn attempt(&self) -> i32 {
+        self.run_id
+            .split_once(ATTEMPT_RUN_ID_MARK)
+            .and_then(|(_, n)| n.parse().ok())
+            .unwrap_or(0)
+    }
+
     /// Reconstruct an AgentEvent from a stored TaskEvent (e.g. for history replay).
     pub fn from_task_event(task_event: &crate::TaskEvent, thread_id: &str) -> Self {
         Self {
@@ -128,6 +152,10 @@ pub struct AgentEventEnvelope {
     /// beside `parent_task_id` on the wire.
     #[serde(flatten, default, skip_serializing_if = "ChildRun::is_empty")]
     pub child: ChildRun,
+    /// Segment attempt that emitted the event (durable runs). Absent for 0;
+    /// a client drops steps of a superseded (lower) attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<i32>,
 }
 
 impl AgentEventEnvelope {
@@ -138,6 +166,7 @@ impl AgentEventEnvelope {
             agent_id: event.agent_id.clone(),
             parent_task_id: event.parent_task_id.clone(),
             child: event.child.clone().unwrap_or_default(),
+            attempt: Some(event.attempt()).filter(|a| *a > 0),
         }
     }
 }
@@ -168,6 +197,19 @@ pub enum AgentEventType {
         /// Cumulative token usage at the point of failure
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage: Option<RunUsage>,
+    },
+    /// The run's segment ended waiting on something outside the worker
+    /// (client tool, approval, process, sub-agent). NOT terminal: the task is
+    /// `InputRequired` and a later segment continues the same event log.
+    RunParked {
+        task_id: String,
+        /// Pending call ids the task waits on.
+        pending: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deadline: Option<chrono::DateTime<chrono::Utc>>,
+        /// Segment attempt that parked (0 unless a crashed segment re-ran).
+        #[serde(default)]
+        attempt: i32,
     },
     PlanStarted {
         initial_plan: bool,
@@ -509,6 +551,7 @@ mod child_run_tests {
             agent_id: "_adhoc_base".into(),
             parent_task_id: Some("parent".into()),
             child,
+            attempt: None,
         })
         .unwrap()
     }

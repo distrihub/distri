@@ -30,10 +30,17 @@ pub mod channels;
 pub mod coding_tools;
 pub mod context;
 mod core;
+pub mod durable;
 mod errors;
 pub mod events;
 pub mod invocation;
 pub mod runs;
+pub use durable::{
+    CallResult, Claim, ClientClaimOutcome, CompleteOutcome, DEFAULT_PENDING_CALL_DEADLINE_SECS,
+    DurableRunState, NewPendingCall, ParkOutcome, PendingCall, PendingCallKind, PendingCallStore,
+    PendingStatus, PendingStep, QueueEntry, ReplyTo, RunInputs, RunPrincipal, RunQueue, WaitingOn,
+    WakeNotifier,
+};
 pub use runs::{RunListQuery, RunListResponse, RunState, RunSummary, RunTaskRow};
 
 mod mcp;

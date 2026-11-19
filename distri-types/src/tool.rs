@@ -93,6 +93,14 @@ pub trait Tool: Send + Sync + std::fmt::Debug + std::any::Any {
         true // Default: most tools are read-only / independent
     }
 
+    /// Whether the tool may be run again after a crash interrupted it (reads:
+    /// Read, Glob, Grep, web fetch, search). A tool that is not replay-safe
+    /// and was in flight when its worker died gets an "interrupted, outcome
+    /// unknown" result instead of a second run.
+    fn replay_safe(&self) -> bool {
+        false
+    }
+
     /// Check if this tool needs ExecutorContext instead of ToolContext
     fn needs_executor_context(&self) -> bool {
         false // Default to false - most tools use ToolContext
