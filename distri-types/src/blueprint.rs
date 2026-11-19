@@ -549,6 +549,141 @@ pub fn agent_name_from_markdown(content: &str) -> Option<String> {
     None
 }
 
+// ============================================================================
+// Apply API (`POST /v1/blueprints/apply`), shared by the CLI and the server
+// ============================================================================
+
+/// What to apply: a full blueprint, or a sample by name.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ApplyBlueprintRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blueprint: Option<Blueprint>,
+    /// A sample the server ships (`sre-agent`), when `blueprint` is not given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample: Option<String>,
+    #[serde(default)]
+    pub params: BTreeMap<String, String>,
+    /// Only plan: nothing is created.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// One thing applying created, updated or left as it was.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppliedItem {
+    /// `agent`, `workflow`, `skill`, `schedule`, `public_client`, `notify_target`
+    pub kind: String,
+    pub name: String,
+    /// `created`, `updated`, `unchanged`, `planned`
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// Something only a person can do, with the link to do it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingAction {
+    /// Stable id within the install: `channel:telegram`, `connection:github`, `secret:X`,
+    /// `embed:snippet`.
+    pub id: String,
+    /// `connect_channel`, `connect`, `secret`, `embed`
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub why: String,
+    /// Where to do it (deep link, OAuth URL, dashboard page).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Text to paste (embed snippet), when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+    pub required: bool,
+    pub done: bool,
+}
+
+/// A param that is still needed, with its question.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MissingParam {
+    pub name: String,
+    pub ask: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ApplyBlueprintResponse {
+    /// Set once applied (not on a dry run or when params are missing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_id: Option<String>,
+    pub blueprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// `needs_params`, `planned`, `pending` (applied; a person still has to act), `ready`
+    pub status: String,
+    #[serde(default)]
+    pub items: Vec<AppliedItem>,
+    #[serde(default)]
+    pub pending: Vec<PendingAction>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_params: Vec<MissingParam>,
+    /// The first run to try once ready.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<BlueprintTest>,
+    /// One line for a person.
+    #[serde(default)]
+    pub message: String,
+}
+
+/// One sample in the catalog (`GET /v1/blueprints/samples`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BlueprintSummary {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub about: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    pub params: Vec<MissingParam>,
+    pub agents: Vec<String>,
+    pub workflows: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<ChannelKind>,
+    pub embed: bool,
+    pub connections: Vec<String>,
+}
+
+impl Blueprint {
+    pub fn summary(&self) -> BlueprintSummary {
+        BlueprintSummary {
+            name: self.name.clone(),
+            title: self.title.clone(),
+            about: self.about.clone(),
+            prompt: self.prompt.clone(),
+            category: self.category.clone(),
+            params: self
+                .params
+                .iter()
+                .map(|(n, p)| MissingParam {
+                    name: n.clone(),
+                    ask: p.ask.clone(),
+                    example: p.example.clone().or_else(|| p.default.clone()),
+                })
+                .collect(),
+            agents: self.agent_names(),
+            workflows: self.workflow_names(),
+            channel: self.channel.as_ref().map(|c| c.kind),
+            embed: self.embed.is_some(),
+            connections: self
+                .connections
+                .iter()
+                .map(|c| c.provider.clone())
+                .collect(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,5 +810,54 @@ expect = "a test alert arrives on Telegram"
             Some("x")
         );
         assert_eq!(agent_name_from_markdown("no frontmatter"), None);
+    }
+
+    /// Every folder under `samples/` with a `blueprint.toml` loads, validates and renders
+    /// with its example values.
+    #[test]
+    fn shipped_samples_load_and_render() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../samples");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(&root).unwrap().flatten() {
+            let dir = entry.path();
+            if !dir.join(BLUEPRINT_FILE).is_file() {
+                continue;
+            }
+            seen += 1;
+            let bp = Blueprint::load_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+            assert!(bp.prompt.is_some(), "{}: needs a prompt", bp.name);
+            let given: BTreeMap<String, String> = bp
+                .params
+                .iter()
+                .map(|(n, p)| {
+                    (
+                        n.clone(),
+                        p.example
+                            .clone()
+                            .or_else(|| p.default.clone())
+                            .unwrap_or_else(|| "x".into()),
+                    )
+                })
+                .collect();
+            let r = bp.render(&given).unwrap();
+            for f in r.agents.iter().chain(&r.workflows).chain(&r.skills) {
+                assert!(
+                    !f.content.contains("{{params."),
+                    "{}: unfilled param in {}",
+                    bp.name,
+                    f.path
+                );
+            }
+            for wf in &r.workflows {
+                let v: serde_json::Value = serde_json::from_str(&wf.content).unwrap();
+                assert!(
+                    v.pointer("/definition/steps").is_some(),
+                    "{}: {} has no steps",
+                    bp.name,
+                    wf.path
+                );
+            }
+        }
+        assert!(seen >= 2, "expected samples under {}", root.display());
     }
 }

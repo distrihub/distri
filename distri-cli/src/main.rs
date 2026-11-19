@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use distri::{print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp};
 use tokio::fs;
 
+mod apply;
 mod chat;
 mod commands;
 mod config;
@@ -144,6 +145,31 @@ enum Commands {
     Skills {
         #[clap(subcommand)]
         command: Option<SkillsCommands>,
+    },
+
+    /// Set up an agent, its workflows and where it lives from a blueprint: a folder with a
+    /// `blueprint.toml`, a published sample URL, or a sample name (`distri apply --list`).
+    Apply {
+        /// Blueprint folder, sample URL or sample name.
+        target: Option<String>,
+        /// A value for one of the blueprint's params: `--set service_url=https://…`.
+        #[clap(long = "set", value_name = "NAME=VALUE")]
+        set: Vec<String>,
+        /// Show the plan; create nothing.
+        #[clap(long)]
+        dry_run: bool,
+        /// Print the server's JSON (for coding agents).
+        #[clap(long)]
+        json: bool,
+        /// Wait until the steps that need a person (connect Telegram, OAuth) are done.
+        #[clap(long)]
+        wait: bool,
+        /// Run the blueprint's test once applied (after --wait when given).
+        #[clap(long)]
+        test: bool,
+        /// List the samples the server ships.
+        #[clap(long)]
+        list: bool,
     },
 
     /// Sync the entire `agents/`, `skills/`, `templates/` tree to the
@@ -1114,6 +1140,29 @@ async fn main() -> Result<()> {
         Commands::Skills { command } => {
             let command = command.unwrap_or(SkillsCommands::List { all: false });
             handle_skills_command(&client, command).await?;
+        }
+        Commands::Apply {
+            target,
+            set,
+            dry_run,
+            json,
+            wait,
+            test,
+            list,
+        } => {
+            apply::handle_apply(
+                &client,
+                apply::ApplyArgs {
+                    target,
+                    set,
+                    dry_run,
+                    json,
+                    wait,
+                    test,
+                    list,
+                },
+            )
+            .await?;
         }
         Commands::Push { path, dry_run } => {
             push::handle_push(&client, path, dry_run).await?;

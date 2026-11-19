@@ -126,6 +126,10 @@ pub fn resolve_value(value: &Value, context: &Value) -> Value {
                 if let Some(resolved) = resolve_reference(reference, context) {
                     return resolved;
                 }
+                // State starts empty: a key never set is `null`, not the literal text.
+                if reference.starts_with("state.") {
+                    return Value::Null;
+                }
             }
             // String interpolation
             Value::String(resolve_template(s, context))
@@ -703,5 +707,6 @@ mod tests {
     fn state_namespace_resolves() {
         let ctx = json!({"state": {"seen": ["a"]}});
         assert_eq!(resolve_value(&json!("{state.seen}"), &ctx), json!(["a"]));
+        assert_eq!(resolve_value(&json!("{state.never}"), &ctx), Value::Null);
     }
 }

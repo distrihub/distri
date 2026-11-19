@@ -1,0 +1,40 @@
+name = "sre-agent"
+title = "SRE agent"
+category = "engineering"
+about = "An on-call agent you can ask from Telegram. A health check runs on a schedule; when it fails you get one alert and the agent investigates, and you hear when it recovers."
+prompt = "Create an SRE agent for https://api.example.com that I can ask from Telegram; check /health every 5 minutes, and if it fails, alert me and start investigating."
+
+[params.service_url]
+ask = "Which URL should the health check call? It should return 200 when the service is healthy."
+example = "https://api.example.com/health"
+
+[params.service_name]
+ask = "What is the service called?"
+default = "the service"
+required = false
+
+[params.every_minutes]
+ask = "How often should it check, in minutes?"
+default = "5"
+required = false
+
+[params.repo]
+ask = "Which GitHub repository deploys it (owner/name)? Optional: the agent reads recent commits and deploys from it."
+default = ""
+required = false
+
+[channel]
+kind = "telegram"
+agent = "sre_agent"
+workflows = ["sre_health_check"]
+
+[[connections]]
+provider = "github"
+scopes = ["repo"]
+required = false
+why = "Read recent commits, pull requests and deploy runs while investigating"
+
+[test]
+workflow = "sre_health_check"
+input = { test = true }
+expect = "A message on Telegram: the SRE agent is connected and the health check returned a status"

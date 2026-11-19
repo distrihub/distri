@@ -1,0 +1,6 @@
+[[workflows]]
+triggers = ["schedule"]
+steps_include = ["code", "agent_run", "notify", "set_state"]
+
+[channel]
+kind = "telegram"

@@ -1,0 +1,11 @@
+# What a blueprint written from the one-sentence prompt must contain (checked by the
+# one-prompt eval: the web chat builder's proposal is compared with this).
+[[agents]]
+runtime = "server"
+
+[[workflows]]
+triggers = ["schedule"]
+steps_include = ["api_call|code", "condition", "notify", "agent_run", "set_state"]
+
+[channel]
+kind = "telegram"

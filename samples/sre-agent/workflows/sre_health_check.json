@@ -1,0 +1,147 @@
+{
+  "agent_type": "workflow_agent",
+  "name": "sre_health_check",
+  "description": "Checks {{params.service_url}} every {{params.every_minutes}} minutes. Alerts the owner once when it goes down, asks sre_agent to investigate, and says when it recovers.",
+  "version": "0.1.0",
+  "definition": {
+    "id": "sre_health_check",
+    "steps": [
+      {
+        "id": "check",
+        "label": "Call the health URL",
+        "kind": {
+          "type": "api_call",
+          "method": "GET",
+          "url": "{{params.service_url}}",
+          "expect_status": [
+            200
+          ],
+          "timeout_secs": 10
+        }
+      },
+      {
+        "id": "went_down",
+        "label": "Did it just go down?",
+        "depends_on": [
+          "check"
+        ],
+        "kind": {
+          "type": "condition",
+          "expression": "!{steps.check.ok} && {state.was_ok} != false && !{input.test}",
+          "then": [
+            "alert",
+            "investigate",
+            "report",
+            "report_failed"
+          ]
+        }
+      },
+      {
+        "id": "alert",
+        "label": "Alert the owner",
+        "kind": {
+          "type": "notify",
+          "to": "owner",
+          "text": "🔴 {{params.service_name}} is down: {{params.service_url}} returned {steps.check.status} after {steps.check.latency_ms} ms. Investigating…"
+        }
+      },
+      {
+        "id": "investigate",
+        "label": "Investigate",
+        "depends_on": [
+          "alert"
+        ],
+        "on_failure": "continue",
+        "kind": {
+          "type": "agent_run",
+          "agent_id": "sre_agent",
+          "prompt": "The health check for {{params.service_url}} failed: HTTP status {steps.check.status} (0 means the connection failed) after {steps.check.latency_ms} ms. Response: {steps.check.body}. Investigate and report."
+        }
+      },
+      {
+        "id": "report",
+        "label": "Send the findings",
+        "depends_on": [
+          "investigate"
+        ],
+        "kind": {
+          "type": "notify",
+          "to": "owner",
+          "text": "🔎 {steps.investigate.output}"
+        },
+        "when": "{steps.investigate.ok} != false"
+      },
+      {
+        "id": "report_failed",
+        "label": "Investigation failed",
+        "depends_on": [
+          "investigate"
+        ],
+        "when": "{steps.investigate.ok} == false",
+        "kind": {
+          "type": "notify",
+          "to": "owner",
+          "text": "⚠️ I could not finish the investigation: {steps.investigate.error}"
+        }
+      },
+      {
+        "id": "recovered",
+        "label": "Recovered?",
+        "depends_on": [
+          "check"
+        ],
+        "when": "{steps.check.ok} && {state.was_ok} == false",
+        "kind": {
+          "type": "notify",
+          "to": "owner",
+          "text": "✅ {{params.service_name}} recovered: {{params.service_url}} returned {steps.check.status} in {steps.check.latency_ms} ms."
+        }
+      },
+      {
+        "id": "test_message",
+        "label": "Test run",
+        "depends_on": [
+          "check"
+        ],
+        "when": "{input.test}",
+        "kind": {
+          "type": "notify",
+          "to": "owner",
+          "text": "👋 Your SRE agent for {{params.service_name}} is connected. The health check just returned {steps.check.status} in {steps.check.latency_ms} ms; I check every {{params.every_minutes}} minutes and will message you here if it fails. Ask me anything about the service."
+        }
+      },
+      {
+        "id": "remember",
+        "label": "Remember the result",
+        "depends_on": [
+          "went_down",
+          "recovered",
+          "test_message"
+        ],
+        "when": "!{input.test}",
+        "kind": {
+          "type": "set_state",
+          "values": {
+            "was_ok": "{steps.check.ok}",
+            "last_status": "{steps.check.status}"
+          }
+        }
+      }
+    ],
+    "entry_points": [
+      {
+        "id": "main",
+        "label": "Health check",
+        "starts_at": "check",
+        "triggers": [
+          {
+            "type": "schedule",
+            "cron": "0 */{{params.every_minutes}} * * * *",
+            "enabled": true,
+            "input": {}
+          }
+        ]
+      }
+    ]
+  }
+}

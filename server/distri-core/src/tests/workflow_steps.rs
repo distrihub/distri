@@ -369,3 +369,83 @@ export const tool = defineTool({
     run(&orch, "deno", serde_json::json!({"n": 21})).await;
     assert_eq!(notifier.texts(), vec!["42".to_string()]);
 }
+
+/// The shipped `samples/sre-agent` workflow, rendered with a mock health URL: a test run
+/// says hello; a failure alerts once (the investigation has no LLM here, so it reports
+/// that it could not finish); a recovery says so.
+#[tokio::test]
+async fn sre_agent_sample_workflow_end_to_end() {
+    use distri_types::blueprint::Blueprint;
+    use std::collections::BTreeMap;
+
+    let server = MockServer::start().await;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/sre-agent");
+    let bp = Blueprint::load_dir(&dir).unwrap();
+    let mut params = BTreeMap::new();
+    params.insert(
+        "service_url".to_string(),
+        format!("{}/health", server.uri()),
+    );
+    params.insert("service_name".to_string(), "Acme API".to_string());
+    let bp = bp.render(&params).unwrap();
+    let wf: serde_json::Value = serde_json::from_str(&bp.workflows[0].content).unwrap();
+
+    let notifier = Arc::new(RecordingNotifier::default());
+    let orch = orchestrator(notifier.clone(), None).await;
+    register(&orch, "sre_health_check", wf["definition"].clone()).await;
+
+    let up = Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount_as_scoped(&server)
+        .await;
+    run(&orch, "sre_health_check", serde_json::json!({"test": true})).await;
+    let texts = notifier.texts();
+    assert_eq!(texts.len(), 1, "{texts:?}");
+    assert!(
+        texts[0].contains("SRE agent for Acme API is connected"),
+        "{texts:?}"
+    );
+    assert!(texts[0].contains("returned 200"), "{texts:?}");
+    // A test run does not touch the state.
+    run(&orch, "sre_health_check", serde_json::json!({})).await;
+    assert_eq!(notifier.texts().len(), 1);
+    drop(up);
+
+    let down = Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(502))
+        .mount_as_scoped(&server)
+        .await;
+    let s = run(&orch, "sre_health_check", serde_json::json!({})).await;
+    assert_eq!(
+        s["status"].as_str().unwrap().to_lowercase(),
+        "completed",
+        "{s}"
+    );
+    let texts = notifier.texts();
+    assert!(texts[1].starts_with("🔴 Acme API is down"), "{texts:?}");
+    assert!(texts[1].contains("returned 502"), "{texts:?}");
+    assert!(
+        texts[2].contains("could not finish the investigation"),
+        "{texts:?}"
+    );
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    run(&orch, "sre_health_check", serde_json::json!({})).await;
+    assert_eq!(
+        notifier.texts().len(),
+        3,
+        "no second alert while still down"
+    );
+    drop(down);
+
+    let _up = Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount_as_scoped(&server)
+        .await;
+    run(&orch, "sre_health_check", serde_json::json!({})).await;
+    let texts = notifier.texts();
+    assert_eq!(texts.len(), 4, "{texts:?}");
+    assert!(texts[3].starts_with("✅ Acme API recovered"), "{texts:?}");
+}
