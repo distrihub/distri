@@ -36,13 +36,10 @@ pub struct OpenSandboxConfig {
     /// Lifecycle API base, ending in `/v1`.
     pub base_url: String,
     pub api_key: Option<String>,
-    /// Extra headers on every call (Cloudflare Access service token).
-    pub extra_headers: Vec<(String, String)>,
     /// Image used when a [`SandboxSpec`] leaves it empty.
     pub default_image: String,
     /// Reach `execd` through the server's proxy instead of the direct
-    /// endpoint (needed when only the server is reachable, e.g. behind
-    /// Cloudflare Access).
+    /// endpoint (needed when only the server is reachable).
     pub use_server_proxy: bool,
     pub cpu: String,
     pub memory: String,
@@ -54,7 +51,7 @@ pub struct OpenSandboxConfig {
     pub default_timeout_secs: Option<u64>,
     /// Ask for `secureAccess`: execd then needs the per-sandbox token the
     /// endpoint call returns. Required on sandbox-api.distri.dev, where
-    /// anyone with the Access token could otherwise reach a sandbox's ports.
+    /// any allowlisted caller could otherwise reach a sandbox's ports.
     pub secure_access: bool,
     /// Size of a thread's volume when it is created (`5Gi`).
     pub volume_size: Option<String>,
@@ -65,14 +62,6 @@ impl std::fmt::Debug for OpenSandboxConfig {
         f.debug_struct("OpenSandboxConfig")
             .field("base_url", &self.base_url)
             .field("api_key", &self.api_key.as_ref().map(|_| "***"))
-            .field(
-                "extra_headers",
-                &self
-                    .extra_headers
-                    .iter()
-                    .map(|(k, _)| k)
-                    .collect::<Vec<_>>(),
-            )
             .field("default_image", &self.default_image)
             .field("use_server_proxy", &self.use_server_proxy)
             .field("secure_access", &self.secure_access)
@@ -93,8 +82,6 @@ impl OpenSandboxConfig {
     /// - `SANDBOX_URL` (or `OPENSANDBOX_URL`): the server, e.g.
     ///   `https://sandbox-api.distri.dev` or `http://localhost:8090`;
     /// - `SANDBOX_API_KEY` (or `OPENSANDBOX_API_KEY`): OpenSandbox's key;
-    /// - `SANDBOX_ACCESS_CLIENT_ID` / `SANDBOX_ACCESS_CLIENT_SECRET`: sent as
-    ///   `CF-Access-Client-Id` / `CF-Access-Client-Secret` when set;
     /// - `OPENSANDBOX_IMAGE` (default `python:3.12-slim`);
     /// - `SANDBOX_USE_SERVER_PROXY` (`true`/`1`);
     /// - `OPENSANDBOX_CPU` (default `1`), `OPENSANDBOX_MEMORY` (default `1Gi`),
@@ -110,14 +97,6 @@ impl OpenSandboxConfig {
     pub fn from_env() -> SandboxResult<Self> {
         let url = env_first(&["SANDBOX_URL", "OPENSANDBOX_URL"])
             .ok_or_else(|| SandboxError::NotConfigured("SANDBOX_URL is not set".into()))?;
-        let mut extra_headers = Vec::new();
-        if let (Some(id), Some(secret)) = (
-            env_first(&["SANDBOX_ACCESS_CLIENT_ID"]),
-            env_first(&["SANDBOX_ACCESS_CLIENT_SECRET"]),
-        ) {
-            extra_headers.push(("CF-Access-Client-Id".to_string(), id));
-            extra_headers.push(("CF-Access-Client-Secret".to_string(), secret));
-        }
         let flag = |n: &str, default: bool| {
             env_first(&[n])
                 .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
@@ -130,7 +109,6 @@ impl OpenSandboxConfig {
         Ok(Self {
             base_url: normalize_base(&url),
             api_key: env_first(&["SANDBOX_API_KEY", "OPENSANDBOX_API_KEY"]),
-            extra_headers,
             default_image: env_first(&["OPENSANDBOX_IMAGE"])
                 .unwrap_or_else(|| "python:3.12-slim".to_string()),
             use_server_proxy: flag("SANDBOX_USE_SERVER_PROXY", false),
@@ -205,9 +183,6 @@ impl OpenSandboxProvider {
         if let Some(key) = &self.config.api_key {
             rb = rb.header("OPEN-SANDBOX-API-KEY", key);
         }
-        for (k, v) in &self.config.extra_headers {
-            rb = rb.header(k, v);
-        }
         rb
     }
 
@@ -229,11 +204,8 @@ impl OpenSandboxProvider {
         }
         let body: EndpointResponse = check(resp).await?.json().await.map_err(transport)?;
         let url = self.endpoint_url(&body.endpoint);
-        // The endpoint's own headers (ingress routing, secure-access token),
-        // plus the Access pair: the gateway sits behind the same Cloudflare
-        // Access as the lifecycle API.
+        // The endpoint's own headers (ingress routing, secure-access token).
         let mut headers: Vec<(String, String)> = body.headers.into_iter().collect();
-        headers.extend(self.config.extra_headers.iter().cloned());
         if self.config.use_server_proxy {
             // The proxied endpoint is the server itself: it wants the API key.
             if let Some(key) = &self.config.api_key {
@@ -795,7 +767,6 @@ mod tests {
         let p = OpenSandboxProvider::new(OpenSandboxConfig {
             base_url: normalize_base("https://sandbox-api.distri.dev"),
             api_key: None,
-            extra_headers: vec![],
             default_image: "x".into(),
             use_server_proxy: true,
             cpu: "1".into(),
