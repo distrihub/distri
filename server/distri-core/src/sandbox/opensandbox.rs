@@ -31,6 +31,9 @@ pub const EXECD_PORT: u16 = 44772;
 /// yet (just after create or resume).
 const EXECD_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The header the ingress gateway puts on an endpoint it serves.
+const INGRESS_HEADER: &str = "OpenSandbox-Ingress-To";
+
 #[derive(Clone)]
 pub struct OpenSandboxConfig {
     /// Lifecycle API base, ending in `/v1`.
@@ -203,9 +206,12 @@ impl OpenSandboxProvider {
             return Err(SandboxError::NotFound(sandbox_id.to_string()));
         }
         let body: EndpointResponse = check(resp).await?.json().await.map_err(transport)?;
-        let url = self.endpoint_url(&body.endpoint);
         // The endpoint's own headers (ingress routing, secure-access token).
         let mut headers: Vec<(String, String)> = body.headers.into_iter().collect();
+        let via_gateway = headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case(INGRESS_HEADER));
+        let url = self.endpoint_url(&body.endpoint, via_gateway);
         if self.config.use_server_proxy {
             // The proxied endpoint is the server itself: it wants the API key.
             if let Some(key) = &self.config.api_key {
@@ -218,12 +224,25 @@ impl OpenSandboxProvider {
     }
 
     /// OpenSandbox returns endpoints without a scheme (`127.0.0.1:57487/proxy/44772`).
-    fn endpoint_url(&self, raw: &str) -> String {
+    ///
+    /// An endpoint served by the ingress gateway (it carries
+    /// `OpenSandbox-Ingress-To`) is reached through `SANDBOX_URL`'s own origin,
+    /// whatever host the server names: one gateway answers on several names
+    /// (sandbox-api.distri.dev for production, sandbox-internal.distri.dev for
+    /// staging), and a caller must stay on the one it was given.
+    fn endpoint_url(&self, raw: &str, via_gateway: bool) -> String {
         let raw = raw.trim_end_matches('/');
+        let base = reqwest::Url::parse(&self.config.base_url).ok();
+        if via_gateway {
+            if let Some(origin) = base.as_ref().map(|u| u.origin().ascii_serialization()) {
+                let rest = raw.split_once("://").map(|(_, r)| r).unwrap_or(raw);
+                let path = rest.find('/').map(|i| &rest[i..]).unwrap_or("");
+                return format!("{origin}{path}");
+            }
+        }
         if raw.starts_with("http://") || raw.starts_with("https://") {
             return raw.to_string();
         }
-        let base = reqwest::Url::parse(&self.config.base_url).ok();
         let same_host = base
             .as_ref()
             .and_then(|u| u.host_str().map(|h| raw.starts_with(h)))
@@ -779,16 +798,48 @@ mod tests {
         });
         assert_eq!(p.config.base_url, "https://sandbox-api.distri.dev/v1");
         assert_eq!(
-            p.endpoint_url("sandbox-api.distri.dev/v1/sandboxes/a/proxy/44772"),
+            p.endpoint_url("sandbox-api.distri.dev/v1/sandboxes/a/proxy/44772", false),
             "https://sandbox-api.distri.dev/v1/sandboxes/a/proxy/44772"
         );
         assert_eq!(
-            p.endpoint_url("sandbox-api.distri.dev"),
+            p.endpoint_url("sandbox-api.distri.dev", false),
             "https://sandbox-api.distri.dev"
         );
         assert_eq!(
-            p.endpoint_url("127.0.0.1:5000/proxy/44772"),
+            p.endpoint_url("127.0.0.1:5000/proxy/44772", false),
             "http://127.0.0.1:5000/proxy/44772"
+        );
+    }
+
+    #[test]
+    fn gateway_endpoint_stays_on_the_configured_host() {
+        let mut cfg = OpenSandboxConfig {
+            base_url: normalize_base("https://sandbox-internal.distri.dev"),
+            api_key: None,
+            default_image: "x".into(),
+            use_server_proxy: false,
+            cpu: "1".into(),
+            memory: "1Gi".into(),
+            default_timeout_secs: None,
+            secure_access: true,
+            volume_size: None,
+            cpu_request: None,
+            memory_request: None,
+        };
+        let p = OpenSandboxProvider::new(cfg.clone());
+        assert_eq!(
+            p.endpoint_url("sandbox-api.distri.dev", true),
+            "https://sandbox-internal.distri.dev"
+        );
+        assert_eq!(
+            p.endpoint_url("https://sandbox-api.distri.dev/gw/x", true),
+            "https://sandbox-internal.distri.dev/gw/x"
+        );
+        cfg.base_url = normalize_base("https://sandbox-api.distri.dev");
+        let p = OpenSandboxProvider::new(cfg);
+        assert_eq!(
+            p.endpoint_url("sandbox-api.distri.dev", true),
+            "https://sandbox-api.distri.dev"
         );
     }
 }

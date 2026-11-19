@@ -14,13 +14,10 @@ use crate::AgentError;
 use distri_types::Part;
 use serde::{Deserialize, Serialize};
 mod browser;
-pub mod code;
 pub mod save_artifact;
 // pub mod authenticated_example;
 pub mod context;
-pub mod shell;
 mod state;
-pub use code::execute_code_with_tools;
 pub use context::to_tool_context;
 pub(crate) mod builtin;
 pub mod dynamic_factory;
@@ -36,7 +33,7 @@ pub mod simulator;
 pub mod skill_script;
 pub mod supervisor;
 pub mod tool_search;
-pub use builtin::{get_builtin_tools, ConsoleLogTool, DistriExecuteCodeTool, FinalTool};
+pub use builtin::{get_builtin_tools, ConsoleLogTool, FinalTool};
 pub use inject_env::InjectConnectionEnvTool;
 pub use invoke_agent::InvokeAgentTool;
 pub use send_message::SendMessageTool;
@@ -131,13 +128,7 @@ pub fn cast_to_executor_context_tool(
         "browsr_browser" => Ok(Box::new(DistriBrowserSharedTool)),
         "browser_step" => Ok(Box::new(BrowserStepTool)),
         "artifact_tool" => Ok(Box::new(ArtifactTool)),
-        // Shell execution tools
-        "start_shell" => Ok(Box::new(shell::StartShellTool)),
-        "execute_shell" => Ok(Box::new(shell::ExecuteShellTool)),
-        "stop_shell" => Ok(Box::new(shell::StopShellTool)),
         "load_skill" => Ok(Box::new(skill_script::LoadSkillTool)),
-        // Code execution
-        "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         // Tool discovery
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
         // Connection env injection
@@ -325,6 +316,13 @@ pub async fn resolve_tools_config_with_pool(
             }
         }
         for builtin_name in require_tool_names {
+            if distri_types::REMOVED_BUILTIN_TOOLS.contains(&builtin_name) {
+                tracing::warn!(
+                    tool = builtin_name,
+                    "builtin removed (browsr's shell and code tools): skipped; the run's sandbox gives Bash/Read/Write/Edit"
+                );
+                continue;
+            }
             // Hard-fail when the agent declares a builtin name that
             // isn't in `get_builtin_tools()`. Silent-drop hid the
             // 2026-05-10 `"todos"` vs `"write_todos"` typo across four
@@ -615,34 +613,6 @@ mod tests {
     }
 
     #[test]
-    fn cast_start_shell_tool() {
-        let tool = shell::StartShellTool;
-        let result = cast_to_executor_context_tool(&tool);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn cast_execute_shell_tool() {
-        let tool = shell::ExecuteShellTool;
-        let result = cast_to_executor_context_tool(&tool);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn cast_stop_shell_tool() {
-        let tool = shell::StopShellTool;
-        let result = cast_to_executor_context_tool(&tool);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn cast_distri_execute_code_tool() {
-        let tool = DistriExecuteCodeTool;
-        let result = cast_to_executor_context_tool(&tool);
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn cast_tool_search_tool() {
         let tool = ToolSearchTool;
         let result = cast_to_executor_context_tool(&tool);
@@ -718,21 +688,8 @@ mod tests {
     // ── Tool trait implementations ────────────────────────────────
 
     #[test]
-    fn shell_tools_need_executor_context() {
-        assert!(shell::StartShellTool.needs_executor_context());
-        assert!(shell::ExecuteShellTool.needs_executor_context());
-        assert!(shell::StopShellTool.needs_executor_context());
-    }
-
-    #[test]
     fn final_tool_is_final() {
         assert!(FinalTool.is_final());
-    }
-
-    #[test]
-    fn distri_execute_code_tool_name() {
-        assert_eq!(DistriExecuteCodeTool.get_name(), "distri_execute_code");
-        assert!(DistriExecuteCodeTool.needs_executor_context());
     }
 
     // ── resolve_tools_config: external overrides dynamic factory ──

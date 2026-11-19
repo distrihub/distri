@@ -7,7 +7,6 @@ use crate::tools::browser::{
     BrowserStepTool, CrawlTool, DistriBrowserSharedTool, DistriScrapeSharedTool, SearchTool,
 };
 use crate::tools::save_artifact::SaveArtifactTool;
-use crate::tools::shell::{ExecuteShellTool, StartShellTool, StopShellTool};
 use crate::{
     agent::{file::run_file_agent, ExecutorContext},
     tools::{emit_final, state::AgentExecutorState, ExecutorContextTool},
@@ -41,11 +40,7 @@ pub fn get_builtin_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(SearchTool) as Arc<dyn Tool>,
         Arc::new(CrawlTool) as Arc<dyn Tool>,
         Arc::new(TodosTool) as Arc<dyn Tool>,
-        Arc::new(StartShellTool) as Arc<dyn Tool>,
-        Arc::new(ExecuteShellTool) as Arc<dyn Tool>,
-        Arc::new(StopShellTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::tool_search::ToolSearchTool) as Arc<dyn Tool>,
-        Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::inject_env::InjectConnectionEnvTool) as Arc<dyn Tool>,
         Arc::new(SaveArtifactTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::supervisor::GetTaskTool) as Arc<dyn Tool>,
@@ -348,83 +343,6 @@ impl ExecutorContextTool for ArtifactTool {
             }
             Err(e) => Err(AgentError::ToolExecution(format!(
                 "Artifact analysis failed: {}",
-                e
-            ))),
-        }
-    }
-}
-
-/// Execute code in a sandboxed browsr shell session.
-/// Supports JavaScript, Python, and Bash.
-#[derive(Debug)]
-pub struct DistriExecuteCodeTool;
-
-#[async_trait::async_trait]
-impl Tool for DistriExecuteCodeTool {
-    fn get_name(&self) -> String {
-        "distri_execute_code".to_string()
-    }
-
-    fn get_description(&self) -> String {
-        "Execute code in a sandboxed shell session. Supports JavaScript (Node.js), Python, and Bash. Code runs in an isolated container and returns stdout, stderr, exit code, and duration.".to_string()
-    }
-
-    fn needs_executor_context(&self) -> bool {
-        true
-    }
-
-    fn get_parameters(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string",
-                    "description": "The code to execute"
-                },
-                "language": {
-                    "type": "string",
-                    "enum": ["javascript", "python", "bash"],
-                    "description": "Programming language (auto-detected if not specified)"
-                }
-            },
-            "required": ["code"]
-        })
-    }
-
-    async fn execute(
-        &self,
-        _tool_call: ToolCall,
-        _context: Arc<ToolContext>,
-    ) -> Result<Vec<Part>, anyhow::Error> {
-        Err(anyhow::anyhow!(
-            "DistriExecuteCodeTool requires ExecutorContext"
-        ))
-    }
-}
-
-#[async_trait::async_trait]
-impl ExecutorContextTool for DistriExecuteCodeTool {
-    async fn execute_with_executor_context(
-        &self,
-        tool_call: ToolCall,
-        context: Arc<ExecutorContext>,
-    ) -> Result<Vec<Part>, AgentError> {
-        let code = tool_call
-            .input
-            .get("code")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AgentError::ToolExecution("Missing 'code' parameter".to_string()))?;
-
-        let language = tool_call
-            .input
-            .get("language")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        match crate::tools::code::execute_code_with_tools(code, language, context).await {
-            Ok((result, _observations, _)) => Ok(vec![Part::Data(result)]),
-            Err(e) => Err(AgentError::ToolExecution(format!(
-                "Code execution failed: {}",
                 e
             ))),
         }

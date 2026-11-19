@@ -45,7 +45,7 @@ Use the `distri_request` tool to manage platform resources. Input: `{path, metho
 | `POST` | `/connections/{id}/token` | Get fresh access token |
 | `DELETE` | `/connections/{id}` | Disconnect |
 
-To make authenticated API calls to connected services, use the `http_request` tool with `x-connection-id` header. Best for short text/JSON API responses — for large responses or binary data, use a browsr shell session instead.
+To make authenticated API calls to connected services, use the `http_request` tool with `x-connection-id` header. Best for short text/JSON API responses — for large responses or binary data, use code in the sandbox (`Bash`) instead.
 
 Variables (`$VAR_NAME`) in url, headers, and body are auto-resolved from workspace secrets and context env vars.
 

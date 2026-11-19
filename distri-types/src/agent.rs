@@ -580,7 +580,8 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_config: Option<BrowserAgentConfig>,
 
-    /// Whether to include shell/code execution tools (start_shell, execute_shell, stop_shell)
+    /// No effect: browsr's shell tools are gone. Kept so stored agent files
+    /// that set it still load; code runs in the thread's sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_shell: Option<bool>,
 
@@ -738,7 +739,7 @@ impl StandardDefinition {
                     .builtin
                     .iter()
                     .map(String::as_str)
-                    .filter(|t| SANDBOX_BUILTIN_TOOLS.contains(t))
+                    .filter(|t| REMOVED_BUILTIN_TOOLS.contains(t))
                     .collect();
                 if !sandbox.is_empty() {
                     let place = if env == RuntimeMode::Browser {
@@ -837,7 +838,7 @@ impl StandardDefinition {
         self.enable_todos.unwrap_or(false)
     }
 
-    /// Check if shell/code execution tools should be included (default: false)
+    /// No effect any more (see `include_shell`).
     pub fn should_include_shell(&self) -> bool {
         self.include_shell.unwrap_or(false)
     }
@@ -949,12 +950,14 @@ impl StandardDefinition {
 /// Tools configuration for agents
 /// Canonical list of valid builtin tool names.
 ///
-/// Includes both server-executed tools (search, start_shell, etc.) and
+/// Includes both server-executed tools (search, invoke_agent, etc.) and
 /// client-executed tools (http_request). Agent definitions reference these
 /// by name in `tools.builtin = [...]`.
-/// Builtins that run code in the browsr-cloud sandbox. Only server agents
-/// may declare them.
-pub const SANDBOX_BUILTIN_TOOLS: &[&str] = &[
+/// browsr's shell and code tools, removed: code runs in the thread's
+/// sandbox (Bash/Read/Write/Edit, which the host adds per run). An agent file
+/// that still names them loads; the names are skipped. Only server agents
+/// may name them, as before.
+pub const REMOVED_BUILTIN_TOOLS: &[&str] = &[
     "start_shell",
     "execute_shell",
     "stop_shell",
@@ -978,12 +981,6 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     "browsr_crawl",
     "browser_step",
     "search",
-    // Shell
-    "start_shell",
-    "execute_shell",
-    "stop_shell",
-    // Code execution
-    "distri_execute_code",
     // Tool discovery
     "tool_search",
     // Skills (load body into current agent context; sub-agents call this
@@ -1010,8 +1007,11 @@ pub const CORE_TOOLS: &[&str] = &[
     "invoke_agent",
     "tool_search",
     "write_todos",
-    "execute_shell",
-    "start_shell",
+    // The sandbox's coding tools, when the host adds them to a run.
+    "Bash",
+    "Read",
+    "Write",
+    "Edit",
     "load_skill",
 ];
 
@@ -1065,7 +1065,10 @@ impl ToolsConfig {
     pub fn invalid_builtin_tools(&self) -> Vec<String> {
         self.builtin
             .iter()
-            .filter(|name| !VALID_BUILTIN_TOOLS.contains(&name.as_str()))
+            .filter(|name| {
+                !VALID_BUILTIN_TOOLS.contains(&name.as_str())
+                    && !REMOVED_BUILTIN_TOOLS.contains(&name.as_str())
+            })
             .cloned()
             .collect()
     }
@@ -2775,7 +2778,7 @@ tool_format = "json_l"
         let config = ToolsConfig::default();
         assert!(config.is_core_tool("final"));
         assert!(config.is_core_tool("tool_search"));
-        assert!(config.is_core_tool("execute_shell"));
+        assert!(config.is_core_tool("Bash"));
         assert!(config.is_core_tool("call_agent"));
         assert!(!config.is_core_tool("browsr_scrape"));
     }

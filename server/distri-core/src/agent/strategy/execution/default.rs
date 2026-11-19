@@ -331,27 +331,18 @@ impl ExecutionStrategy for AgentExecutor {
                 )
                 .await
             }
-            Action::Code { code, .. } => {
-                match crate::tools::execute_code_with_tools(code, None, context.clone()).await {
-                    Ok((_, observations, _)) => Ok(ExecutionResult {
-                        step_id: step.id.clone(),
-                        status: ExecutionStatus::Success,
-                        parts: vec![Part::Text(observations.join("\n\n"))],
-                        timestamp: chrono::Utc::now().timestamp_millis(),
-                        reason: None,
-                    }),
-                    Err(e) => {
-                        tracing::warn!("Code execution failed: {}", e);
-                        Ok(ExecutionResult {
-                            step_id: step.id.clone(),
-                            status: ExecutionStatus::Failed,
-                            parts: vec![],
-                            timestamp: chrono::Utc::now().timestamp_millis(),
-                            reason: Some(format!("Code execution error: {}", e)),
-                        })
-                    }
-                }
-            }
+            // Code steps ran in a browsr shell, which is gone: code runs in
+            // the thread's sandbox through `Bash`.
+            Action::Code { .. } => Ok(ExecutionResult {
+                step_id: step.id.clone(),
+                status: ExecutionStatus::Failed,
+                parts: vec![],
+                timestamp: chrono::Utc::now().timestamp_millis(),
+                reason: Some(
+                    "Code steps are not supported: run code in the sandbox with the Bash tool"
+                        .to_string(),
+                ),
+            }),
         }
     }
 

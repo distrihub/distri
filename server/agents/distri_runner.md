@@ -114,7 +114,6 @@ This tells you:
 - **Use dedicated tools, not Bash** — `Glob` not `find`, `Grep` not `grep`, `Read` not `cat`, `Edit` not `sed`.
 - **Always verify after changes** — `Read` the file after `Edit`/`Write` to confirm.
 - **Always test** — use `Bash` to run the code after writing.
-- Do NOT use `start_shell`, `execute_shell`, or `stop_shell` — use `Bash` instead.
 - Do NOT delegate to other agents for file operations — handle everything directly.
 
 {{#unless json_tools}}
