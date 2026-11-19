@@ -54,6 +54,10 @@ impl Tool for GetTaskTool {
         "get_task".to_string()
     }
 
+    fn replay_safe(&self) -> bool {
+        true
+    }
+
     fn get_description(&self) -> String {
         "Read a task's current status, parent, and timing by task_id. \
          Use when a supervisor agent needs to inspect a child task it \
@@ -380,6 +384,10 @@ impl Tool for ListMyTasksTool {
         "list_my_tasks".to_string()
     }
 
+    fn replay_safe(&self) -> bool {
+        true
+    }
+
     fn get_description(&self) -> String {
         "List tasks the supervisor agent can see. Two scopes: \
          'descendants' (default, lists the parent_task_id tree under \
@@ -481,6 +489,10 @@ pub struct GetTaskResultTool;
 impl Tool for GetTaskResultTool {
     fn get_name(&self) -> String {
         "get_task_result".to_string()
+    }
+
+    fn replay_safe(&self) -> bool {
+        true
     }
 
     fn get_description(&self) -> String {

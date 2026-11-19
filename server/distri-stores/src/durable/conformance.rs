@@ -63,8 +63,10 @@ where
             "held"
         );
         assert!(store.renew(&c).await.unwrap());
-        let mut state = RunState::default();
-        state.iterations = 3;
+        let state = RunState {
+            iterations: 3,
+            ..Default::default()
+        };
         assert!(store.save_state(&c, &state).await.unwrap());
         assert_eq!(store.get_state(&t).await.unwrap().unwrap().iterations, 3);
         assert!(store.finish(&c).await.unwrap());
@@ -124,7 +126,7 @@ where
             store.complete("nope", r, "u").await.unwrap(),
             CompleteOutcome::NotFound
         );
-        let c2 = store.claim(&"w2".to_string(), LEASE).await.unwrap();
+        let c2 = store.claim("w2", LEASE).await.unwrap();
         // Another ready task from an earlier check may not exist; this one must.
         let c2 = match c2 {
             Some(c) if c.task_id == t => c,

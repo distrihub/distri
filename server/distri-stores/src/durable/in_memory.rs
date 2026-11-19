@@ -508,13 +508,14 @@ impl PendingCallStore for InMemoryDurableStore {
         if call.status != PendingStatus::Pending {
             return Ok(ClientClaimOutcome::Closed(call.status));
         }
-        if let (Some(by), Some(until)) = (&call.claimed_by, call.claimed_until) {
-            if by != instance && until > now {
-                return Ok(ClientClaimOutcome::Held {
-                    by: by.clone(),
-                    until,
-                });
-            }
+        if let (Some(by), Some(until)) = (&call.claimed_by, call.claimed_until)
+            && by != instance
+            && until > now
+        {
+            return Ok(ClientClaimOutcome::Held {
+                by: by.clone(),
+                until,
+            });
         }
         let until = now + chrono::Duration::from_std(lease).unwrap_or_default();
         call.claimed_by = Some(instance.to_string());

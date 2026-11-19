@@ -1085,7 +1085,7 @@ pub async fn final_message(
             distri_types::TaskMessage::Message(m) if m.id == final_id => Some((row, m)),
             _ => None,
         })
-        .last()?;
+        .next_back()?;
     let _ = row;
     Some(crate::a2a::to_a2a_message_parts(
         saved,

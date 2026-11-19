@@ -18,6 +18,7 @@ use crate::agent::ExecutorContext;
 use crate::AgentOrchestrator;
 
 /// How a claimed segment starts.
+#[allow(clippy::large_enum_variant)]
 pub enum SegmentStart {
     /// The request that holds the claim: its context is already registered
     /// (cancel signal, mailbox) and its event relay runs.
@@ -448,7 +449,7 @@ pub(crate) async fn triggering_user_message(
                 distri_types::TaskMessage::Message(m) if m.role == MessageRole::User => Some(m),
                 _ => None,
             })
-            .last();
+            .next_back();
         if let Some(m) = found {
             return m;
         }

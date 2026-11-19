@@ -130,6 +130,10 @@ macro_rules! tool_basics {
         fn concurrency_safe(&self) -> bool {
             $concurrent
         }
+        // The read-only tools (Read, Glob, Grep) may run again after a crash.
+        fn replay_safe(&self) -> bool {
+            $concurrent
+        }
         fn needs_executor_context(&self) -> bool {
             true
         }

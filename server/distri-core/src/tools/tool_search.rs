@@ -107,6 +107,10 @@ impl Tool for ToolSearchTool {
         "tool_search".to_string()
     }
 
+    fn replay_safe(&self) -> bool {
+        true
+    }
+
     fn get_description(&self) -> String {
         "Search for tools by name or keyword and retrieve their full schemas. \
          Use this to discover the parameters and usage of available tools before calling them."

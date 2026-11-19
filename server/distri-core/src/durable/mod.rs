@@ -414,9 +414,11 @@ pub fn context_from_inputs(
         .cloned()
         .map(|t| Arc::new(t) as Arc<dyn crate::tools::Tool>)
         .collect();
-    let mut hook_state = crate::agent::context::HookPromptState::default();
-    hook_state.dynamic_sections = inputs.dynamic_sections.clone();
-    hook_state.dynamic_values = inputs.dynamic_values.clone();
+    let hook_state = crate::agent::context::HookPromptState {
+        dynamic_sections: inputs.dynamic_sections.clone(),
+        dynamic_values: inputs.dynamic_values.clone(),
+        ..Default::default()
+    };
     let p = &inputs.principal;
     let ws_uuid = p
         .workspace_id

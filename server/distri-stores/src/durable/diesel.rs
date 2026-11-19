@@ -775,14 +775,13 @@ where
         };
         let mut expired = Vec::new();
         for id in due {
-            if self
+            let outcome = self
                 .close_call(&id, PendingStatus::Expired, CallResult::timed_out(), None)
-                .await?
-                == CompleteOutcome::Expired
+                .await?;
+            if outcome == CompleteOutcome::Expired
+                && let Some(call) = self.get(&id).await?
             {
-                if let Some(call) = self.get(&id).await? {
-                    expired.push(call);
-                }
+                expired.push(call);
             }
         }
         Ok(expired)
