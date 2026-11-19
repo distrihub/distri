@@ -1,0 +1,39 @@
+-- Durable runs (sqlite). Tasks become claimable; waits become pending calls.
+-- Times are epoch-ms BIGINT (same convention as tasks.created_at); JSON is TEXT.
+-- Postgres twin: distri-stores/pg_migrations/20261120000000_durable_runs.
+
+ALTER TABLE tasks ADD COLUMN ready_at BIGINT;
+ALTER TABLE tasks ADD COLUMN lease_owner TEXT;
+ALTER TABLE tasks ADD COLUMN lease_until BIGINT;
+ALTER TABLE tasks ADD COLUMN lease_id TEXT;
+ALTER TABLE tasks ADD COLUMN waiting_on TEXT;
+ALTER TABLE tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN run_inputs TEXT;
+ALTER TABLE tasks ADD COLUMN run_state TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_tasks_ready_at ON tasks(ready_at)
+    WHERE ready_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_lease_until ON tasks(lease_until)
+    WHERE lease_until IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS pending_calls (
+    id TEXT PRIMARY KEY NOT NULL,
+    workspace_id TEXT,
+    task_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    tool_name TEXT,
+    request TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result TEXT,
+    completed_by TEXT,
+    deadline BIGINT,
+    created_at BIGINT NOT NULL,
+    completed_at BIGINT,
+    claimed_by TEXT,
+    claimed_until BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_pending_calls_task ON pending_calls(task_id, status);
+CREATE INDEX IF NOT EXISTS idx_pending_calls_thread ON pending_calls(thread_id, status);
+CREATE INDEX IF NOT EXISTS idx_pending_calls_deadline ON pending_calls(deadline)
+    WHERE status = 'pending';

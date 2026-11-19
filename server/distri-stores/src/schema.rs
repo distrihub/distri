@@ -352,3 +352,46 @@ diesel::allow_tables_to_appear_in_same_query!(
     connection_oauth_states,
     notes,
 );
+
+// Queue columns of `tasks` (durable runs). A separate table definition over
+// the same SQL table, so `TaskModel` keeps its columns.
+diesel::table! {
+    use diesel::sql_types::*;
+
+    #[sql_name = "tasks"]
+    task_queue (id) {
+        id -> Text,
+        ready_at -> Nullable<BigInt>,
+        lease_owner -> Nullable<Text>,
+        lease_until -> Nullable<BigInt>,
+        lease_id -> Nullable<Text>,
+        waiting_on -> Nullable<Text>,
+        attempts -> Integer,
+        run_inputs -> Nullable<Text>,
+        run_state -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    pending_calls (id) {
+        id -> Text,
+        workspace_id -> Nullable<Text>,
+        task_id -> Text,
+        thread_id -> Text,
+        kind -> Text,
+        tool_name -> Nullable<Text>,
+        request -> Text,
+        status -> Text,
+        result -> Nullable<Text>,
+        completed_by -> Nullable<Text>,
+        deadline -> Nullable<BigInt>,
+        created_at -> BigInt,
+        completed_at -> Nullable<BigInt>,
+        claimed_by -> Nullable<Text>,
+        claimed_until -> Nullable<BigInt>,
+    }
+}
+
+diesel::allow_tables_to_appear_in_same_query!(task_queue, pending_calls);

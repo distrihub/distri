@@ -3442,6 +3442,10 @@ where
         DieselBrowserSessionStore::new(self.pool.clone_store_pool())
     }
 
+    pub fn durable_store(&self) -> crate::durable::DieselDurableStore<Conn> {
+        crate::durable::DieselDurableStore::new(self.pool.clone())
+    }
+
     pub fn pool(&self) -> DieselStorePool<Conn> {
         self.pool.clone()
     }
