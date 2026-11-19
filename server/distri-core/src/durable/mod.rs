@@ -38,11 +38,13 @@ pub use worker::{RunWorker, SegmentStart, TickReport};
 pub trait ResumeHook: Send + Sync {
     /// Called with the stored inputs and the context rebuilt from them,
     /// inside `with_user_and_workspace(principal)`. An error fails the task
-    /// with that message.
+    /// with that message. The hook may refill what it kept out of the stored
+    /// inputs (e.g. a short-lived credential in `definition_overrides`); the
+    /// segment runs with the inputs as the hook leaves them (not saved).
     async fn before_resume(
         &self,
         task_id: &str,
-        inputs: &RunInputs,
+        inputs: &mut RunInputs,
         context: &mut ExecutorContext,
     ) -> Result<(), AgentError> {
         let _ = (task_id, inputs, context);

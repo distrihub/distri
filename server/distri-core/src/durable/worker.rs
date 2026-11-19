@@ -269,7 +269,7 @@ async fn run_segment_inner(
     orch: Arc<AgentOrchestrator>,
     runtime: Arc<DurableRuntime>,
     claim: Claim,
-    inputs: distri_types::RunInputs,
+    mut inputs: distri_types::RunInputs,
     stored_state: RunState,
     start: SegmentStart,
 ) -> Option<SegmentStart> {
@@ -287,7 +287,7 @@ async fn run_segment_inner(
             let mut ctx = context_from_inputs(orch.clone(), &task_id, &inputs);
             if let Err(e) = runtime
                 .resume_hook
-                .before_resume(&task_id, &inputs, &mut ctx)
+                .before_resume(&task_id, &mut inputs, &mut ctx)
                 .await
             {
                 fail_task(&orch, &task_id, &e.to_string()).await;
