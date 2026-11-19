@@ -87,6 +87,18 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     // Specific /tasks/{id}/events before the bare /tasks/{id} resource.
     .service(web::resource(Route::TaskEvents.path()).route(web::get().to(task_events_handler)))
     .service(web::resource(Route::TaskGet.path()).route(web::get().to(get_task_handler)))
+    .service(
+        web::resource(Route::TaskPendingCalls.path())
+            .route(web::get().to(task_pending_calls_handler)),
+    )
+    .service(
+        web::resource(Route::ThreadPendingCalls.path())
+            .route(web::get().to(thread_pending_calls_handler)),
+    )
+    .service(
+        web::resource(Route::PendingCallClaim.path())
+            .route(web::post().to(claim_pending_call_handler)),
+    )
     .service(web::resource(Route::Tools.path()).route(web::get().to(list_tools)))
     // Webhook endpoint for triggering agents
     // Thread endpoints
@@ -734,7 +746,7 @@ async fn get_agent_card(
         .agent_def_to_card(agent_name.clone(), Some(server_config.get_ref().clone()))
         .await
     {
-        Ok(card) => HttpResponse::Ok().json(card),
+        Ok(card) => with_capabilities(HttpResponse::Ok(), executor.get_ref()).json(card),
         Err(e) => {
             let e: distri_a2a::JsonRpcError = e.into();
             HttpResponse::InternalServerError().json(e)
@@ -752,9 +764,13 @@ async fn a2a_handler(
     http_request: HttpRequest,
     verbose: Option<web::Data<Option<VerboseLog>>>,
 ) -> Either<
-    Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
+    actix_web::CustomizeResponder<
+        Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
+    >,
     HttpResponse,
 > {
+    use actix_web::Responder as _;
+    let capabilities = capabilities_value(executor.get_ref());
     let agent_id = id.into_inner();
     let req = req.into_inner();
     let executor = executor.get_ref();
@@ -796,7 +812,7 @@ async fn a2a_handler(
         .await;
     match result {
         futures_util::future::Either::Left(stream) => {
-            actix_web::Either::Left(Sse::from_stream(stream.map(|r| match r {
+            let mut sse = Sse::from_stream(stream.map(|r| match r {
                 Ok(m) => {
                     let mut data = sse::Data::new(m.data);
                     if m.event.is_some() {
@@ -805,10 +821,19 @@ async fn a2a_handler(
                     Ok(sse::Event::Data(data))
                 }
                 Err(e) => Err(e),
-            })))
+            }))
+            .customize();
+            if let Some(v) = capabilities {
+                sse = sse.insert_header((CAPABILITIES_HEADER, v));
+            }
+            actix_web::Either::Left(sse)
         }
         futures_util::future::Either::Right(response) => {
-            actix_web::Either::Right(HttpResponse::Ok().json(response))
+            let mut builder = HttpResponse::Ok();
+            if let Some(v) = capabilities {
+                builder.insert_header((CAPABILITIES_HEADER, v));
+            }
+            actix_web::Either::Right(builder.json(response))
         }
     }
 }
@@ -2155,7 +2180,31 @@ struct CompleteToolRequest {
     tool_response: distri_types::ToolResponse,
 }
 
-/// Complete an external tool execution
+/// Header naming the server's capabilities (`durable_runs`), so a client
+/// picks the durable path without guessing (S4).
+pub const CAPABILITIES_HEADER: &str = "x-distri-capabilities";
+
+/// `x-distri-capabilities` value for this orchestrator, if any.
+pub fn capabilities_value(orchestrator: &AgentOrchestrator) -> Option<&'static str> {
+    orchestrator
+        .durable_runs_enabled()
+        .then_some("durable_runs")
+}
+
+fn with_capabilities(
+    mut builder: actix_web::HttpResponseBuilder,
+    orchestrator: &AgentOrchestrator,
+) -> actix_web::HttpResponseBuilder {
+    if let Some(v) = capabilities_value(orchestrator) {
+        builder.insert_header((CAPABILITIES_HEADER, v));
+    }
+    builder
+}
+
+/// Complete an external tool execution. Durable mode (S3): a duplicate is
+/// 200 `{status:"duplicate"}`, a conflict or a late (expired) result 409, an
+/// unknown call 400 with the legacy "No pending external tool execution
+/// found" text.
 async fn complete_tool_handler(
     request: web::Json<CompleteToolRequest>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -2163,18 +2212,115 @@ async fn complete_tool_handler(
     let req = request.into_inner();
 
     let orchestrator: Arc<AgentOrchestrator> = executor.get_ref().clone();
-    match orchestrator
-        .complete_tool(&req.tool_call_id, req.tool_response)
+    let outcome = orchestrator
+        .clone()
+        .complete_tool_call(&req.tool_call_id, req.tool_response)
+        .await;
+    match outcome {
+        Ok(distri_core::durable::CompleteToolOutcome::Completed) => {
+            with_capabilities(HttpResponse::Ok(), &orchestrator).json(json!({
+                "success": true,
+                "status": "completed",
+                "message": "Tool completed successfully"
+            }))
+        }
+        Ok(distri_core::durable::CompleteToolOutcome::Duplicate) => {
+            with_capabilities(HttpResponse::Ok(), &orchestrator).json(json!({
+                "success": true,
+                "status": "duplicate",
+                "message": "Tool already completed with this result"
+            }))
+        }
+        Err(e) => {
+            let builder = if e.http_status() == 409 {
+                HttpResponse::Conflict()
+            } else {
+                HttpResponse::BadRequest()
+            };
+            with_capabilities(builder, &orchestrator).json(json!({
+                "success": false,
+                "status": e.status(),
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+/// `GET /tasks/{task_id}/pending-calls` — the task's pending calls (bare
+/// array).
+async fn task_pending_calls_handler(
+    path: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let task_id = path.into_inner();
+    match executor.list_task_pending_calls(&task_id).await {
+        Ok(Some(calls)) => with_capabilities(HttpResponse::Ok(), &executor)
+            .json(distri_core::a2a::service::pending_calls_json(&calls)),
+        Ok(None) => {
+            HttpResponse::NotFound().json(json!({ "error": format!("task '{task_id}' not found") }))
+        }
+        Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
+    }
+}
+
+/// `GET /threads/{thread_id}/pending-calls` — pending calls of the thread's
+/// tasks (bare array), for a client that reloaded (S4).
+async fn thread_pending_calls_handler(
+    path: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    match executor.list_thread_pending_calls(&thread_id).await {
+        Ok(Some(calls)) => with_capabilities(HttpResponse::Ok(), &executor)
+            .json(distri_core::a2a::service::pending_calls_json(&calls)),
+        Ok(None) => HttpResponse::NotFound()
+            .json(json!({ "error": format!("thread '{thread_id}' not found") })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
+    }
+}
+
+#[derive(Deserialize)]
+struct ClaimPendingCallRequest {
+    instance_id: String,
+    /// Lease in seconds (default 60).
+    #[serde(default)]
+    lease_secs: Option<u64>,
+}
+
+/// `POST /pending-calls/{id}/claim {instance_id}` — 200 `{claimed:true,
+/// until}`; 409 `{claimed:false, claimed_by, until}` when another instance
+/// holds it (or `{status}` when it is no longer pending); 404 unknown (S5).
+async fn claim_pending_call_handler(
+    path: web::Path<String>,
+    request: web::Json<ClaimPendingCallRequest>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    use distri_types::ClientClaimOutcome;
+    let id = path.into_inner();
+    let req = request.into_inner();
+    let lease = std::time::Duration::from_secs(req.lease_secs.unwrap_or(60).clamp(1, 3600));
+    match executor
+        .claim_pending_call(&id, &req.instance_id, lease)
         .await
     {
-        Ok(()) => HttpResponse::Ok().json(json!({
-            "success": true,
-            "message": "Tool completed successfully"
-        })),
-        Err(e) => HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": e
-        })),
+        Ok(ClientClaimOutcome::Claimed { until }) => {
+            with_capabilities(HttpResponse::Ok(), &executor)
+                .json(json!({ "claimed": true, "until": until.to_rfc3339() }))
+        }
+        Ok(ClientClaimOutcome::Held { by, until }) => {
+            with_capabilities(HttpResponse::Conflict(), &executor).json(json!({
+                "claimed": false,
+                "claimed_by": by,
+                "until": until.to_rfc3339()
+            }))
+        }
+        Ok(ClientClaimOutcome::Closed(status)) => {
+            with_capabilities(HttpResponse::Conflict(), &executor)
+                .json(json!({ "claimed": false, "status": status.as_str() }))
+        }
+        Ok(ClientClaimOutcome::NotFound) => HttpResponse::NotFound()
+            .json(json!({ "error": format!("pending call '{id}' not found") })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
     }
 }
 

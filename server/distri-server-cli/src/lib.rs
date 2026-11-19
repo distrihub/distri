@@ -15,6 +15,18 @@ mod seed;
 
 pub use cli::Cli;
 
+/// Durable runs are on when `DISTRI_DURABLE_RUNS` is `1`/`true`/`on`.
+pub fn durable_runs_enabled() -> bool {
+    std::env::var("DISTRI_DURABLE_RUNS")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
 /// Initialize the orchestrator for the OSS server.
 pub async fn init_orchestrator(
     home_dir: &Path,
@@ -67,6 +79,7 @@ pub async fn init_orchestrator(
         Arc::new(distri_filesystem::create_file_system(fs_config).await?)
     };
 
+    let durable_store_config = store_config.clone();
     let mut builder = AgentOrchestratorBuilder::default()
         .with_browser_config(BrowsrClientConfig::default())
         .with_stores(stores)
@@ -79,9 +92,22 @@ pub async fn init_orchestrator(
         Some(runner) => builder = builder.with_code_runner(Arc::new(runner)),
         None => tracing::info!("deno not found: workflow code steps are unavailable"),
     }
+    if durable_runs_enabled() {
+        // Durable runs: the queue and pending calls live in the same sqlite
+        // database as the tasks; the worker runs in this process.
+        let stores = distri_core::initialize_durable_stores(&durable_store_config).await?;
+        builder = builder.with_durable_runtime(distri_core::durable::DurableRuntime::new(
+            stores.run_queue,
+            stores.pending_calls,
+            Arc::new(distri_core::InProcessWakeNotifier::new()),
+            Arc::new(distri_core::durable::NoopResumeHook),
+        ));
+        tracing::info!("durable runs enabled (DISTRI_DURABLE_RUNS)");
+    }
     let orchestrator = builder.build().await?;
 
     let orchestrator = Arc::new(orchestrator);
+    orchestrator.start_durable_worker(true);
     seed::seed_bundled_defaults(orchestrator.as_ref()).await?;
     register_workspace_agents(&orchestrator, workspace_path).await?;
 

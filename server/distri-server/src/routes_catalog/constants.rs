@@ -105,6 +105,10 @@ define_routes! {
     /// Live event stream (SSE) for one task — a monitor's per-child feed.
     TaskEvents        => "/tasks/{task_id}/events" { GET: Execute },
     TaskGet           => "/tasks/{task_id}" { GET: Execute },
+    /// Durable runs: the task's pending client calls (a reloaded client finds them).
+    TaskPendingCalls  => "/tasks/{task_id}/pending-calls" { GET: Execute },
+    /// Durable runs: a client claims a pending call before running it.
+    PendingCallClaim  => "/pending-calls/{id}/claim" { POST: Execute },
     /// Run tree: root tasks with their sub-agents and background forks.
     Runs              => "/runs" { GET: Execute },
     RunGet            => "/runs/{task_id}" { GET: Execute },
@@ -117,6 +121,8 @@ define_routes! {
     Thread            => "/threads/{thread_id}" { GET: Execute, PUT: Execute, DELETE: Execute },
     ThreadMessageRead => "/threads/{thread_id}/messages/{message_id}/read" { GET: Execute, POST: Execute },
     ThreadReadStatus  => "/threads/{thread_id}/read-status" { GET: Execute },
+    /// Durable runs: pending client calls of every task in the thread.
+    ThreadPendingCalls=> "/threads/{thread_id}/pending-calls" { GET: Execute },
     ThreadMessageVote => "/threads/{thread_id}/messages/{message_id}/vote" { GET: Execute, POST: Execute, DELETE: Execute },
     ThreadMessageVotes=> "/threads/{thread_id}/messages/{message_id}/votes" { GET: Execute },
 
