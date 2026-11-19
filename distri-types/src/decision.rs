@@ -186,7 +186,7 @@ impl DecisionRequest {
 /// - [`Self::SystemOne`] is the generic **`decisions`** provider: any System One
 ///   endpoint at a configured `DECISIONS_BASE_URL` (llama.cpp `llama-server`
 ///   >= b11361 serving Kev/Laya/Clef, TypeSafe, OpenRouter, …), with an optional
-///   `DECISIONS_API_KEY`. Its settings are edited like any other provider's.
+///   > `DECISIONS_API_KEY`. Its settings are edited like any other provider's.
 /// - The rest are presets for hosted endpoints whose address is known, or
 ///   whose path/envelope differs (AI/ML API, Workers AI).
 ///

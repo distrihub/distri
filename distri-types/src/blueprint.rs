@@ -393,22 +393,20 @@ impl Blueprint {
                 }
             }
         }
-        if let Some(e) = &self.embed {
-            if !agents.contains(&e.agent) && !is_template(&e.agent) {
+        if let Some(e) = &self.embed
+            && !agents.contains(&e.agent) && !is_template(&e.agent) {
                 return Err(BlueprintError::Invalid(format!(
                     "embed.agent '{}' is not one of the blueprint's agents",
                     e.agent
                 )));
             }
-        }
-        if let Some(t) = &self.test {
-            if !workflows.contains(&t.workflow) {
+        if let Some(t) = &self.test
+            && !workflows.contains(&t.workflow) {
                 return Err(BlueprintError::Invalid(format!(
                     "test.workflow '{}' is not one of the blueprint's workflows",
                     t.workflow
                 )));
             }
-        }
         Ok(())
     }
 
@@ -484,11 +482,10 @@ impl Blueprint {
         if let Some(c) = &mut out.channel {
             c.agent = sub(&c.agent);
         }
-        if let Some(t) = &mut out.test {
-            if let Ok(s) = serde_json::to_string(&t.input) {
+        if let Some(t) = &mut out.test
+            && let Ok(s) = serde_json::to_string(&t.input) {
                 t.input = serde_json::from_str(&sub(&s)).unwrap_or(t.input.clone());
             }
-        }
         out.validate()?;
         Ok(out)
     }

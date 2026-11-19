@@ -1945,8 +1945,8 @@ impl ModelSettings {
         let endpoint_secret = self.inner.provider.endpoint_secret();
 
         // api_key — fill if the slot is currently None.
-        if let Some(slot) = self.inner.provider.api_key_slot_mut() {
-            if slot.is_none() {
+        if let Some(slot) = self.inner.provider.api_key_slot_mut()
+            && slot.is_none() {
                 match secret_store.get(api_key_secret).await {
                     Ok(Some(secret)) => *slot = Some(secret.value),
                     Ok(None) => tracing::warn!(
@@ -1962,14 +1962,13 @@ impl ModelSettings {
                     ),
                 }
             }
-        }
 
         // base_url — fill if the slot is currently empty AND the
         // provider exposes an endpoint_secret. Hard-error for
         // endpoint-required providers when the secret is missing.
-        if let Some(endpoint_key) = endpoint_secret {
-            if let Some(slot) = self.inner.provider.base_url_slot_mut() {
-                if slot.is_empty() {
+        if let Some(endpoint_key) = endpoint_secret
+            && let Some(slot) = self.inner.provider.base_url_slot_mut()
+                && slot.is_empty() {
                     match secret_store.get(endpoint_key).await {
                         Ok(Some(secret)) => *slot = secret.value,
                         Ok(None) => {
@@ -1989,8 +1988,6 @@ impl ModelSettings {
                         }
                     }
                 }
-            }
-        }
 
         Ok(())
     }
@@ -2422,8 +2419,8 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
     // Unknown prefixes error out — the caller is making a clearly
     // invalid claim ("dispatch to provider X") that must not silently
     // fall back to "use whatever the workspace default is".
-    if let Some(ref mut ms) = agent_def.model_settings {
-        if ms.model.contains('/') {
+    if let Some(ref mut ms) = agent_def.model_settings
+        && ms.model.contains('/') {
             let resolved = ModelSettings::from_provider_model_str(&ms.model)
                 .map_err(AgentError::Validation)?
                 .ok_or_else(|| {
@@ -2435,7 +2432,6 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
             ms.model = resolved.model;
             ms.inner.provider = resolved.inner.provider;
         }
-    }
 
     Ok(agent_def)
 }

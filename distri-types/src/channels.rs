@@ -102,16 +102,13 @@ impl std::str::FromStr for ChatType {
 /// mention it by username. Relevant for group chats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum TriggerMode {
+    #[default]
     All,
     OnMention,
 }
 
-impl Default for TriggerMode {
-    fn default() -> Self {
-        TriggerMode::All
-    }
-}
 
 impl TriggerMode {
     pub fn as_str(&self) -> &'static str {
@@ -170,16 +167,13 @@ impl ChannelProvider {
 /// only the two values below are valid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum BotScope {
+    #[default]
     Workspace,
     User,
 }
 
-impl Default for BotScope {
-    fn default() -> Self {
-        Self::Workspace
-    }
-}
 
 impl std::fmt::Display for BotScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
