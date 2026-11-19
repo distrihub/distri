@@ -10,6 +10,7 @@ mod coordinator_integration;
 mod decision_service;
 mod deferred_tools_integration;
 mod definition;
+mod durable_runs;
 mod early_stop;
 mod fixture_scenarios;
 pub mod helpers;
