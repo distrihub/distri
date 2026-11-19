@@ -9,6 +9,7 @@ Each folder here is a **blueprint**: one sentence sets up an agent, its workflow
 | Sample | The sentence | Sets up |
 |---|---|---|
 | [sre-agent](sre-agent) | *Create an SRE agent for my API that I can ask from Telegram; check /health every 5 minutes, and if it fails, alert me and start investigating.* | A server agent, a scheduled health check that branches (alert once, investigate, then recovered) and a Telegram chat |
+| [website-support](website-support) | *Create an onboarding agent for my product on example.com that answers questions from our docs and opens a support ticket when it can't help.* | A web agent embedded on your site that calls a server workflow as a tool to file Linear tickets, and Telegram for ticket notices |
 | [signal-digest](signal-digest) | *Every weekday at 8am, send me a Telegram digest of the posts worth reading about … on Hacker News and Reddit.* | A scheduled workflow with a TypeScript code step, a writer agent, and Telegram |
 
 ## A blueprint folder

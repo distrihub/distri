@@ -1,0 +1,41 @@
+name = "website-support"
+title = "Website onboarding and support agent"
+category = "support"
+about = "An agent on your website that answers questions from your docs and, when it can't help, files a support ticket in Linear and tells you on Telegram."
+prompt = "Create an onboarding agent for my product on example.com that answers questions from our docs and opens a support ticket when it can't help."
+
+[params.product_name]
+ask = "What is the product called?"
+example = "Acme"
+
+[params.site_url]
+ask = "Which website will it be embedded on (the origin, like https://acme.com)?"
+example = "https://acme.com"
+
+[params.docs_url]
+ask = "Where are the docs it should answer from?"
+example = "https://acme.com/docs"
+
+[params.linear_team_key]
+ask = "Which Linear team should tickets go to (its key, like SUP)?"
+example = "SUP"
+
+[embed]
+agent = "support_guide"
+origins = ["{{params.site_url}}"]
+
+[channel]
+kind = "telegram"
+agent = "support_inbox"
+workflows = ["create_support_ticket"]
+
+[[connections]]
+provider = "linear"
+scopes = ["issues:create"]
+required = true
+why = "File the tickets the website agent opens"
+
+[test]
+workflow = "create_support_ticket"
+input = { email = "test@example.com", summary = "Test ticket from distri setup", details = "Sent by the setup test; you can close it.", page = "{{params.site_url}}", test = true }
+expect = "A ticket appears in Linear and a 🎫 message arrives on Telegram"

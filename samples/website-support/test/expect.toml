@@ -1,0 +1,10 @@
+[[agents]]
+runtime = "web"
+tools_workflows = true
+
+[[workflows]]
+triggers = ["tool"]
+steps_include = ["code|api_call", "notify"]
+
+[embed]
+required = true
