@@ -1946,50 +1946,48 @@ impl ModelSettings {
 
         // api_key — fill if the slot is currently None.
         if let Some(slot) = self.inner.provider.api_key_slot_mut()
-            && slot.is_none()
-        {
-            match secret_store.get(api_key_secret).await {
-                Ok(Some(secret)) => *slot = Some(secret.value),
-                Ok(None) => tracing::warn!(
-                    "{} secret not found for provider '{}'",
-                    api_key_secret,
-                    provider_label
-                ),
-                Err(e) => tracing::error!(
-                    "failed to fetch {} for provider '{}': {}",
-                    api_key_secret,
-                    provider_label,
-                    e
-                ),
+            && slot.is_none() {
+                match secret_store.get(api_key_secret).await {
+                    Ok(Some(secret)) => *slot = Some(secret.value),
+                    Ok(None) => tracing::warn!(
+                        "{} secret not found for provider '{}'",
+                        api_key_secret,
+                        provider_label
+                    ),
+                    Err(e) => tracing::error!(
+                        "failed to fetch {} for provider '{}': {}",
+                        api_key_secret,
+                        provider_label,
+                        e
+                    ),
+                }
             }
-        }
 
         // base_url — fill if the slot is currently empty AND the
         // provider exposes an endpoint_secret. Hard-error for
         // endpoint-required providers when the secret is missing.
         if let Some(endpoint_key) = endpoint_secret
             && let Some(slot) = self.inner.provider.base_url_slot_mut()
-            && slot.is_empty()
-        {
-            match secret_store.get(endpoint_key).await {
-                Ok(Some(secret)) => *slot = secret.value,
-                Ok(None) => {
-                    return Err(format!(
-                        "{} secret not set for provider '{}'. \
+                && slot.is_empty() {
+                    match secret_store.get(endpoint_key).await {
+                        Ok(Some(secret)) => *slot = secret.value,
+                        Ok(None) => {
+                            return Err(format!(
+                                "{} secret not set for provider '{}'. \
                                  Configure the workspace's '{}' provider \
                                  (POST /v1/providers) before pinning a model \
                                  with this provider prefix.",
-                        endpoint_key, provider_label, provider_label
-                    ));
+                                endpoint_key, provider_label, provider_label
+                            ));
+                        }
+                        Err(e) => {
+                            return Err(format!(
+                                "failed to fetch {} for provider '{}': {e}",
+                                endpoint_key, provider_label
+                            ));
+                        }
+                    }
                 }
-                Err(e) => {
-                    return Err(format!(
-                        "failed to fetch {} for provider '{}': {e}",
-                        endpoint_key, provider_label
-                    ));
-                }
-            }
-        }
 
         Ok(())
     }
@@ -2422,9 +2420,8 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
     // invalid claim ("dispatch to provider X") that must not silently
     // fall back to "use whatever the workspace default is".
     if let Some(ref mut ms) = agent_def.model_settings
-        && ms.model.contains('/')
-    {
-        let resolved = ModelSettings::from_provider_model_str(&ms.model)
+        && ms.model.contains('/') {
+            let resolved = ModelSettings::from_provider_model_str(&ms.model)
                 .map_err(AgentError::Validation)?
                 .ok_or_else(|| {
                     AgentError::Validation(format!(
@@ -2432,9 +2429,9 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
                         agent_def.name, ms.model
                     ))
                 })?;
-        ms.model = resolved.model;
-        ms.inner.provider = resolved.inner.provider;
-    }
+            ms.model = resolved.model;
+            ms.inner.provider = resolved.inner.provider;
+        }
 
     Ok(agent_def)
 }

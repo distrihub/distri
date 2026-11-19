@@ -109,6 +109,7 @@ pub enum TriggerMode {
     OnMention,
 }
 
+
 impl TriggerMode {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -172,6 +173,7 @@ pub enum BotScope {
     Workspace,
     User,
 }
+
 
 impl std::fmt::Display for BotScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
