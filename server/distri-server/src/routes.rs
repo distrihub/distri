@@ -746,7 +746,10 @@ async fn get_agent_card(
         .agent_def_to_card(agent_name.clone(), Some(server_config.get_ref().clone()))
         .await
     {
-        Ok(card) => with_capabilities(HttpResponse::Ok(), executor.get_ref()).json(card),
+        Ok(card) => {
+            let caps = capabilities_value(executor.get_ref()).await;
+            with_capabilities(HttpResponse::Ok(), caps).json(card)
+        }
         Err(e) => {
             let e: distri_a2a::JsonRpcError = e.into();
             HttpResponse::InternalServerError().json(e)
@@ -770,7 +773,7 @@ async fn a2a_handler(
     HttpResponse,
 > {
     use actix_web::Responder as _;
-    let capabilities = capabilities_value(executor.get_ref());
+    let capabilities = capabilities_value(executor.get_ref()).await;
     let agent_id = id.into_inner();
     let req = req.into_inner();
     let executor = executor.get_ref();
@@ -2184,18 +2187,21 @@ struct CompleteToolRequest {
 /// picks the durable path without guessing (S4).
 pub const CAPABILITIES_HEADER: &str = "x-distri-capabilities";
 
-/// `x-distri-capabilities` value for this orchestrator, if any.
-pub fn capabilities_value(orchestrator: &AgentOrchestrator) -> Option<&'static str> {
+/// `x-distri-capabilities` value for the current caller, if any: durable
+/// runs are announced only when the caller's workspace runs durably (a host
+/// can switch them per workspace, see `ResumeHook::durable_enabled`).
+pub async fn capabilities_value(orchestrator: &AgentOrchestrator) -> Option<&'static str> {
     orchestrator
-        .durable_runs_enabled()
+        .durable_runs_for_caller()
+        .await
         .then_some("durable_runs")
 }
 
 fn with_capabilities(
     mut builder: actix_web::HttpResponseBuilder,
-    orchestrator: &AgentOrchestrator,
+    capabilities: Option<&'static str>,
 ) -> actix_web::HttpResponseBuilder {
-    if let Some(v) = capabilities_value(orchestrator) {
+    if let Some(v) = capabilities {
         builder.insert_header((CAPABILITIES_HEADER, v));
     }
     builder
@@ -2212,20 +2218,21 @@ async fn complete_tool_handler(
     let req = request.into_inner();
 
     let orchestrator: Arc<AgentOrchestrator> = executor.get_ref().clone();
+    let caps = capabilities_value(&orchestrator).await;
     let outcome = orchestrator
         .clone()
         .complete_tool_call(&req.tool_call_id, req.tool_response)
         .await;
     match outcome {
         Ok(distri_core::durable::CompleteToolOutcome::Completed) => {
-            with_capabilities(HttpResponse::Ok(), &orchestrator).json(json!({
+            with_capabilities(HttpResponse::Ok(), caps).json(json!({
                 "success": true,
                 "status": "completed",
                 "message": "Tool completed successfully"
             }))
         }
         Ok(distri_core::durable::CompleteToolOutcome::Duplicate) => {
-            with_capabilities(HttpResponse::Ok(), &orchestrator).json(json!({
+            with_capabilities(HttpResponse::Ok(), caps).json(json!({
                 "success": true,
                 "status": "duplicate",
                 "message": "Tool already completed with this result"
@@ -2237,7 +2244,7 @@ async fn complete_tool_handler(
             } else {
                 HttpResponse::BadRequest()
             };
-            with_capabilities(builder, &orchestrator).json(json!({
+            with_capabilities(builder, caps).json(json!({
                 "success": false,
                 "status": e.status(),
                 "error": e.to_string()
@@ -2254,8 +2261,10 @@ async fn task_pending_calls_handler(
 ) -> HttpResponse {
     let task_id = path.into_inner();
     match executor.list_task_pending_calls(&task_id).await {
-        Ok(Some(calls)) => with_capabilities(HttpResponse::Ok(), &executor)
-            .json(distri_core::a2a::service::pending_calls_json(&calls)),
+        Ok(Some(calls)) => {
+            with_capabilities(HttpResponse::Ok(), capabilities_value(&executor).await)
+                .json(distri_core::a2a::service::pending_calls_json(&calls))
+        }
         Ok(None) => {
             HttpResponse::NotFound().json(json!({ "error": format!("task '{task_id}' not found") }))
         }
@@ -2271,8 +2280,10 @@ async fn thread_pending_calls_handler(
 ) -> HttpResponse {
     let thread_id = path.into_inner();
     match executor.list_thread_pending_calls(&thread_id).await {
-        Ok(Some(calls)) => with_capabilities(HttpResponse::Ok(), &executor)
-            .json(distri_core::a2a::service::pending_calls_json(&calls)),
+        Ok(Some(calls)) => {
+            with_capabilities(HttpResponse::Ok(), capabilities_value(&executor).await)
+                .json(distri_core::a2a::service::pending_calls_json(&calls))
+        }
         Ok(None) => HttpResponse::NotFound()
             .json(json!({ "error": format!("thread '{thread_id}' not found") })),
         Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
@@ -2304,20 +2315,23 @@ async fn claim_pending_call_handler(
         .await
     {
         Ok(ClientClaimOutcome::Claimed { until }) => {
-            with_capabilities(HttpResponse::Ok(), &executor)
+            with_capabilities(HttpResponse::Ok(), capabilities_value(&executor).await)
                 .json(json!({ "claimed": true, "until": until.to_rfc3339() }))
         }
-        Ok(ClientClaimOutcome::Held { by, until }) => {
-            with_capabilities(HttpResponse::Conflict(), &executor).json(json!({
-                "claimed": false,
-                "claimed_by": by,
-                "until": until.to_rfc3339()
-            }))
-        }
-        Ok(ClientClaimOutcome::Closed(status)) => {
-            with_capabilities(HttpResponse::Conflict(), &executor)
-                .json(json!({ "claimed": false, "status": status.as_str() }))
-        }
+        Ok(ClientClaimOutcome::Held { by, until }) => with_capabilities(
+            HttpResponse::Conflict(),
+            capabilities_value(&executor).await,
+        )
+        .json(json!({
+            "claimed": false,
+            "claimed_by": by,
+            "until": until.to_rfc3339()
+        })),
+        Ok(ClientClaimOutcome::Closed(status)) => with_capabilities(
+            HttpResponse::Conflict(),
+            capabilities_value(&executor).await,
+        )
+        .json(json!({ "claimed": false, "status": status.as_str() })),
         Ok(ClientClaimOutcome::NotFound) => HttpResponse::NotFound()
             .json(json!({ "error": format!("pending call '{id}' not found") })),
         Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),

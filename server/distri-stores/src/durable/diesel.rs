@@ -669,12 +669,22 @@ where
 {
     async fn create(&self, call: NewPendingCall) -> Result<()> {
         let mut c = self.conn().await?;
-        let exists: i64 = pending_calls::table
+        // Idempotent for the same task; a tool call id reused by another
+        // task (a provider with non-unique ids) is refused instead of
+        // silently waiting on the other task's row.
+        let owner: Option<String> = pending_calls::table
             .filter(pending_calls::id.eq(&call.id))
-            .count()
-            .get_result(&mut c)
-            .await?;
-        if exists > 0 {
+            .select(pending_calls::task_id)
+            .first(&mut c)
+            .await
+            .optional()?;
+        if let Some(owner) = owner {
+            if owner != call.task_id {
+                return Err(anyhow!(
+                    "pending call id {} already belongs to task {owner}",
+                    call.id
+                ));
+            }
             return Ok(());
         }
         let res = diesel::insert_into(pending_calls::table)

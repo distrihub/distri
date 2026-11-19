@@ -82,6 +82,20 @@ impl AgentOrchestrator {
         self.durable.is_some()
     }
 
+    /// Whether runs of the current caller's workspace are durable: the
+    /// orchestrator has a durable runtime and the host's
+    /// [`ResumeHook::durable_enabled`](super::ResumeHook::durable_enabled)
+    /// allows the workspace in the task-local context.
+    pub async fn durable_runs_for_caller(&self) -> bool {
+        match &self.durable {
+            Some(d) => {
+                let ws = distri_auth::context::current_workspace_id().map(|w| w.to_string());
+                d.resume_hook.durable_enabled(ws.as_deref()).await
+            }
+            None => false,
+        }
+    }
+
     /// Complete a client tool call (N3: pending calls first, then a workflow
     /// wait, then the legacy in-memory receiver). First writer wins (S3).
     pub async fn complete_tool_call(

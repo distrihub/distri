@@ -426,6 +426,11 @@ async fn run_segment_inner(
                 },
                 None => {
                     let _ = rq.finish(&claim).await;
+                    let state = run.state.lock().await.clone();
+                    runtime
+                        .resume_hook
+                        .on_finished(&task_id, &inputs, &state, &ctx)
+                        .await;
                     None
                 }
             }

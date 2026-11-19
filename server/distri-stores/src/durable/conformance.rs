@@ -41,6 +41,10 @@ where
     Fut: std::future::Future<Output = ()>,
 {
     let id = || uuid::Uuid::new_v4().to_string();
+    // Call ids are unique per run, so the suite can run again on a database
+    // that keeps the rows of an earlier run.
+    let run = uuid::Uuid::new_v4().simple().to_string();
+    let cid = |n: &str| format!("{n}-{run}");
 
     // claim / claim_task / renew / finish
     {
@@ -86,13 +90,13 @@ where
         queued(store, &t).await;
         store.wake(&t, None).await.unwrap();
         let c = store.claim_task(&t, "w1", LEASE).await.unwrap().unwrap();
-        store.create(new_call("c1", &t, &th)).await.unwrap();
-        store.create(new_call("c1", &t, &th)).await.unwrap(); // idempotent
+        store.create(new_call(&cid("c1"), &t, &th)).await.unwrap();
+        store.create(new_call(&cid("c1"), &t, &th)).await.unwrap(); // idempotent
         let out = store
             .park(
                 &c,
                 WaitingOn {
-                    pending: vec!["c1".into()],
+                    pending: vec![cid("c1")],
                     deadline: None,
                 },
             )
@@ -101,23 +105,27 @@ where
         assert_eq!(out, ParkOutcome::Parked);
         let e = store.get_entry(&t).await.unwrap().unwrap();
         assert!(e.ready_at.is_none() && e.lease_owner.is_none());
-        assert_eq!(e.waiting_on.unwrap().pending, vec!["c1".to_string()]);
+        assert_eq!(e.waiting_on.unwrap().pending, vec![cid("c1")]);
         assert_eq!(store.list_pending(&t).await.unwrap().len(), 1);
         assert_eq!(store.list_pending_for_thread(&th).await.unwrap().len(), 1);
 
         // S2 / S6: complete wakes it; duplicate vs conflict.
         let r = CallResult(serde_json::json!({"ok": true}));
         assert_eq!(
-            store.complete("c1", r.clone(), "u").await.unwrap(),
+            store.complete(&cid("c1"), r.clone(), "u").await.unwrap(),
             CompleteOutcome::Completed
         );
         assert!(matches!(
-            store.complete("c1", r.clone(), "u").await.unwrap(),
+            store.complete(&cid("c1"), r.clone(), "u").await.unwrap(),
             CompleteOutcome::Duplicate(_)
         ));
         assert_eq!(
             store
-                .complete("c1", CallResult(serde_json::json!({"ok": false})), "u")
+                .complete(
+                    &cid("c1"),
+                    CallResult(serde_json::json!({"ok": false})),
+                    "u"
+                )
                 .await
                 .unwrap(),
             CompleteOutcome::Conflict
@@ -146,16 +154,16 @@ where
         queued(store, &t).await;
         store.wake(&t, None).await.unwrap();
         let c = store.claim_task(&t, "w1", LEASE).await.unwrap().unwrap();
-        store.create(new_call("c19", &t, &th)).await.unwrap();
+        store.create(new_call(&cid("c19"), &t, &th)).await.unwrap();
         store
-            .complete("c19", CallResult(serde_json::json!(1)), "u")
+            .complete(&cid("c19"), CallResult(serde_json::json!(1)), "u")
             .await
             .unwrap();
         let out = store
             .park(
                 &c,
                 WaitingOn {
-                    pending: vec!["c19".into()],
+                    pending: vec![cid("c19")],
                     deadline: None,
                 },
             )
@@ -171,7 +179,7 @@ where
         let (t, th) = (id(), id());
         make_task(t.clone(), th.clone()).await;
         queued(store, &t).await;
-        let mut call = new_call("c5", &t, &th);
+        let mut call = new_call(&cid("c5"), &t, &th);
         call.deadline = Some(Utc::now() - chrono::Duration::seconds(1));
         store.create(call).await.unwrap();
         let expired = store.expire_due(Utc::now()).await.unwrap();
@@ -179,7 +187,7 @@ where
         assert_eq!(expired[0].status, PendingStatus::Expired);
         assert_eq!(
             store
-                .complete("c5", CallResult(serde_json::json!(1)), "u")
+                .complete(&cid("c5"), CallResult(serde_json::json!(1)), "u")
                 .await
                 .unwrap(),
             CompleteOutcome::Expired
@@ -201,7 +209,7 @@ where
         let (t, th) = (id(), id());
         make_task(t.clone(), th.clone()).await;
         queued(store, &t).await;
-        store.create(new_call("c13", &t, &th)).await.unwrap();
+        store.create(new_call(&cid("c13"), &t, &th)).await.unwrap();
         assert_eq!(store.cancel_for_task(&t).await.unwrap(), 1);
         assert!(
             store
@@ -214,7 +222,7 @@ where
         );
         assert_eq!(
             store
-                .complete("c13", CallResult(serde_json::json!(1)), "u")
+                .complete(&cid("c13"), CallResult(serde_json::json!(1)), "u")
                 .await
                 .unwrap(),
             CompleteOutcome::Closed
@@ -251,17 +259,26 @@ where
     {
         let (t, th) = (id(), id());
         make_task(t.clone(), th.clone()).await;
-        store.create(new_call("c28", &t, &th)).await.unwrap();
+        store.create(new_call(&cid("c28"), &t, &th)).await.unwrap();
         assert!(matches!(
-            store.claim_client("c28", "tab-a", LEASE).await.unwrap(),
+            store
+                .claim_client(&cid("c28"), "tab-a", LEASE)
+                .await
+                .unwrap(),
             ClientClaimOutcome::Claimed { .. }
         ));
         assert!(matches!(
-            store.claim_client("c28", "tab-b", LEASE).await.unwrap(),
+            store
+                .claim_client(&cid("c28"), "tab-b", LEASE)
+                .await
+                .unwrap(),
             ClientClaimOutcome::Held { .. }
         ));
         assert!(matches!(
-            store.claim_client("c28", "tab-a", LEASE).await.unwrap(),
+            store
+                .claim_client(&cid("c28"), "tab-a", LEASE)
+                .await
+                .unwrap(),
             ClientClaimOutcome::Claimed { .. }
         ));
         assert_eq!(
@@ -275,10 +292,11 @@ where
         let (t, th) = (id(), id());
         make_task(t.clone(), th.clone()).await;
         queued(store, &t).await;
-        store.create(new_call("c30", &t, &th)).await.unwrap();
+        store.create(new_call(&cid("c30"), &t, &th)).await.unwrap();
+        let c30 = cid("c30");
         let (a, b) = tokio::join!(
-            store.complete("c30", CallResult(serde_json::json!("a")), "x"),
-            store.close("c30", PendingStatus::Expired, CallResult::timed_out()),
+            store.complete(&c30, CallResult(serde_json::json!("a")), "x"),
+            store.close(&c30, PendingStatus::Expired, CallResult::timed_out()),
         );
         let outcomes = [a.unwrap(), b.unwrap()];
         let firsts = outcomes
@@ -286,7 +304,7 @@ where
             .filter(|o| matches!(o, CompleteOutcome::Completed | CompleteOutcome::Expired))
             .count();
         assert!(firsts >= 1, "{outcomes:?}");
-        let stored = store.get("c30").await.unwrap().unwrap();
+        let stored = store.get(&cid("c30")).await.unwrap().unwrap();
         assert!(stored.status.is_closed());
     }
 }

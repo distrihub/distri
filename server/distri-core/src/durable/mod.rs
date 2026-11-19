@@ -65,6 +65,30 @@ pub trait ResumeHook: Send + Sync {
     async fn on_store_inputs(&self, inputs: &mut RunInputs) {
         let _ = inputs;
     }
+
+    /// Whether a new run of this workspace goes through durable mode (a
+    /// host's per-workspace switch). `false`: the request runs the legacy
+    /// in-memory path even though the orchestrator has a durable runtime.
+    /// Default: always.
+    async fn durable_enabled(&self, workspace_id: Option<&str>) -> bool {
+        let _ = workspace_id;
+        true
+    }
+
+    /// The run finished (not parked, not failed or canceled) at the end of
+    /// a segment. `state.segments > 1` means it parked at least once, so the
+    /// request stream that started it may be gone: a host delivers the final
+    /// answer to `inputs.reply_to` here (B6). Called after the claim is
+    /// released. Default: nothing.
+    async fn on_finished(
+        &self,
+        task_id: &str,
+        inputs: &RunInputs,
+        state: &RunState,
+        context: &ExecutorContext,
+    ) {
+        let _ = (task_id, inputs, state, context);
+    }
 }
 
 /// The OSS default [`ResumeHook`].

@@ -343,7 +343,7 @@ impl A2AService {
         // itself never exposes the prompt or execution config.
         let server_config = server_config.unwrap_or_default();
         let mut card = agent_config.to_card(&server_config);
-        card.durable_runs = self.orchestrator.durable.is_some();
+        card.durable_runs = self.orchestrator.durable_runs_for_caller().await;
         Ok(card)
     }
 
@@ -450,7 +450,18 @@ impl A2AService {
 
         // Durable mode: the worker claims and runs the task instead of a
         // bare spawn.
-        if let Some(runtime) = self.orchestrator.durable.clone() {
+        let durable = match self.orchestrator.durable.clone() {
+            Some(rt)
+                if rt
+                    .resume_hook
+                    .durable_enabled(exec_ctx.workspace_id.as_deref())
+                    .await =>
+            {
+                Some(rt)
+            }
+            _ => None,
+        };
+        if let Some(runtime) = durable {
             let caller_env_supplied = params
                 .metadata
                 .as_ref()

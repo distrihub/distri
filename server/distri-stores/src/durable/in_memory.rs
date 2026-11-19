@@ -371,7 +371,14 @@ impl RunQueue for InMemoryDurableStore {
 impl PendingCallStore for InMemoryDurableStore {
     async fn create(&self, call: NewPendingCall) -> anyhow::Result<()> {
         let mut inner = self.lock();
-        if inner.calls.contains_key(&call.id) {
+        if let Some(existing) = inner.calls.get(&call.id) {
+            if existing.task_id != call.task_id {
+                anyhow::bail!(
+                    "pending call id {} already belongs to task {}",
+                    call.id,
+                    existing.task_id
+                );
+            }
             return Ok(());
         }
         inner.order.push(call.id.clone());
