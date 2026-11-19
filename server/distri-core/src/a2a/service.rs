@@ -22,7 +22,6 @@ use crate::AgentError;
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MessageSendParams, Task, TaskIdParams,
 };
-use distri_auth::context::with_user_id;
 use futures::future::Either;
 use futures_util::future::poll_fn;
 use futures_util::stream::BoxStream;
@@ -110,12 +109,20 @@ pub struct ResubscribeSession {
 /// poll. Mirrors the behavior previously inlined in `a2a/stream.rs`.
 struct UserScopedStream<S> {
     user_id: String,
+    /// The request's workspace: a tenant-scoped store read while the stream
+    /// is polled (the trailing final answer, read from the saved history
+    /// when a later segment produced it — B3) needs it.
+    workspace_id: Option<uuid::Uuid>,
     inner: Pin<Box<S>>,
 }
 
 impl<S> UserScopedStream<S> {
-    fn new(user_id: String, inner: Pin<Box<S>>) -> Self {
-        Self { user_id, inner }
+    fn new(user_id: String, workspace_id: Option<uuid::Uuid>, inner: Pin<Box<S>>) -> Self {
+        Self {
+            user_id,
+            workspace_id,
+            inner,
+        }
     }
 }
 
@@ -128,9 +135,11 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
         let user_id = this.user_id.clone();
+        let workspace_id = this.workspace_id;
         let mut inner = this.inner.as_mut();
-        let mut fut = Box::pin(with_user_id(
+        let mut fut = Box::pin(distri_auth::context::with_user_and_workspace(
             user_id,
+            workspace_id,
             poll_fn(|cx| inner.as_mut().poll_next(cx)),
         ));
         fut.as_mut().poll(cx)
@@ -241,9 +250,16 @@ impl A2AService {
         let mut parked = false;
         while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
             let is_root = event.parent_task_id.is_none() && event.task_id == task_id;
-            if is_root && matches!(&event.event, AgentEventType::RunParked { .. }) {
-                parked = true;
-                break;
+            if let (true, AgentEventType::RunParked { pending, .. }) = (is_root, &event.event) {
+                // A broadcaster that replays the task's log (Redis) shows
+                // the parks of earlier segments too: only a park whose calls
+                // are still open ends this request (S26: a tool-result
+                // message to a parked task follows the run it resumed).
+                if self.park_is_current(pending).await {
+                    parked = true;
+                    break;
+                }
+                continue;
             }
             let is_root_terminal = matches!(
                 &event.event,
@@ -531,6 +547,27 @@ impl A2AService {
         })
     }
 
+    /// Whether a `RunParked` event still describes the task: one of the calls
+    /// it waits on is still pending. A replayed park of an earlier segment
+    /// (its calls since answered) is not.
+    async fn park_is_current(&self, pending: &[String]) -> bool {
+        let Some(durable) = &self.orchestrator.durable else {
+            return true;
+        };
+        if pending.is_empty() {
+            return true;
+        }
+        for id in pending {
+            match durable.pending_calls.get(id).await {
+                Ok(Some(c)) if c.status.is_closed() => continue,
+                // Pending, unknown to this caller, or unreadable: treat the
+                // park as live (the old behaviour).
+                _ => return true,
+            }
+        }
+        false
+    }
+
     /// Durable-mode start of a request (replaces the bare spawn): store the
     /// run inputs, claim the task (it is created claimed), and run the
     /// segment through the worker. A tool-result message to a parked task
@@ -687,7 +724,7 @@ impl A2AService {
         let StreamingSession {
             req_id,
             user_id,
-            workspace_id: _,
+            workspace_id,
             task_id: _,
             thread_id: _,
             executor_context,
@@ -741,7 +778,11 @@ impl A2AService {
             }
         };
 
-        Box::pin(UserScopedStream::new(stream_user_id, Box::pin(stream))) as BoxedSseStream
+        Box::pin(UserScopedStream::new(
+            stream_user_id,
+            workspace_id,
+            Box::pin(stream),
+        )) as BoxedSseStream
     }
 
     pub async fn prepare_resubscribe(
