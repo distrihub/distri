@@ -86,7 +86,9 @@ macro_rules! define_routes {
 define_routes! {
     // ── Agents (the embed-critical surface: a2a dispatch + CRUD) ────────────
     /// Agent card — a2a discovery doc; intentionally public.
-    AgentCard         => "/agents/{agent_name}/.well-known/agent.json" { GET: Public },
+    AgentCard         => "/agents/{agent_name}/.well-known/agent-card.json" { GET: Public },
+    /// A2A 0.x card path, kept for one release.
+    AgentCardLegacy   => "/agents/{agent_name}/.well-known/agent.json" { GET: Public },
     /// Lightweight agent-card list — the client/external surface. Returns only
     /// discovery metadata (name, description, version, icon, skills), never the
     /// system prompt / tools / model config that the full `/agents` list exposes.
