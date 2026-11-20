@@ -61,6 +61,8 @@ pub use mcp::*;
 pub use tenant_context::*;
 pub mod a2a_converters;
 pub mod a2a_extensions;
+pub mod agent_ref;
+pub use agent_ref::{AgentRef, AgentRefError, AgentVersionSel};
 pub mod agent_contract;
 pub mod thinking;
 

@@ -685,6 +685,17 @@ pub trait AgentStore: Send + Sync {
     ) -> (Vec<crate::configuration::AgentConfig>, Option<String>);
 
     async fn get(&self, name: &str) -> Option<crate::configuration::AgentConfig>;
+    /// A saved version of `name` (`version_no` 1, 2, …), as it was saved.
+    /// Hosts that keep agent history implement it (cloud: from
+    /// `agent_config_versions`, scoped to the caller's workspace); the
+    /// default has no history, so every `name@N` is "version not found".
+    async fn get_version(
+        &self,
+        _name: &str,
+        _version_no: u32,
+    ) -> Option<crate::configuration::AgentConfig> {
+        None
+    }
     async fn register(&self, config: crate::configuration::AgentConfig) -> anyhow::Result<()>;
     /// Update an existing agent with new definition
     async fn update(&self, config: crate::configuration::AgentConfig) -> anyhow::Result<()>;

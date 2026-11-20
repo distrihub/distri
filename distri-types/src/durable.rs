@@ -467,9 +467,13 @@ pub struct RunInputs {
     /// The workspace default model the request ran with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_settings: Option<ModelSettings>,
-    /// Pinned agent version.
+    /// The agent's own semver (`version = "0.2.0"` in its file), for traces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_version: Option<String>,
+    /// The saved version the run is pinned to (`name@N`); `None` runs the
+    /// latest. A resume reloads this same version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_version_no: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<ReplyTo>,
     #[serde(default)]

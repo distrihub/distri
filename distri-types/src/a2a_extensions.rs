@@ -29,6 +29,8 @@ pub use distri_a2a::legacy::PART_TYPE_KEY;
 /// of their own: distri adds it with `event-stream` active, and always on
 /// its own `GET /threads/{id}/messages`.
 pub const CREATED_AT_KEY: &str = "distri/created_at";
+/// Task metadata key: the saved agent version a pinned run (`name@N`) runs.
+pub const AGENT_VERSION_NO_KEY: &str = "distri/agent_version_no";
 
 /// A time as the wire writes it: ISO-8601 with milliseconds, UTC `Z`.
 pub fn iso_millis(at: chrono::DateTime<chrono::Utc>) -> String {
@@ -394,6 +396,23 @@ pub fn set_agent_extension(card: &mut AgentCard, descriptor: &AgentDescriptor) {
         .push(descriptor.agent_extension());
 }
 
+/// Make `card` the card of `name@N` (spec agent-versions V1): each
+/// interface URL is the pinned endpoint (`…/agents/name@N`) and the `agent`
+/// extension's `version_no` is `N`. The card's `name` stays the bare name.
+pub fn pin_card(card: &mut AgentCard, version_no: u32) {
+    for iface in card.supported_interfaces.iter_mut() {
+        // Replace a pin already on the endpoint rather than stacking one.
+        let base = match iface.url.rsplit_once('@') {
+            Some((base, tail)) if !tail.contains('/') => base.to_string(),
+            _ => iface.url.clone(),
+        };
+        iface.url = format!("{base}@{version_no}");
+    }
+    let mut descriptor = AgentDescriptor::from_card(card).unwrap_or_default();
+    descriptor.version_no = Some(version_no as i32);
+    set_agent_extension(card, &descriptor);
+}
+
 /// How a request came to have its extensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActivationSource {
@@ -595,5 +614,52 @@ mod tests {
             a.unactivated_metadata(Some(&m)),
             vec![DistriExtension::RunConfig]
         );
+    }
+
+    #[test]
+    fn pinned_card_names_the_pinned_endpoint_and_version() {
+        let def: crate::StandardDefinition = serde_json::from_value(json!({
+            "name": "pkg/helper",
+            "description": "d",
+        }))
+        .unwrap();
+        let config = crate::configuration::AgentConfig::StandardAgent(def);
+        let server = crate::configuration::ServerConfig {
+            base_url: "https://api.example/v1".into(),
+            ..Default::default()
+        };
+        let mut card = config.to_card(&server);
+        pin_card(&mut card, 3);
+        assert_eq!(card.name, "pkg/helper");
+        assert_eq!(
+            card.supported_interfaces[0].url,
+            "https://api.example/v1/agents/pkg/helper@3"
+        );
+        assert_eq!(AgentDescriptor::from_card(&card).unwrap().version_no, Some(3));
+        // Pinning again replaces the pin.
+        pin_card(&mut card, 4);
+        assert_eq!(
+            card.supported_interfaces[0].url,
+            "https://api.example/v1/agents/pkg/helper@4"
+        );
+    }
+
+    #[test]
+    fn run_inputs_carry_the_pinned_version() {
+        let inputs = crate::RunInputs {
+            agent_id: "a".into(),
+            agent_version_no: Some(2),
+            ..Default::default()
+        };
+        let v = serde_json::to_value(&inputs).unwrap();
+        assert_eq!(v["agent_version_no"], 2);
+        let back: crate::RunInputs = serde_json::from_value(v).unwrap();
+        assert_eq!(back.agent_version_no, Some(2));
+        // Stored inputs from before the field run the latest.
+        let old: crate::RunInputs = serde_json::from_value(json!({
+            "agent_id": "a", "thread_id": "t", "principal": {"user_id": "u"}
+        }))
+        .unwrap();
+        assert_eq!(old.agent_version_no, None);
     }
 }

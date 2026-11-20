@@ -2,6 +2,9 @@
 pub enum AgentError {
     #[error("Agent not found: {0}")]
     AgentNotFound(String),
+    /// `name@N` names a version the host does not have.
+    #[error("agent version not found: {agent}@{version}")]
+    AgentVersionNotFound { agent: String, version: u32 },
     #[error("Tool not found: {0}")]
     ToolNotFound(String),
     #[error("Tool execution failed: {0}")]
