@@ -6,6 +6,8 @@ use distri_types::{
 };
 use serde_json::Value;
 
+/// A thread's history as A2A 1.0 `StreamResponse` values
+/// (`{"message": …}` / `{"statusUpdate": …}`, the envelope in metadata).
 pub async fn get_a2a_messages(
     task_store: Arc<dyn TaskStore>,
     thread_id: &str,
@@ -51,12 +53,13 @@ pub async fn get_a2a_messages(
         .flat_map(|(task, msgs)| {
             msgs.iter()
                 .map(|msg| match msg {
-                    TaskMessage::Message(msg) => {
-                        tracing::debug!("Converting message to A2A: {:?}", msg);
-                        serde_json::to_value(crate::a2a::to_a2a_message(msg, &task))
-                    }
+                    TaskMessage::Message(msg) => serde_json::to_value(
+                        distri_a2a::StreamResponse::Message(crate::a2a::to_a2a_message(msg, task)),
+                    ),
                     TaskMessage::Event(evt) => {
-                        serde_json::to_value(crate::a2a::to_a2a_task_update(evt, &task))
+                        serde_json::to_value(distri_a2a::StreamResponse::StatusUpdate(
+                            crate::a2a::to_a2a_task_update(evt, task),
+                        ))
                     }
                 })
                 .collect::<Vec<Result<Value, serde_json::Error>>>()

@@ -216,19 +216,24 @@ async fn resubscribe_on_finished_task_replays_its_history() {
     }
     // 6 persisted events + 1 message + the synthesized terminal frame.
     assert_eq!(frames.len(), 8, "frames: {frames:#?}");
-    let kinds: Vec<distri_a2a::MessageKind> = frames
+    let kinds: Vec<distri_a2a::StreamResponse> = frames
         .iter()
         .map(|d| {
-            let rpc: distri_a2a::JsonRpcResponseFor<distri_a2a::MessageKind> =
+            let rpc: distri_a2a::JsonRpcResponseFor<distri_a2a::StreamResponse> =
                 serde_json::from_str(d).unwrap();
             rpc.result.expect("frame carries a result")
         })
         .collect();
     let replayed_call = kinds.iter().any(|k| match k {
-        distri_a2a::MessageKind::TaskStatusUpdate(u) => u
+        distri_a2a::StreamResponse::StatusUpdate(u) => u
             .metadata
             .clone()
-            .and_then(|m| serde_json::from_value::<distri_types::AgentEventEnvelope>(m).ok())
+            .and_then(|m| {
+                serde_json::from_value::<distri_types::AgentEventEnvelope>(
+                    serde_json::Value::Object(m),
+                )
+                .ok()
+            })
             .is_some_and(|env| {
                 matches!(
                     env.event,
@@ -242,11 +247,14 @@ async fn resubscribe_on_finished_task_replays_its_history() {
     assert!(
         kinds
             .iter()
-            .any(|k| matches!(k, distri_a2a::MessageKind::Message(_))),
+            .any(|k| matches!(k, distri_a2a::StreamResponse::Message(_))),
         "the final message is replayed"
     );
     match kinds.last().unwrap() {
-        distri_a2a::MessageKind::TaskStatusUpdate(u) => assert!(u.r#final),
+        distri_a2a::StreamResponse::StatusUpdate(u) => assert_eq!(
+            u.metadata.as_ref().and_then(|m| m.get("final")),
+            Some(&json!(true))
+        ),
         other => panic!("last frame must be the terminal status, got {other:?}"),
     }
 }
@@ -486,7 +494,7 @@ async fn resubscribe_ends_with_the_final_answer() {
         .unwrap();
     let last = session.history.last().cloned().expect("history");
     match last {
-        distri_a2a::MessageKind::Message(m) => {
+        distri_a2a::StreamResponse::Message(m) => {
             let m = distri_types::Message::try_from(m).unwrap();
             assert_eq!(m.id, distri_types::Message::final_answer_id(&worker));
             assert_eq!(m.as_text().as_deref(), Some("4 open release issues"));

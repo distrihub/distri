@@ -522,7 +522,7 @@ impl AgentLoop {
                     context
                         .emit(AgentEventType::RunError {
                             message: format!("Step execution failed: {}", e),
-                            code: Some("EXECUTION_ERROR".to_string()),
+                            code: Some(crate::a2a::agent_run_error_code(&e).to_string()),
                             usage: Some(context.get_step_usage().await),
                         })
                         .await;

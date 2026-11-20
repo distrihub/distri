@@ -378,6 +378,7 @@ fn service_request(h: &Harness, req: JsonRpcRequest) -> ServiceRequest {
         verbose: false,
         workspace_model_settings: None,
         caller: None,
+        extensions: vec![],
     }
     .with_harness(h)
 }
@@ -1270,3 +1271,354 @@ async fn agent_card_advertises_durable_runs() {
 // Keep the unused-import lint quiet for helpers some scenarios skip.
 #[allow(dead_code)]
 fn _unused(_: AgentEvent) {}
+
+// ── A2A 1.0: standard vs event-stream mode, activation ──────────────────────
+
+const EVENT_STREAM: &str = "https://distri.dev/a2a/extensions/event-stream/v1";
+const CLIENT_TOOLS: &str = "https://distri.dev/a2a/extensions/client-tools/v1";
+
+/// A 1.0 request (`ROLE_USER`, field-presence parts), optionally activating
+/// extensions through `Message.extensions`.
+fn request_v1(
+    method: &str,
+    thread_id: &str,
+    parts: serde_json::Value,
+    message_extensions: &[&str],
+    metadata: serde_json::Value,
+) -> JsonRpcRequest {
+    let mut message = json!({
+        "messageId": uuid::Uuid::new_v4().to_string(),
+        "role": "ROLE_USER",
+        "parts": parts,
+        "contextId": thread_id,
+    });
+    if !message_extensions.is_empty() {
+        message["extensions"] = json!(message_extensions);
+    }
+    // The test agent declares `external = ["*"]`: always ship `pick`.
+    let mut metadata = metadata;
+    metadata["external_tools"] = json!([{
+        "name": "pick", "description": "pick", "parameters": {"type": "object"}
+    }]);
+    serde_json::from_value(json!({
+        "jsonrpc": "2.0", "id": "1", "method": method,
+        "params": { "message": message, "metadata": metadata }
+    }))
+    .unwrap()
+}
+
+/// Run a streaming request to the end; the `result` of every frame.
+async fn stream_all(h: &Harness, req: ServiceRequest) -> Vec<serde_json::Value> {
+    let stream = match h.service.handle(req).await {
+        Either::Left(s) => s,
+        Either::Right(r) => panic!("expected a stream, got {r:?}"),
+    };
+    let frames: Vec<_> = tokio::time::timeout(Duration::from_secs(10), stream.collect::<Vec<_>>())
+        .await
+        .expect("stream ends");
+    frames
+        .into_iter()
+        .map(|f| {
+            let v: serde_json::Value = serde_json::from_str(&f.unwrap().data).unwrap();
+            assert!(v.get("error").is_none(), "error frame: {v}");
+            v["result"].clone()
+        })
+        .collect()
+}
+
+fn one_key(frame: &serde_json::Value) -> &str {
+    let obj = frame.as_object().expect("object");
+    assert_eq!(obj.len(), 1, "a StreamResponse has one field: {frame}");
+    obj.keys().next().unwrap()
+}
+
+#[tokio::test]
+async fn standard_mode_streams_plain_a2a() {
+    let h = harness(
+        ScriptedLlm::new(vec![
+            call("c1", "echo", json!({})),
+            final_answer("all done"),
+        ]),
+        Opts::default(),
+    )
+    .await;
+    let req = request_v1(
+        "SendStreamingMessage",
+        &h.thread_id,
+        json!([{ "text": "go" }]),
+        &[],
+        json!({}),
+    );
+    let frames = stream_all(&h, service_request(&h, req)).await;
+    let kinds: Vec<&str> = frames.iter().map(one_key).collect();
+    assert_eq!(kinds.first(), Some(&"task"), "{kinds:?}");
+    assert_eq!(kinds.last(), Some(&"task"), "{kinds:?}");
+    for f in &frames {
+        if let Some(u) = f.get("statusUpdate") {
+            assert!(u.get("metadata").is_none(), "no distri envelope: {u}");
+            let ts = u["status"]["timestamp"].as_str().expect("timestamp");
+            assert!(
+                chrono::DateTime::parse_from_rfc3339(ts).is_ok(),
+                "ISO: {ts}"
+            );
+            assert!(u["status"]["state"]
+                .as_str()
+                .unwrap()
+                .starts_with("TASK_STATE_"));
+        }
+    }
+    let terminal = frames
+        .iter()
+        .rev()
+        .find_map(|f| f.get("statusUpdate"))
+        .expect("terminal status");
+    assert_eq!(
+        terminal["status"]["state"], "TASK_STATE_COMPLETED",
+        "{terminal}"
+    );
+    assert_eq!(
+        terminal["status"]["message"]["parts"][0]["text"],
+        "all done"
+    );
+    assert_eq!(terminal["status"]["message"]["role"], "ROLE_AGENT");
+    let task = &frames.last().unwrap()["task"];
+    assert_eq!(task["status"]["state"], "TASK_STATE_COMPLETED");
+}
+
+#[tokio::test]
+async fn event_stream_activated_by_header_carries_envelopes() {
+    let h = harness(
+        ScriptedLlm::new(vec![call("c1", "echo", json!({})), final_answer("done")]),
+        Opts::default(),
+    )
+    .await;
+    let req = request_v1(
+        "SendStreamingMessage",
+        &h.thread_id,
+        json!([{ "text": "go" }]),
+        &[],
+        json!({}),
+    );
+    let mut sr = service_request(&h, req);
+    sr.extensions = vec![format!("{EVENT_STREAM}, {CLIENT_TOOLS}")]
+        .iter()
+        .flat_map(|v| distri_a2a::parse_extensions_header([v.as_str()]))
+        .collect();
+    let frames = stream_all(&h, sr).await;
+    let envelopes: Vec<&serde_json::Value> = frames
+        .iter()
+        .filter_map(|f| f.get("statusUpdate"))
+        .map(|u| u.get("metadata").expect("envelope on every status update"))
+        .collect();
+    let types: Vec<&str> = envelopes
+        .iter()
+        .filter_map(|m| m["type"].as_str())
+        .collect();
+    assert!(types.contains(&"run_started"), "{types:?}");
+    assert!(
+        types.contains(&"tool_calls"),
+        "client-tools active: {types:?}"
+    );
+    let finished = envelopes
+        .iter()
+        .find(|m| m["type"] == "run_finished")
+        .expect("run_finished");
+    assert_eq!(finished["final"], true, "final on the root's end");
+    assert!(finished["step_id"].is_string(), "step_id set: {finished}");
+    assert_eq!(
+        one_key(frames.last().unwrap()),
+        "message",
+        "trailing answer"
+    );
+}
+
+#[tokio::test]
+async fn event_stream_activated_by_message_extensions() {
+    let h = harness(
+        ScriptedLlm::new(vec![final_answer("done")]),
+        Opts::default(),
+    )
+    .await;
+    let req = request_v1(
+        "SendStreamingMessage",
+        &h.thread_id,
+        json!([{ "text": "go" }]),
+        &[EVENT_STREAM],
+        json!({}),
+    );
+    let frames = stream_all(&h, service_request(&h, req)).await;
+    let updates: Vec<_> = frames
+        .iter()
+        .filter_map(|f| f.get("statusUpdate"))
+        .collect();
+    assert!(!updates.is_empty());
+    assert!(updates.iter().all(|u| u["metadata"]["type"].is_string()));
+    // tool_calls belong to client-tools, not activated: no envelope for them.
+    assert!(!updates
+        .iter()
+        .any(|u| u["metadata"]["type"] == "tool_calls"));
+}
+
+#[tokio::test]
+async fn standard_mode_park_is_input_required_with_the_call() {
+    let h = harness(
+        ScriptedLlm::new(vec![call("call_pick", "pick", json!({}))]),
+        Opts::default(),
+    )
+    .await;
+    // Client-tools metadata without activating client-tools: deprecated,
+    // still honoured.
+    let req = request_v1(
+        "SendStreamingMessage",
+        &h.thread_id,
+        json!([{ "text": "pick" }]),
+        &[],
+        json!({ "external_tools": [{
+            "name": "pick", "description": "pick", "parameters": {"type": "object"}
+        }] }),
+    );
+    let frames = stream_all(&h, service_request(&h, req)).await;
+    let task = &frames.last().unwrap()["task"];
+    assert_eq!(
+        task["status"]["state"], "TASK_STATE_INPUT_REQUIRED",
+        "{frames:#?}"
+    );
+    let parts = task["status"]["message"]["parts"].as_array().unwrap();
+    let call = parts
+        .iter()
+        .find(|p| p["metadata"]["distri/part_type"] == "tool_call")
+        .expect("the pending call as a DataPart");
+    assert_eq!(call["data"]["tool_call_id"], "call_pick");
+}
+
+#[tokio::test]
+async fn send_message_v1_accepts_a_plain_data_part() {
+    let h = harness(
+        ScriptedLlm::new(vec![final_answer("got it")]),
+        Opts::default(),
+    )
+    .await;
+    let req = request_v1(
+        "SendMessage",
+        &h.thread_id,
+        json!([{ "text": "here" }, { "data": { "city": "Paris" } }]),
+        &[],
+        json!({}),
+    );
+    let resp = match h.service.handle(service_request(&h, req)).await {
+        Either::Right(r) => serde_json::to_value(r).unwrap(),
+        Either::Left(_) => panic!("SendMessage answers with JSON"),
+    };
+    assert!(resp.get("error").is_none(), "{resp}");
+    let task = &resp["result"]["task"];
+    assert_eq!(task["status"]["state"], "TASK_STATE_COMPLETED", "{resp}");
+    assert_eq!(task["status"]["message"]["parts"][0]["text"], "got it");
+    assert!(task["metadata"].get("pending_calls").is_none());
+}
+
+#[tokio::test]
+async fn v1_send_message_hides_pending_calls_unless_durable_runs_is_active() {
+    let h = harness(
+        ScriptedLlm::new(vec![call("call_pick", "pick", json!({}))]),
+        Opts::default(),
+    )
+    .await;
+    let req = request_v1(
+        "SendMessage",
+        &h.thread_id,
+        json!([{ "text": "pick" }]),
+        &[
+            CLIENT_TOOLS,
+            "https://distri.dev/a2a/extensions/durable-runs/v1",
+        ],
+        json!({ "external_tools": [{
+            "name": "pick", "description": "pick", "parameters": {"type": "object"}
+        }] }),
+    );
+    let resp = match h.service.handle(service_request(&h, req)).await {
+        Either::Right(r) => serde_json::to_value(r).unwrap(),
+        Either::Left(_) => panic!("JSON"),
+    };
+    let task = &resp["result"]["task"];
+    assert_eq!(
+        task["status"]["state"], "TASK_STATE_INPUT_REQUIRED",
+        "{resp}"
+    );
+    assert_eq!(task["metadata"]["pending_calls"][0]["id"], "call_pick");
+}
+
+#[tokio::test]
+async fn get_list_and_cancel_tasks_v1() {
+    let h = harness(ScriptedLlm::new(vec![final_answer("ok")]), Opts::default()).await;
+    let req = request_v1(
+        "SendMessage",
+        &h.thread_id,
+        json!([{ "text": "hi" }]),
+        &[],
+        json!({}),
+    );
+    let resp = match h.service.handle(service_request(&h, req)).await {
+        Either::Right(r) => serde_json::to_value(r).unwrap(),
+        Either::Left(_) => panic!("JSON"),
+    };
+    let task_id = resp["result"]["task"]["id"].as_str().unwrap().to_string();
+    let call = |method: &str, params: serde_json::Value| {
+        serde_json::from_value::<JsonRpcRequest>(
+            json!({"jsonrpc":"2.0","id":"1","method":method,"params":params}),
+        )
+        .unwrap()
+    };
+    let rpc = |req| async {
+        match h.service.handle(service_request(&h, req)).await {
+            Either::Right(r) => serde_json::to_value(r).unwrap(),
+            Either::Left(_) => panic!("JSON"),
+        }
+    };
+    let got = rpc(call(
+        "GetTask",
+        json!({ "id": task_id, "historyLength": 10 }),
+    ))
+    .await;
+    assert_eq!(got["result"]["id"], task_id.as_str());
+    assert_eq!(got["result"]["status"]["message"]["parts"][0]["text"], "ok");
+    assert!(got["result"]["history"]
+        .as_array()
+        .is_some_and(|h| !h.is_empty()));
+    let listed = rpc(call("ListTasks", json!({ "contextId": h.thread_id }))).await;
+    assert!(listed["result"]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|t| t["id"] == task_id.as_str()));
+    assert_eq!(listed["result"]["totalSize"], 1);
+    let cancel = rpc(call("CancelTask", json!({ "id": task_id }))).await;
+    assert_eq!(
+        cancel["error"]["code"], -32002,
+        "a completed task is not cancelable"
+    );
+    let missing = rpc(call("GetTask", json!({ "id": "nope" }))).await;
+    assert_eq!(missing["error"]["code"], -32001);
+}
+
+#[tokio::test]
+async fn legacy_method_names_get_0x_shapes() {
+    let h = harness(
+        ScriptedLlm::new(vec![final_answer("done")]),
+        Opts::default(),
+    )
+    .await;
+    let req = request(
+        "message/stream",
+        &h.thread_id,
+        None,
+        json!([{ "kind": "text", "text": "go" }]),
+    );
+    let frames = stream_all(&h, service_request(&h, req)).await;
+    assert!(frames.iter().all(|f| f["kind"].is_string()), "{frames:#?}");
+    let fin = frames
+        .iter()
+        .find(|f| f["kind"] == "status-update" && f["final"] == true)
+        .expect("0.x final frame");
+    assert_eq!(fin["metadata"]["type"], "run_finished");
+    assert_eq!(frames.last().unwrap()["kind"], "message");
+}

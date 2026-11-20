@@ -404,7 +404,7 @@ async fn run_segment_inner(
                 ctx.update_status(TaskStatus::Failed).await;
                 ctx.emit(AgentEventType::RunError {
                     message: e.to_string(),
-                    code: Some("EXECUTION_ERROR".to_string()),
+                    code: Some(crate::a2a::run_error_code(&e).to_string()),
                     usage: Some(ctx.get_step_usage().await),
                 })
                 .await;

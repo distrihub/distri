@@ -132,7 +132,7 @@ pub async fn prepare_execution(
     executor_context: &Arc<ExecutorContext>,
 ) -> Result<(ExecutorContext, DefinitionOverrides), AgentError> {
     let metadata_struct: ExecutorContextMetadata = match params.metadata.clone() {
-        Some(m) => serde_json::from_value(m)
+        Some(m) => serde_json::from_value(serde_json::Value::Object(m))
             .map_err(|e| AgentError::Validation(format!("Invalid metadata: {e}")))?,
         None => ExecutorContextMetadata::default(),
     };
@@ -267,7 +267,7 @@ pub(crate) async fn run_and_settle<F>(
             executor_context
                 .emit(AgentEventType::RunError {
                     message: e.to_string(),
-                    code: Some("EXECUTION_ERROR".to_string()),
+                    code: Some(crate::a2a::run_error_code(&e).to_string()),
                     usage: Some(executor_context.get_step_usage().await),
                 })
                 .await;

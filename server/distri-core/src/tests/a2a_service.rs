@@ -330,22 +330,25 @@ async fn resubscribe_after_terminal_synthesizes_final_event() {
     }
 }
 
-// ── 7c.10 unimplemented_methods_return_method_not_found ─────────────────────
+// ── 7c.10 unsupported methods answer with their A2A error codes ──────────────
 
 #[tokio::test]
-async fn unimplemented_methods_return_method_not_found() {
+async fn unsupported_methods_return_a2a_error_codes() {
     let service = build_service().await;
-    let method_names = [
-        "agent/authenticatedExtendedCard",
-        "tasks/pushNotificationConfig/set",
-        "tasks/pushNotificationConfig/get",
-        "tasks/pushNotificationConfig/delete",
-        "tasks/pushNotificationConfig/list",
-        "tasks/pushNotificationConfig/test",
-        "totally/bogus/method",
+    let cases = [
+        ("agent/authenticatedExtendedCard", -32007),
+        ("GetExtendedAgentCard", -32007),
+        ("tasks/pushNotificationConfig/set", -32003),
+        ("tasks/pushNotificationConfig/get", -32003),
+        ("tasks/pushNotificationConfig/delete", -32003),
+        ("tasks/pushNotificationConfig/list", -32003),
+        ("CreateTaskPushNotificationConfig", -32003),
+        ("ListTaskPushNotificationConfigs", -32003),
+        ("tasks/pushNotificationConfig/test", -32601),
+        ("totally/bogus/method", -32601),
     ];
 
-    for m in method_names.iter() {
+    for (m, code) in cases.iter() {
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: m.to_string(),
@@ -362,23 +365,18 @@ async fn unimplemented_methods_return_method_not_found() {
                 verbose: false,
                 workspace_model_settings: None,
                 caller: None,
+                extensions: vec![],
             })
             .await;
         match resp {
             Either::Right(r) => {
                 let err = r
                     .error
-                    .expect("unimplemented method must yield JSON-RPC error");
-                assert_eq!(
-                    err.code, -32601,
-                    "method {} must map to -32601 Method not found; got code {}",
-                    m, err.code
-                );
-                assert!(
-                    err.message.contains(m),
-                    "error message must mention the method; got: {}",
-                    err.message
-                );
+                    .expect("unsupported method must yield JSON-RPC error");
+                assert_eq!(err.code, *code, "method {m}: got {}", err.code);
+                if *code == -32601 {
+                    assert!(err.message.contains(m), "{}", err.message);
+                }
             }
             Either::Left(_) => {
                 panic!("method {} must produce a non-streaming error response", m);
@@ -395,9 +393,9 @@ async fn jsonrpc_error_helpers_produce_correct_codes() {
     let e = agent_error_to_jsonrpc(AgentError::Validation("bad".to_string()));
     assert_eq!(e.code, -32602);
 
-    // -32004 for NotFound (application-defined).
+    // -32001 TaskNotFound for NotFound.
     let e = agent_error_to_jsonrpc(AgentError::NotFound("nope".to_string()));
-    assert_eq!(e.code, -32004);
+    assert_eq!(e.code, -32001);
 
     // -32603 (Internal) for everything else.
     let e = agent_error_to_jsonrpc(AgentError::LLMError("boom".to_string()));
@@ -439,6 +437,7 @@ fn make_service_request(method: &str, params: serde_json::Value) -> ServiceReque
         verbose: false,
         workspace_model_settings: None,
         caller: None,
+        extensions: vec![],
     }
 }
 
@@ -511,10 +510,7 @@ async fn build_final_message_returns_none_when_no_final_result() {
         1,
         "final message must have exactly one text part"
     );
-    match &msg.parts[0] {
-        distri_a2a::Part::Text(t) => assert_eq!(t.text, "hello world"),
-        other => panic!("expected Text part; got {:?}", other),
-    }
+    assert_eq!(msg.parts[0].as_text(), Some("hello world"));
     assert_eq!(msg.task_id, Some(ctx.task_id.clone()));
     assert_eq!(msg.context_id, Some(ctx.thread_id.clone()));
     // Same id as the persisted final answer, so live and history converge.

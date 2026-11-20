@@ -85,6 +85,10 @@ impl A2AHandler {
                 verbose,
                 workspace_model_settings,
                 caller: None,
+                // No header here: 0.x method names activate every distri
+                // extension; 1.0 callers should use `A2AService` directly
+                // and pass their `A2A-Extensions`.
+                extensions: Vec::new(),
             })
             .await
     }

@@ -185,6 +185,10 @@ pub struct ExecutorContext {
     /// Arbitrary caller-supplied tags. Recorded on the agent span and merged
     /// into the thread's attributes. Empty by default.
     pub tags: HashMap<String, String>,
+    /// A2A extensions the request activated (`A2A-Extensions` header or
+    /// `Message.extensions`; all of distri's for a 0.x caller). Inherited by
+    /// sub-agents.
+    pub a2a_extensions: distri_types::a2a_extensions::ActiveExtensions,
     /// Resolved agent version (provenance). Recorded on the agent span.
     pub agent_version: Option<String>,
     /// Who sent the request that started this run. Inherited by sub-agents
@@ -289,6 +293,7 @@ impl Default for ExecutorContext {
             is_sandbox: false,
             connections_used: Arc::new(RwLock::new(HashSet::new())),
             tags: HashMap::new(),
+            a2a_extensions: Default::default(),
             agent_version: None,
             caller: None,
             trace_context: None,
@@ -1358,6 +1363,7 @@ impl ExecutorContext {
             is_sandbox: self.is_sandbox,
             connections_used: self.connections_used.clone(),
             tags: self.tags.clone(),
+            a2a_extensions: self.a2a_extensions.clone(),
             agent_version: self.agent_version.clone(),
             caller: self.caller.clone(),
             trace_context: self.trace_context.clone(),
