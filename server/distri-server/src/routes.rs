@@ -571,7 +571,17 @@ async fn get_agent_definition(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
-    let agent_id = id.into_inner();
+    let agent_id = agent_ref_from_path(&id.into_inner());
+    // `name@N`: that saved version's definition.
+    if let Ok(agent) = distri_types::AgentRef::parse(&agent_id) {
+        if agent.version_no().is_some() {
+            if let Err(e) = executor.resolve_agent(&agent).await {
+                if let Some(resp) = agent_ref_error(&e) {
+                    return resp;
+                }
+            }
+        }
+    }
 
     // Try store with cloud metadata first, then fall back to orchestrator resolution
     let (agent, cloud_metadata) = if let Some((cfg, meta)) = executor
@@ -740,12 +750,40 @@ async fn validate_agent_handler(
     })
 }
 
+/// An agent path segment as written: `name` or `name@N` (spec
+/// agent-versions V1). `@` may arrive raw or as `%40`, and the `/` of a
+/// package name as `%2F`.
+pub fn agent_ref_from_path(raw: &str) -> String {
+    if !raw.contains('%') {
+        return raw.to_string();
+    }
+    raw.replace("%40", "@")
+        .replace("%2F", "/")
+        .replace("%2f", "/")
+}
+
+/// The HTTP answer to an agent reference that names no agent or version.
+fn agent_ref_error(e: &AgentError) -> Option<HttpResponse> {
+    match e {
+        AgentError::NotFound(m) => Some(HttpResponse::NotFound().json(json!({ "error": m }))),
+        AgentError::AgentVersionNotFound { agent, version } => {
+            Some(HttpResponse::NotFound().json(json!({
+                "error": "agent version not found",
+                "agent": agent,
+                "version": version,
+            })))
+        }
+        AgentError::Validation(m) => Some(HttpResponse::BadRequest().json(json!({ "error": m }))),
+        _ => None,
+    }
+}
+
 async fn get_agent_card(
     agent_name: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
-    let agent_name = agent_name.into_inner();
+    let agent_name = agent_ref_from_path(&agent_name.into_inner());
 
     let handler = A2AHandler::new(executor.get_ref().clone());
     match handler
@@ -753,8 +791,8 @@ async fn get_agent_card(
         .await
     {
         Ok(card) => HttpResponse::Ok().json(card),
-        Err(distri_core::a2a::A2AError::AgentError(distri_core::AgentError::NotFound(m))) => {
-            HttpResponse::NotFound().json(json!({ "error": m }))
+        Err(distri_core::a2a::A2AError::AgentError(e)) if agent_ref_error(&e).is_some() => {
+            agent_ref_error(&e).unwrap_or_else(|| HttpResponse::NotFound().finish())
         }
         Err(e) => {
             let e: distri_a2a::JsonRpcError = e.into();
@@ -780,7 +818,8 @@ async fn a2a_handler(
     HttpResponse,
 > {
     use actix_web::Responder as _;
-    let agent_id = id.into_inner();
+    // `name` or `name@N`; the service resolves the reference.
+    let agent_id = agent_ref_from_path(&id.into_inner());
     let req = req.into_inner();
 
     // A2A extensions: activated by the `A2A-Extensions` header (comma-
@@ -2257,6 +2296,9 @@ struct CompleteToolRequest {
 /// 200 `{status:"duplicate"}`, a conflict or a late (expired) result 409, an
 /// unknown call 400 with the legacy "No pending external tool execution
 /// found" text.
+///
+/// The path's agent (`name` or `name@N`) is not used: the answer resumes the
+/// task at the version it is pinned to (spec agent-versions V3).
 async fn complete_tool_handler(
     request: web::Json<CompleteToolRequest>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -2731,5 +2773,194 @@ mod tests {
                 "header {header:?}: {body}"
             );
         }
+    }
+
+    /// An agent store with history: each save is a version (spec
+    /// agent-versions V2), like cloud's `agent_config_versions`.
+    #[derive(Default)]
+    struct HistoryStore(std::sync::Mutex<HashMap<String, Vec<distri_types::AgentConfig>>>);
+
+    #[async_trait::async_trait]
+    impl distri_types::stores::AgentStore for HistoryStore {
+        async fn list(
+            &self,
+            _c: Option<String>,
+            _l: Option<usize>,
+        ) -> (Vec<distri_types::AgentConfig>, Option<String>) {
+            let all = self.0.lock().unwrap();
+            (
+                all.values().filter_map(|v| v.last().cloned()).collect(),
+                None,
+            )
+        }
+        async fn get(&self, name: &str) -> Option<distri_types::AgentConfig> {
+            self.0.lock().unwrap().get(name)?.last().cloned()
+        }
+        async fn get_version(&self, name: &str, n: u32) -> Option<distri_types::AgentConfig> {
+            let all = self.0.lock().unwrap();
+            all.get(name)?.get((n as usize).checked_sub(1)?).cloned()
+        }
+        async fn register(&self, c: distri_types::AgentConfig) -> anyhow::Result<()> {
+            self.0
+                .lock()
+                .unwrap()
+                .entry(c.get_name().to_string())
+                .or_default()
+                .push(c);
+            Ok(())
+        }
+        async fn update(&self, c: distri_types::AgentConfig) -> anyhow::Result<()> {
+            self.register(c).await
+        }
+        async fn clear(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn delete(&self, _id: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    async fn versioned_executor(history: bool) -> Arc<AgentOrchestrator> {
+        let mut stores = distri_core::initialize_stores(&memory_store_config())
+            .await
+            .unwrap();
+        if history {
+            stores.agent_store = Arc::new(HistoryStore::default());
+        }
+        let executor = Arc::new(
+            AgentOrchestratorBuilder::default()
+                .with_stores(stores)
+                .build()
+                .await
+                .unwrap(),
+        );
+        for (name, instructions) in [("helper", "v1"), ("helper", "v2"), ("pkg/agent", "v1")] {
+            executor
+                .register_agent_definition(StandardDefinition {
+                    name: name.into(),
+                    description: "versioned".into(),
+                    instructions: instructions.into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        }
+        executor
+    }
+
+    macro_rules! versioned_app {
+        ($history:expr) => {
+            actix_web::test::init_service(
+                actix_web::App::new()
+                    .app_data(web::Data::new(versioned_executor($history).await))
+                    .app_data(web::Data::new(ServerConfig {
+                        base_url: "http://h/v1".into(),
+                        ..Default::default()
+                    }))
+                    .configure(distri),
+            )
+            .await
+        };
+    }
+
+    macro_rules! get_json {
+        ($app:expr, $uri:expr) => {{
+            let resp =
+                actix_web::test::call_service(&$app, TestRequest::get().uri($uri).to_request())
+                    .await;
+            let status = resp.status().as_u16();
+            let body = actix_web::test::read_body(resp).await;
+            (
+                status,
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap_or_default(),
+            )
+        }};
+    }
+
+    #[test]
+    fn agent_path_segments_decode_at_and_slash() {
+        assert_eq!(agent_ref_from_path("a@3"), "a@3");
+        assert_eq!(agent_ref_from_path("a%403"), "a@3");
+        assert_eq!(agent_ref_from_path("pkg%2Fa%402"), "pkg/a@2");
+        assert_eq!(agent_ref_from_path("pkg%2fa"), "pkg/a");
+    }
+
+    #[actix_rt::test]
+    async fn a_pinned_card_is_served_on_name_at_n() {
+        let app = versioned_app!(true);
+        for uri in [
+            "/agents/helper@1/.well-known/agent-card.json",
+            "/agents/helper%401/.well-known/agent-card.json",
+            "/agents/helper@1/.well-known/agent.json",
+        ] {
+            let (status, card) = get_json!(app, uri);
+            assert_eq!(status, 200, "{uri}: {card}");
+            assert_eq!(card["name"], "helper", "{uri}");
+            assert_eq!(
+                card["supportedInterfaces"][0]["url"], "http://h/v1/agents/helper@1",
+                "{uri}"
+            );
+            let ext = card["capabilities"]["extensions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["uri"] == distri_types::a2a_extensions::AGENT_EXTENSION_URI)
+                .cloned()
+                .unwrap();
+            assert_eq!(ext["params"]["version_no"], 1, "{uri}");
+        }
+        // A package name with `/` sent as %2F.
+        let (status, card) = get_json!(app, "/agents/pkg%2Fagent%401/.well-known/agent-card.json");
+        assert_eq!(status, 200, "{card}");
+        assert_eq!(
+            card["supportedInterfaces"][0]["url"],
+            "http://h/v1/agents/pkg/agent@1"
+        );
+
+        // An unknown version is a 404.
+        let (status, body) = get_json!(app, "/agents/helper@9/.well-known/agent-card.json");
+        assert_eq!(status, 404);
+        assert_eq!(body["error"], "agent version not found");
+        // `name@N` on the definition route: that version.
+        let (status, body) = get_json!(app, "/agents/helper@1");
+        assert_eq!(status, 200);
+        let text = body.to_string();
+        assert!(text.contains(r#""instructions":"v1""#), "{text}");
+        let (status, _) = get_json!(app, "/agents/helper@9");
+        assert_eq!(status, 404);
+    }
+
+    #[actix_rt::test]
+    async fn a_server_without_history_only_has_latest() {
+        let app = versioned_app!(false);
+        let (status, card) = get_json!(app, "/agents/helper@latest/.well-known/agent-card.json");
+        assert_eq!(status, 200, "{card}");
+        assert_eq!(
+            card["supportedInterfaces"][0]["url"],
+            "http://h/v1/agents/helper"
+        );
+        let (status, body) = get_json!(app, "/agents/helper@1/.well-known/agent-card.json");
+        assert_eq!(status, 404);
+        assert_eq!(body["error"], "agent version not found");
+
+        // A2A on an unknown version: -32001 with the agent and version.
+        let req = TestRequest::post()
+            .uri("/agents/helper%401")
+            .set_json(json!({
+                "jsonrpc": "2.0", "id": "1", "method": "SendMessage",
+                "params": { "message": {
+                    "messageId": "m1", "role": "ROLE_USER",
+                    "parts": [{ "text": "hi" }]
+                }}
+            }))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        let body: serde_json::Value =
+            serde_json::from_slice(&actix_web::test::read_body(resp).await).unwrap();
+        assert_eq!(body["error"]["code"], -32001, "{body}");
+        assert_eq!(
+            body["error"]["data"],
+            json!({ "agent": "helper", "version": 1 })
+        );
     }
 }
