@@ -43,7 +43,7 @@ Live: [distri.dev/samples](https://distri.dev/samples/). Blueprints that set up 
 
 ## Quickstart (self-hosted, no API key)
 
-Needs Rust and [Ollama](https://ollama.com). The model runs locally; swap the `[model_settings.provider]` block for `name = "openai"` (with `OPENAI_API_KEY` set), `"anthropic"` or any other [provider](#models) to use a hosted model.
+Needs Rust and [Ollama](https://ollama.com); the model runs locally, so no key is needed.
 
 ```bash
 git clone https://github.com/distrihub/distri && cd distri
@@ -93,6 +93,22 @@ curl -s $DISTRI_BASE_URL/agents/greeter -H 'Content-Type: application/json' -d '
   "status": {"state": "TASK_STATE_COMPLETED", "timestamp": "2026-11-20T19:39:18.099Z",
     "message": {"role": "ROLE_AGENT", "parts": [{"text": "Paris"}], "metadata": {"is_final": true, "message_type": "text"}, …}}}}}
 ```
+
+To use a hosted model instead, start the server with the provider's key in its environment and change the provider block:
+
+```bash
+export OPENAI_API_KEY=sk-...                     # read by distri-server
+```
+
+```toml
+[model_settings]
+model = "gpt-4.1-mini"
+
+[model_settings.provider]
+name = "openai"
+```
+
+The other provider names are under [Models](#models).
 
 On a 16-core CPU with no GPU, qwen3:4b took 10 minutes to send that reply; use a hosted model or a GPU for anything past this check. `/no_think` turns off Qwen3's reasoning.
 
