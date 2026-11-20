@@ -1,7 +1,8 @@
 //! The A2A surface of the CLI, by domain:
 //!
-//! - `distri tasks list|get|cancel|subscribe|pending|push-config …` — A2A
-//!   `ListTasks`, `GetTask`, `CancelTask`, `SubscribeToTask`, the push-config
+//! - `distri tasks list|get|cancel|subscribe|respond|pending|push-config …`
+//!   — A2A `ListTasks`, `GetTask`, `CancelTask`, `SubscribeToTask`, answering
+//!   an input-required task (a `SendMessage` on it), the push-config
 //!   methods, and the durable-runs extension's pending calls.
 //! - `distri agents card <agent>` — the public A2A agent card.
 //! - `distri run --json|--stream|--async|…` — a raw `SendMessage` /
@@ -70,6 +71,17 @@ pub enum TasksCommand {
     /// Follow a task until it ends (`SubscribeToTask`). Activates
     /// `event-stream` unless --extensions says otherwise.
     Subscribe { task_id: String },
+    /// Answer a task waiting on client tool calls (input-required): a
+    /// `SendMessage` on the task. JSON is the call's result; text answers
+    /// the one pending call with `{"text": …}`.
+    Respond {
+        task_id: String,
+        /// The pending call to answer (default: the only one)
+        #[clap(long = "call")]
+        call: Option<String>,
+        /// The answer: JSON (the tool result) or text
+        answer: String,
+    },
     /// Pending calls the task waits on (durable-runs extension)
     Pending { task_id: String },
     /// Push notification configs of a task
@@ -368,6 +380,62 @@ pub async fn run(args: TasksArgs, client: &Distri) -> Result<()> {
         TasksCommand::PushConfig { command } => {
             run_push_config(client, &agent, command, json_out).await?
         }
+        TasksCommand::Respond {
+            task_id,
+            call,
+            answer,
+        } => {
+            let (v, _) = client
+                .a2a_call_json_ext(
+                    &agent,
+                    methods::GET_TASK,
+                    distri::task_query_params(&task_id, None),
+                    &extensions,
+                )
+                .await?;
+            let task: Task = serde_json::from_value(v)?;
+            let parts = match respond_parts(call.as_deref(), &answer) {
+                Respond::Parts(parts) => parts,
+                Respond::NeedsCall(result) => {
+                    let pending = pending_call_ids(&task);
+                    match pending.as_slice() {
+                        [one] => vec![tool_result_part(one, result)],
+                        [] => bail!(
+                            "task {task_id} is {} and waits on no tool call",
+                            task_state_name(&task)
+                        ),
+                        many => bail!(
+                            "task {task_id} waits on {} calls ({}); name one with --call",
+                            many.len(),
+                            many.join(", ")
+                        ),
+                    }
+                }
+            };
+            let mut params = build_send_params(parts, Some(&task.context_id), Some(&task_id));
+            params.configuration = Some(MessageSendConfiguration {
+                accepted_output_modes: vec!["text/plain".into()],
+                blocking: Some(true),
+                ..Default::default()
+            });
+            let (result, activated) = client
+                .a2a_call_json_ext(
+                    &agent,
+                    methods::SEND_MESSAGE,
+                    serde_json::to_value(&params)?,
+                    &extensions,
+                )
+                .await?;
+            report_activated(&activated);
+            if json_out {
+                print_json(&result);
+            } else {
+                match serde_json::from_value::<SendMessageResponse>(result)? {
+                    SendMessageResponse::Task(task) => print!("{}", format_task(&task, Some(0))),
+                    SendMessageResponse::Message(msg) => println!("{}", format_message_line(&msg)),
+                }
+            }
+        }
         TasksCommand::Pending { task_id } => {
             let card = client
                 .get_agent_card(&agent)
@@ -468,6 +536,59 @@ async fn run_push_config(
 }
 
 // ── building requests ───────────────────────────────────────────────────────
+
+/// The message `distri tasks respond` sends.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Respond {
+    Parts(Vec<Part>),
+    /// A JSON result with no call named: the task's one pending call.
+    NeedsCall(Value),
+}
+
+/// The answer to a waiting task (A2A wire contract G2): `--call` + JSON →
+/// a tool_result DataPart `{tool_call_id, result}`; `--call` + text → the
+/// result `{"text": …}`; a JSON object with `tool_call_id` → that part;
+/// text alone → a text part (the server gives it to the one pending call).
+pub fn respond_parts(call: Option<&str>, answer: &str) -> Respond {
+    let json = serde_json::from_str::<Value>(answer.trim())
+        .ok()
+        .filter(|v| !v.is_string());
+    match (call, json) {
+        (Some(id), Some(v)) => Respond::Parts(vec![tool_result_part(id, v)]),
+        (Some(id), None) => Respond::Parts(vec![tool_result_part(id, json!({ "text": answer }))]),
+        (None, Some(v)) if v.get("tool_call_id").and_then(Value::as_str).is_some() => {
+            Respond::Parts(vec![Part::data(v).with_metadata(
+                distri_types::a2a_extensions::PART_TYPE_KEY,
+                json!("tool_result"),
+            )])
+        }
+        (None, Some(v)) => Respond::NeedsCall(v),
+        (None, None) => Respond::Parts(vec![Part::text(answer)]),
+    }
+}
+
+/// A tool result DataPart for a pending call.
+pub fn tool_result_part(tool_call_id: &str, result: Value) -> Part {
+    Part::data(json!({ "tool_call_id": tool_call_id, "result": result })).with_metadata(
+        distri_types::a2a_extensions::PART_TYPE_KEY,
+        json!("tool_result"),
+    )
+}
+
+/// The calls an input-required task lists in its status message.
+pub fn pending_call_ids(task: &Task) -> Vec<String> {
+    task.status
+        .message
+        .iter()
+        .flat_map(|m| m.parts.iter())
+        .filter(|p| {
+            p.metadata_value(distri_types::a2a_extensions::PART_TYPE_KEY)
+                .and_then(Value::as_str)
+                == Some("tool_call")
+        })
+        .filter_map(|p| p.as_data()?.get("tool_call_id")?.as_str().map(String::from))
+        .collect()
+}
 
 /// The message's parts: the text (if any) then each `--data-part`.
 pub fn message_parts(text: Option<&str>, data_parts: &[String]) -> Result<Vec<Part>> {
@@ -1092,6 +1213,72 @@ mod tests {
         ]);
         assert_eq!(a.extensions.len(), 2);
         assert!(TestCli::try_parse_from(["distri", "tasks", "push-config", "set", "t1"]).is_err());
+    }
+
+    #[test]
+    fn respond_builds_the_answer() {
+        let a = parse(&[
+            "respond",
+            "t1",
+            "--call",
+            "c1",
+            "{\"v\":1}",
+            "--agent",
+            "echo",
+            "--json",
+        ]);
+        assert_eq!(a.agent.as_deref(), Some("echo"));
+        assert!(a.json);
+        assert_eq!(
+            a.command,
+            TasksCommand::Respond {
+                task_id: "t1".into(),
+                call: Some("c1".into()),
+                answer: "{\"v\":1}".into()
+            }
+        );
+        let part_type = |p: &Part| {
+            p.metadata_value(distri_types::a2a_extensions::PART_TYPE_KEY)
+                .cloned()
+        };
+        let Respond::Parts(p) = respond_parts(Some("c1"), "{\"v\":1}") else {
+            panic!("parts")
+        };
+        assert_eq!(
+            p[0].as_data().unwrap(),
+            &json!({ "tool_call_id": "c1", "result": { "v": 1 } })
+        );
+        assert_eq!(part_type(&p[0]), Some(json!("tool_result")));
+        let Respond::Parts(p) = respond_parts(Some("c1"), "teal") else {
+            panic!("parts")
+        };
+        assert_eq!(p[0].as_data().unwrap()["result"], json!({ "text": "teal" }));
+        assert_eq!(
+            respond_parts(None, "teal"),
+            Respond::Parts(vec![Part::text("teal")])
+        );
+        assert_eq!(
+            respond_parts(None, "\"teal\""),
+            Respond::Parts(vec![Part::text("\"teal\"")])
+        );
+        assert_eq!(respond_parts(None, "[1]"), Respond::NeedsCall(json!([1])));
+        let Respond::Parts(p) = respond_parts(None, r#"{"tool_call_id":"c2","result":1}"#) else {
+            panic!("parts")
+        };
+        assert_eq!(p[0].as_data().unwrap()["tool_call_id"], "c2");
+
+        let task: Task = serde_json::from_value(json!({
+            "id": "t1", "contextId": "c",
+            "status": { "state": "TASK_STATE_INPUT_REQUIRED", "message": {
+                "messageId": "m", "role": "ROLE_AGENT", "parts": [
+                    { "text": "Waiting for input: pick" },
+                    { "data": { "tool_call_id": "c9", "tool_name": "pick", "input": {} },
+                      "metadata": { "distri/part_type": "tool_call" } }
+                ]
+            } }
+        }))
+        .unwrap();
+        assert_eq!(pending_call_ids(&task), vec!["c9".to_string()]);
     }
 
     #[test]
