@@ -2,6 +2,11 @@
 // Every turn answers through distri's `final` tool ("Hello from distri (mock)").
 // A user message containing "[slow]" waits SLOW_MS (default 6000) first, so a
 // task stays `working` long enough to subscribe to or cancel it.
+// A user message containing "[pick]", when the request offers the client tool
+// `pick`, calls `pick` instead (the run parks, input-required); the turn after
+// the tool result answers "You picked: <result>". MOCK_DEBUG=<file> logs each
+// request's tools and message roles there.
+import fs from 'node:fs'
 import http from 'node:http'
 
 const PORT = Number(process.env.MOCK_LLM_PORT || 7811)
@@ -13,7 +18,13 @@ function reply(body) {
   const tools = (body.tools || []).map((t) => t.function?.name).filter(Boolean)
   const lastUser = [...messages].reverse().find((m) => m.role === 'user')
   const slow = lastUser && text(lastUser.content).includes('[slow]')
-  const answer = 'Hello from distri (mock)'
+  const userAt = messages.lastIndexOf(lastUser)
+  const toolResult = messages.slice(userAt + 1).find((m) => m.role === 'tool')
+  if (process.env.MOCK_DEBUG) fs.appendFileSync(process.env.MOCK_DEBUG, JSON.stringify({ tools, roles: messages.map((m) => m.role) }) + '\n')
+  if (tools.includes('pick') && !toolResult && lastUser && text(lastUser.content).includes('[pick]')) {
+    return { choice: { tool: 'pick', args: { question: 'Pick a colour' } }, slow }
+  }
+  const answer = toolResult ? `You picked: ${text(toolResult.content)}` : 'Hello from distri (mock)'
   const choice = tools.includes('final') ? { tool: 'final', args: { input: answer } } : { text: answer }
   return { choice, slow }
 }

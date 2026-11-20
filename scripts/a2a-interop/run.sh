@@ -25,6 +25,7 @@ MOCK_LLM_PORT=${MOCK_LLM_PORT:-7811}
 OUT=${OUT:-$HERE/transcript.txt}
 WORK=$(mktemp -d)
 CARD="http://127.0.0.1:$PORT/v1/agents/echo/.well-known/agent-card.json"
+ASK_CARD="http://127.0.0.1:$PORT/v1/agents/asker/.well-known/agent-card.json"
 BASE="http://127.0.0.1:$PORT/v1"
 
 cleanup() {
@@ -53,6 +54,28 @@ base_url = "http://127.0.0.1:$MOCK_LLM_PORT/v1"
 api_key = "mock"
 ---
 Say hello.
+AGENT
+cat >"$WORK/ws/agents/asker.md" <<AGENT
+---
+name = "asker"
+description = "Asks the client to pick (A2A interop agent with a client tool)"
+version = "1.0.0"
+max_iterations = 4
+tool_format = "provider"
+
+[tools]
+external = ["pick"]
+delivery_mode = "full"
+
+[model_settings]
+model = "mock-1"
+
+[model_settings.provider]
+name = "openai_compat"
+base_url = "http://127.0.0.1:$MOCK_LLM_PORT/v1"
+api_key = "mock"
+---
+Ask the person to pick.
 AGENT
 
 MOCK_LLM_PORT=$MOCK_LLM_PORT node "$HERE/mock-llm.mjs" >"$WORK/mock.log" 2>&1 &
@@ -90,7 +113,16 @@ step() {
   fi
   LAST_OUTPUT=$output
 }
-task_id_of() { python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); t=d.get("task", d); print(t.get("id",""))'; }
+# (a2acli may print a warning line before the JSON: start at the first brace)
+task_id_of() { python3 -c 'import json,sys; s=sys.stdin.read(); d=json.loads(s[s.find("{"):]); t=d.get("task", d); print(t.get("id",""))'; }
+state_of() { python3 -c 'import json,sys; s=sys.stdin.read(); d=json.loads(s[s.find("{"):]); t=d.get("task", d); print(t.get("status",{}).get("state",""))'; }
+# expect <title> <condition-result: 0|1>
+expect() {
+  if [[ $2 -ne 0 ]]; then
+    echo "!! unexpected result for: $1" | tee -a "$OUT"
+    FAILED=1
+  fi
+}
 
 step ok "card get --validate" -- -a "$CARD" card get --validate
 step ok "send (blocking)" -- -a "$CARD" send "hello"
@@ -108,6 +140,22 @@ step ok "task cancel (working task)" -- -a "$CARD" task cancel "$SLOW2"
 step fail "task cancel (completed task: TaskNotCancelable -32002)" -- -a "$CARD" task cancel "$TASK"
 step fail "task push-config list (card: pushNotifications=false)" -- -a "$CARD" task push-config list "$TASK"
 step fail "task get (unknown task: TaskNotFound)" -- -a "$CARD" task get does-not-exist
+
+# Answering input-required in plain A2A (wire contract G2): the agent declares
+# the client tool `pick`; a plain client's run parks on it (input-required,
+# the call listed in the status message), and a message on the task answers it.
+step ok "send: the run waits on the client tool pick (input-required)" -- -a "$ASK_CARD" -o json send "[pick] a colour"
+PARK=$(printf '%s' "$LAST_OUTPUT" | task_id_of)
+[[ $(printf '%s' "$LAST_OUTPUT" | state_of) == TASK_STATE_INPUT_REQUIRED ]]; expect "parked task is input-required" $?
+printf '%s' "$LAST_OUTPUT" | grep -q '"tool_name": *"pick"'; expect "input-required message lists the pick call" $?
+step ok "task get (input-required, lists the pending call)" -- -a "$ASK_CARD" task get "$PARK"
+step ok "send --task-id answers the waiting call; the run completes" -- -a "$ASK_CARD" send --task-id "$PARK" "teal"
+printf '%s' "$LAST_OUTPUT" | grep -q "COMPLETED"; expect "answered task completed" $?
+printf '%s' "$LAST_OUTPUT" | grep -q "You picked"; expect "the answer reached the agent" $?
+step ok "send: another run waits on pick" -- -a "$ASK_CARD" -o json send "[pick] again"
+PARK2=$(printf '%s' "$LAST_OUTPUT" | task_id_of)
+step ok "send --task-id --stream answers; streams the rest of the task" -- -a "$ASK_CARD" send --task-id "$PARK2" "red" --stream
+printf '%s' "$LAST_OUTPUT" | grep -q "COMPLETED"; expect "streamed answer completed" $?
 
 {
   echo "## push-config over the wire (server answer, bypassing a2acli's pre-flight)"
