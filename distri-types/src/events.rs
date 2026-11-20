@@ -391,6 +391,47 @@ pub enum AgentEventType {
     },
 }
 
+/// `RunError.code` of a run that needs the user to connect or authorize an
+/// account (A2A `auth-required`).
+pub const RUN_ERROR_AUTH_REQUIRED: &str = "AUTH_REQUIRED";
+
+impl AgentEventType {
+    /// The wire `type` tag of this event (`run_started`, `tool_calls`, …).
+    pub fn wire_type(&self) -> &'static str {
+        match self {
+            AgentEventType::DiagnosticLog { .. } => "diagnostic_log",
+            AgentEventType::RunStarted { .. } => "run_started",
+            AgentEventType::RunFinished { .. } => "run_finished",
+            AgentEventType::RunError { .. } => "run_error",
+            AgentEventType::RunParked { .. } => "run_parked",
+            AgentEventType::PlanStarted { .. } => "plan_started",
+            AgentEventType::PlanFinished { .. } => "plan_finished",
+            AgentEventType::PlanPruned { .. } => "plan_pruned",
+            AgentEventType::StepStarted { .. } => "step_started",
+            AgentEventType::StepCompleted { .. } => "step_completed",
+            AgentEventType::ReflectStarted { .. } => "reflect_started",
+            AgentEventType::ReflectFinished { .. } => "reflect_finished",
+            AgentEventType::ToolExecutionStart { .. } => "tool_execution_start",
+            AgentEventType::ToolExecutionEnd { .. } => "tool_execution_end",
+            AgentEventType::TextMessageStart { .. } => "text_message_start",
+            AgentEventType::TextMessageContent { .. } => "text_message_content",
+            AgentEventType::TextMessageEnd { .. } => "text_message_end",
+            AgentEventType::ToolCalls { .. } => "tool_calls",
+            AgentEventType::ToolResults { .. } => "tool_results",
+            AgentEventType::AgentHandover { .. } => "agent_handover",
+            AgentEventType::LiveView { .. } => "live_view",
+            AgentEventType::BrowserSessionStarted { .. } => "browser_session_started",
+            AgentEventType::InlineHookRequested { .. } => "inline_hook_requested",
+            AgentEventType::TodosUpdated { .. } => "todos_updated",
+            AgentEventType::ContextCompaction { .. } => "context_compaction",
+            AgentEventType::CompactionRequested { .. } => "compaction_requested",
+            AgentEventType::ContextBudgetUpdate { .. } => "context_budget_update",
+            AgentEventType::ChannelReply { .. } => "channel_reply",
+            AgentEventType::LlmCall { .. } => "llm_call",
+        }
+    }
+}
+
 fn default_compaction_source() -> String {
     "auto".to_string()
 }
@@ -592,5 +633,40 @@ mod child_run_tests {
         let old = serde_json::json!({"type": "run_started", "agent_id": "a"});
         let back: AgentEventEnvelope = serde_json::from_value(old).unwrap();
         assert!(back.child.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod wire_type_tests {
+    use super::*;
+
+    #[test]
+    fn wire_type_matches_serde_tag() {
+        let samples = vec![
+            AgentEventType::RunStarted {},
+            AgentEventType::StepStarted {
+                step_id: "s".into(),
+                step_index: 0,
+            },
+            AgentEventType::TextMessageEnd {
+                message_id: "m".into(),
+                step_id: "s".into(),
+            },
+            AgentEventType::ToolCalls {
+                step_id: "s".into(),
+                parent_message_id: None,
+                tool_calls: vec![],
+            },
+            AgentEventType::RunParked {
+                task_id: "t".into(),
+                pending: vec![],
+                deadline: None,
+                attempt: 0,
+            },
+        ];
+        for e in samples {
+            let v = serde_json::to_value(&e).unwrap();
+            assert_eq!(v["type"], e.wire_type());
+        }
     }
 }

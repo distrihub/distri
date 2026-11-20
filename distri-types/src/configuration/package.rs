@@ -195,25 +195,57 @@ impl AgentConfig {
             ),
         };
 
+        // The agent's own version; the protocol version rides on each
+        // supported interface.
         let version = version
             .or_else(crate::agent::default_agent_version)
-            .unwrap_or_else(|| distri_a2a::A2A_VERSION.to_string());
+            .unwrap_or_else(|| "0.1.0".to_string());
+
+        let binding = server_config
+            .preferred_transport
+            .clone()
+            .unwrap_or_else(|| distri_a2a::TRANSPORT_PROTOCOL_JSONRPC.to_string());
+        let mut default_input_modes = server_config.default_input_modes.clone();
+        if default_input_modes.is_empty() {
+            default_input_modes = vec!["text/plain".to_string()];
+        }
+        let mut default_output_modes = server_config.default_output_modes.clone();
+        if default_output_modes.is_empty() {
+            default_output_modes = vec!["text/plain".to_string()];
+        }
 
         distri_a2a::AgentCard {
             version,
-            url: format!("{}/agents/{}", server_config.base_url, name),
+            supported_interfaces: vec![distri_a2a::AgentInterface {
+                url: format!("{}/agents/{}", server_config.base_url, name),
+                protocol_binding: binding,
+                protocol_version: distri_a2a::A2A_VERSION.to_string(),
+                tenant: None,
+            }],
             name,
             description,
             icon_url,
             documentation_url: server_config.documentation_url.clone(),
             provider: Some(server_config.agent_provider.clone()),
-            preferred_transport: server_config.preferred_transport.clone(),
             capabilities: server_config.capabilities.clone(),
-            default_input_modes: server_config.default_input_modes.clone(),
-            default_output_modes: server_config.default_output_modes.clone(),
+            default_input_modes,
+            default_output_modes,
             skills,
-            security_schemes: server_config.security_schemes.clone(),
-            security: server_config.security.clone(),
+            security_schemes: server_config
+                .security_schemes
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            security_requirements: server_config
+                .security
+                .iter()
+                .map(|r| {
+                    distri_a2a::SecurityRequirement(
+                        r.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    )
+                })
+                .collect(),
+            signatures: vec![],
         }
     }
 }

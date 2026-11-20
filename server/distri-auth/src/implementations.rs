@@ -152,9 +152,8 @@ pub fn from_a2a_security_scheme(
                 Vec::new(),
             )))
         }
-        distri_types::a2a::SecurityScheme::Oauth2(oauth2_scheme) => {
-            // For now, we'll take the authorization code flow if available
-            if let Some(auth_code_flow) = oauth2_scheme.flows.authorization_code {
+        distri_types::a2a::SecurityScheme::OAuth2(oauth2_scheme) => match oauth2_scheme.flows {
+            distri_types::a2a::OAuthFlows::AuthorizationCode(auth_code_flow) => {
                 let token_url = auth_code_flow.token_url.clone();
                 let refresh_url = auth_code_flow
                     .refresh_url
@@ -168,20 +167,18 @@ pub fn from_a2a_security_scheme(
                     )
                     .with_refresh_url(refresh_url),
                 ))
-            } else if let Some(client_creds_flow) = oauth2_scheme.flows.client_credentials {
-                Ok(Box::new(
-                    OAuth2AuthMetadata::new(
-                        "a2a_oauth2_client_creds".to_string(),
-                        "".to_string(), // Client credentials doesn't need auth URL
-                        client_creds_flow.token_url,
-                        client_creds_flow.scopes.keys().cloned().collect(),
-                    )
-                    .with_flow_type(OAuth2FlowType::ClientCredentials),
-                ))
-            } else {
-                Err("No supported OAuth2 flow found".to_string())
             }
-        }
+            distri_types::a2a::OAuthFlows::ClientCredentials(client_creds_flow) => Ok(Box::new(
+                OAuth2AuthMetadata::new(
+                    "a2a_oauth2_client_creds".to_string(),
+                    "".to_string(), // Client credentials doesn't need auth URL
+                    client_creds_flow.token_url,
+                    client_creds_flow.scopes.keys().cloned().collect(),
+                )
+                .with_flow_type(OAuth2FlowType::ClientCredentials),
+            )),
+            _ => Err("No supported OAuth2 flow found".to_string()),
+        },
         _ => Err("Unsupported A2A security scheme".to_string()),
     }
 }

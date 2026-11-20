@@ -60,6 +60,7 @@ pub use hooks::*;
 pub use mcp::*;
 pub use tenant_context::*;
 pub mod a2a_converters;
+pub mod a2a_extensions;
 pub mod thinking;
 
 mod execution;

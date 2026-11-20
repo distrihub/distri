@@ -30,36 +30,17 @@ use crate::{
 };
 
 /// A2A extension URI that advertises durable runs on an agent card
-/// (`capabilities.extensions[].uri`). The card itself stays standard A2A.
+/// (`capabilities.extensions[].uri`). See [`crate::a2a_extensions`].
 pub const DURABLE_RUNS_EXTENSION_URI: &str = "https://distri.dev/a2a/extensions/durable-runs/v1";
 
-/// The durable-runs [`AgentExtension`](distri_a2a::AgentExtension): runs
-/// outlive the process; client tool calls are pending calls a client finds
-/// again after a reload and claims before running.
+/// The durable-runs [`AgentExtension`](distri_a2a::AgentExtension).
 pub fn durable_runs_extension() -> distri_a2a::AgentExtension {
-    distri_a2a::AgentExtension {
-        uri: DURABLE_RUNS_EXTENSION_URI.to_string(),
-        description: Some(
-            "Durable runs: runs outlive the process. Client tool calls are pending calls \
-             a client lists again after a reload and claims before running."
-                .to_string(),
-        ),
-        required: false,
-        params: Some(serde_json::json!({
-            "pending_calls": "/v1/tasks/{task_id}/pending-calls",
-            "thread_pending_calls": "/v1/threads/{thread_id}/pending-calls",
-            "claim": "/v1/pending-calls/{id}/claim",
-            "events": ["run_parked"],
-        })),
-    }
+    crate::a2a_extensions::DistriExtension::DurableRuns.agent_extension()
 }
 
 /// Whether the card advertises the durable-runs extension.
 pub fn card_supports_durable_runs(card: &distri_a2a::AgentCard) -> bool {
-    card.capabilities
-        .extensions
-        .iter()
-        .any(|e| e.uri == DURABLE_RUNS_EXTENSION_URI)
+    card.has_extension(DURABLE_RUNS_EXTENSION_URI)
 }
 
 /// Add (once) or remove the durable-runs extension on a card.

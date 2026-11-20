@@ -1,11 +1,11 @@
-use distri_a2a::{
-    DataPart, EventKind, FileObject, FilePart, Message, Part, Role, Task, TaskState, TaskStatus,
-    TextPart,
-};
+use distri_a2a::{Message, Part, PartContent, Role, StreamResponse, Task, TaskState, TaskStatus};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 
+use crate::a2a_extensions::PART_TYPE_KEY;
 use crate::{AgentError, core::FileType};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -41,51 +41,120 @@ impl From<crate::Message> for MessageMetadata {
     }
 }
 
+/// An A2A part as a distri part.
+///
+/// - text → `Text`; url/raw → `File` (`Image` for `image/*`).
+/// - a `DataPart` with `metadata["distri/part_type"]` → that distri kind
+///   (`tool_call`, `tool_result`, `artifact`, `resource_link`, …), its
+///   `data` the kind's body.
+/// - a `DataPart` holding the 0.x wrapper `{part_type, data}` → that kind
+///   (accepted on input for one release).
+/// - any other `DataPart` → `Data` (a plain A2A DataPart).
+pub fn part_from_a2a(part: Part) -> Result<crate::Part, AgentError> {
+    let media_type = part.media_type.clone().unwrap_or_default();
+    let name = part.filename.clone();
+    let typed = part
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get(PART_TYPE_KEY))
+        .and_then(Value::as_str)
+        .map(String::from);
+    let file = |ft: FileType| {
+        if ft.mime_type().starts_with("image/") {
+            crate::Part::Image(ft)
+        } else {
+            crate::Part::File(ft)
+        }
+    };
+    Ok(match part.content {
+        PartContent::Text(t) => crate::Part::Text(t),
+        PartContent::Url(url) => file(FileType::Url {
+            url,
+            mime_type: media_type,
+            name,
+        }),
+        PartContent::Raw(bytes) => file(FileType::Bytes {
+            bytes: BASE64.encode(bytes),
+            mime_type: media_type,
+            name,
+        }),
+        PartContent::Data(data) => match typed {
+            Some(part_type) => {
+                serde_json::from_value(json!({ "part_type": part_type, "data": data }))
+                    .map_err(|e| AgentError::Validation(format!("invalid {part_type} part: {e}")))?
+            }
+            None => legacy_wrapped_part(&data).unwrap_or(crate::Part::Data(data)),
+        },
+    })
+}
+
+/// The 0.x `{part_type, data}` DataPart wrapper, if `data` is one.
+fn legacy_wrapped_part(data: &Value) -> Option<crate::Part> {
+    let obj = data.as_object()?;
+    if obj.len() != 2 || !obj.contains_key("data") {
+        return None;
+    }
+    obj.get("part_type")?.as_str()?;
+    serde_json::from_value(data.clone()).ok()
+}
+
+/// A distri part as an A2A part (see [`part_from_a2a`]).
+pub fn part_to_a2a(part: crate::Part) -> Part {
+    let file = |ft: FileType| {
+        let (p, mime, name) = match ft {
+            FileType::Url {
+                url,
+                mime_type,
+                name,
+            } => (Part::url(url), mime_type, name),
+            FileType::Bytes {
+                bytes,
+                mime_type,
+                name,
+            } => match BASE64.decode(bytes.as_bytes()) {
+                Ok(raw) => (Part::raw(raw), mime_type, name),
+                // Not base64: keep it addressable as a data URL.
+                Err(_) => (
+                    Part::url(format!("data:{mime_type};base64,{bytes}")),
+                    mime_type,
+                    name,
+                ),
+            },
+        };
+        let p = if mime.is_empty() {
+            p
+        } else {
+            p.with_media_type(mime)
+        };
+        match name {
+            Some(n) => p.with_filename(n),
+            None => p,
+        }
+    };
+    match part {
+        crate::Part::Text(text) => Part::text(text),
+        crate::Part::Image(ft) | crate::Part::File(ft) => file(ft),
+        crate::Part::Data(v) => Part::data(v),
+        other => {
+            let part_type = other.type_name();
+            let data = match serde_json::to_value(&other) {
+                Ok(Value::Object(mut o)) => o.remove("data").unwrap_or(Value::Null),
+                _ => Value::Null,
+            };
+            Part::data(data).with_metadata(PART_TYPE_KEY, Value::String(part_type))
+        }
+    }
+}
+
 impl TryFrom<Message> for crate::Message {
     type Error = AgentError;
 
     fn try_from(message: Message) -> Result<Self, Self::Error> {
-        let mut parts = Vec::new();
-        for part in message.parts {
-            match part {
-                Part::Text(t) => parts.push(crate::Part::Text(t.text.clone())),
-                Part::Data(d) => {
-                    if let Some(part_type) = d.data.get("part_type").and_then(|v| v.as_str()) {
-                        if let Some(data_content) = d.data.get("data") {
-                            // Create the properly structured object for
-
-                            let structured = json!({
-                                "part_type": part_type,
-                                "data": data_content
-                            });
-
-                            let part: crate::Part = serde_json::from_value(structured)?;
-                            parts.push(part);
-                        } else {
-                            return Err(AgentError::Validation(
-                                "Missing data
-                field for typed part"
-                                    .to_string(),
-                            ));
-                        }
-                    } else {
-                        return Err(AgentError::Validation(
-                            "Invalid part
-                type"
-                                .to_string(),
-                        ));
-                    }
-                }
-                Part::File(f) => {
-                    let ft = file_object_to_filetype(f.file);
-                    if ft.mime_type().starts_with("image/") {
-                        parts.push(crate::Part::Image(ft));
-                    } else {
-                        parts.push(crate::Part::File(ft));
-                    }
-                }
-            }
-        }
+        let parts = message
+            .parts
+            .into_iter()
+            .map(part_from_a2a)
+            .collect::<Result<Vec<_>, _>>()?;
 
         let is_tool = parts.iter().any(|part| {
             if let crate::Part::ToolResult(_) = part {
@@ -107,7 +176,7 @@ impl TryFrom<Message> for crate::Message {
                 crate::MessageRole::Tool
             } else {
                 match message.role {
-                    Role::User => crate::MessageRole::User,
+                    Role::User | Role::Unspecified => crate::MessageRole::User,
                     Role::Agent => crate::MessageRole::Assistant,
                 }
             },
@@ -123,42 +192,45 @@ impl TryFrom<distri_a2a::TaskStatusUpdateEvent> for crate::TaskEvent {
     type Error = AgentError;
 
     fn try_from(event: distri_a2a::TaskStatusUpdateEvent) -> Result<Self, Self::Error> {
-        let agent_event: crate::events::AgentEventType = event
+        let metadata = event
             .metadata
-            .ok_or_else(|| AgentError::Validation("missing metadata on status update".into()))
-            .and_then(|m| {
-                serde_json::from_value(m)
-                    .map_err(|e| AgentError::Validation(format!("invalid event metadata: {}", e)))
-            })?;
+            .ok_or_else(|| AgentError::Validation("missing metadata on status update".into()))?;
+        let is_final = metadata
+            .get("final")
+            .and_then(Value::as_bool)
+            .unwrap_or_else(|| event.status.state.is_terminal());
+        let agent_event: crate::events::AgentEventType =
+            serde_json::from_value(Value::Object(metadata))
+                .map_err(|e| AgentError::Validation(format!("invalid event metadata: {}", e)))?;
 
         let created_at = event
             .status
             .timestamp
-            .and_then(|t| t.parse::<i64>().ok())
+            .map(|t| t.timestamp_millis())
             .unwrap_or(0);
 
         Ok(crate::TaskEvent {
             event: agent_event,
             created_at,
-            is_final: event.r#final,
+            is_final,
         })
     }
 }
 
-impl TryFrom<distri_a2a::MessageKind> for crate::TaskMessage {
+impl TryFrom<StreamResponse> for crate::TaskMessage {
     type Error = AgentError;
 
-    fn try_from(mk: distri_a2a::MessageKind) -> Result<Self, Self::Error> {
-        match mk {
-            distri_a2a::MessageKind::Message(msg) => {
+    fn try_from(sr: StreamResponse) -> Result<Self, Self::Error> {
+        match sr {
+            StreamResponse::Message(msg) => {
                 Ok(crate::TaskMessage::Message(crate::Message::try_from(msg)?))
             }
-            distri_a2a::MessageKind::TaskStatusUpdate(evt) => {
+            StreamResponse::StatusUpdate(evt) => {
                 Ok(crate::TaskMessage::Event(crate::TaskEvent::try_from(evt)?))
             }
-            distri_a2a::MessageKind::Artifact(_) => Err(AgentError::Validation(
-                "artifact conversion not supported".into(),
-            )),
+            StreamResponse::ArtifactUpdate(_) | StreamResponse::Task(_) => Err(
+                AgentError::Validation("only messages and status updates convert".into()),
+            ),
         }
     }
 }
@@ -185,92 +257,22 @@ pub fn map_task_status_to_a2a_state(status: &crate::TaskStatus) -> TaskState {
 
 impl From<crate::Part> for Part {
     fn from(part: crate::Part) -> Self {
-        match part {
-            crate::Part::Text(text) => Part::Text(TextPart { text }),
-            crate::Part::Image(image) => Part::File(FilePart {
-                file: filetype_to_fileobject(image),
-                metadata: None,
-            }),
-            crate::Part::File(file) => Part::File(FilePart {
-                file: filetype_to_fileobject(file),
-                metadata: None,
-            }),
-            // handle all the additional parts with a part_type
-            x => Part::Data(DataPart {
-                data: serde_json::to_value(x).unwrap(),
-            }),
-        }
-    }
-}
-
-fn file_object_to_filetype(file: FileObject) -> FileType {
-    match file {
-        FileObject::WithBytes {
-            bytes,
-            mime_type,
-            name,
-        } => FileType::Bytes {
-            bytes,
-            mime_type: mime_type.unwrap_or_default(),
-            name,
-        },
-        FileObject::WithUri {
-            uri,
-            mime_type,
-            name,
-        } => FileType::Url {
-            url: uri,
-            mime_type: mime_type.unwrap_or_default(),
-            name,
-        },
-    }
-}
-
-fn filetype_to_fileobject(file: FileType) -> FileObject {
-    match file {
-        FileType::Bytes {
-            bytes,
-            mime_type,
-            name,
-        } => FileObject::WithBytes {
-            bytes,
-            mime_type: Some(mime_type),
-            name: name.clone(),
-        },
-        FileType::Url {
-            url,
-            mime_type,
-            name,
-        } => FileObject::WithUri {
-            uri: url.clone(),
-            mime_type: Some(mime_type),
-            name: name.clone(),
-        },
+        part_to_a2a(part)
     }
 }
 
 impl From<crate::Task> for Task {
     fn from(task: crate::Task) -> Self {
-        let history = vec![];
         Task {
             id: task.id.clone(),
             status: TaskStatus {
-                state: match task.status {
-                    crate::TaskStatus::Pending => TaskState::Submitted,
-                    crate::TaskStatus::Running => TaskState::Working,
-                    crate::TaskStatus::InputRequired => TaskState::InputRequired,
-                    crate::TaskStatus::Completed => TaskState::Completed,
-                    crate::TaskStatus::Failed => TaskState::Failed,
-                    crate::TaskStatus::Canceled => TaskState::Canceled,
-                },
+                state: task.status.into(),
                 message: None,
-                timestamp: None,
+                timestamp: chrono::DateTime::from_timestamp_millis(task.updated_at)
+                    .filter(|_| task.updated_at > 0),
             },
-            kind: EventKind::Task,
             context_id: task.thread_id.clone(),
-            artifacts: vec![],
-            history,
-            metadata: None,
+            ..Default::default()
         }
     }
 }
