@@ -1,4 +1,5 @@
 mod client;
+mod client_a2a;
 mod client_app;
 mod client_stream;
 pub mod config;
@@ -18,15 +19,18 @@ use thiserror::Error;
 pub use crate::external_tools_runtime::ExternalToolRegistry;
 pub use crate::hooks_runtime::HookRegistry;
 pub use client::{
-    AgentListItem, AgentRegistrationResponse, ApiKeyResponse, ArtifactEntry, ArtifactListResponse,
-    ArtifactNamespace, ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse,
-    ConnectResponse, ConnectionSummary, ConnectionToken, CreatePluginRequest, CreateSkillRequest,
-    Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse, LoginUrlResponse,
-    NewPromptTemplateRequest, NewSecretRequest, PluginResponse, PluginsListResponse,
-    PromptTemplateResponse, ProviderInfo, SecretEntry, SkillResponse, SkillScriptInput,
-    SkillSource, SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary, TraceSummary,
-    TtsModelsResponse, TtsSpeechRequest, TtsSpeechResponse, UpdatePluginRequest,
-    UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,
+    AgentListItem, AgentRegistrationResponse, AgentVersionSummary, ApiKeyResponse, ArtifactEntry,
+    ArtifactListResponse, ArtifactNamespace, ArtifactNamespaceList, ArtifactReadResponse,
+    ArtifactSaveResponse, ConnectResponse, ConnectionSummary, ConnectionToken, CreatePluginRequest,
+    CreateSkillRequest, Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse,
+    LoginUrlResponse, NewPromptTemplateRequest, NewSecretRequest, PluginResponse,
+    PluginsListResponse, PromptTemplateResponse, ProviderInfo, SecretEntry, SkillResponse,
+    SkillScriptInput, SkillSource, SyncPromptTemplatesResponse, TaskNamespaceResponse,
+    ThreadSummary, TraceSummary, TtsModelsResponse, TtsSpeechRequest, TtsSpeechResponse,
+    UpdatePluginRequest, UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,
+};
+pub use client_a2a::{
+    A2aRpcError, PushConfig, TaskPushNotificationConfig, a2a_request, rpc_result, task_query_params,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};
 pub use client_stream::{AgentStreamClient, StreamError, StreamItem, parse_sse_data};

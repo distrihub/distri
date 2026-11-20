@@ -1,0 +1,14 @@
+DROP INDEX IF EXISTS idx_pending_calls_deadline;
+DROP INDEX IF EXISTS idx_pending_calls_thread;
+DROP INDEX IF EXISTS idx_pending_calls_task;
+DROP TABLE IF EXISTS pending_calls;
+DROP INDEX IF EXISTS idx_tasks_lease_until;
+DROP INDEX IF EXISTS idx_tasks_ready_at;
+ALTER TABLE tasks DROP COLUMN run_state;
+ALTER TABLE tasks DROP COLUMN run_inputs;
+ALTER TABLE tasks DROP COLUMN attempts;
+ALTER TABLE tasks DROP COLUMN waiting_on;
+ALTER TABLE tasks DROP COLUMN lease_id;
+ALTER TABLE tasks DROP COLUMN lease_until;
+ALTER TABLE tasks DROP COLUMN lease_owner;
+ALTER TABLE tasks DROP COLUMN ready_at;

@@ -4,6 +4,7 @@ pub mod broadcast;
 pub mod code_runner;
 pub mod connections;
 pub mod decision_service;
+pub mod durable;
 
 // Re-export from distri-types so callers can write `distri_core::ApiError`.
 pub use distri_types::{ApiError, ApiResult};

@@ -108,6 +108,9 @@ pub struct GenAiAgentSpan {
     pub input_value: Option<String>,
     /// Resolved agent version (provenance) — recorded as `distri.agent.version`.
     pub agent_version: Option<String>,
+    /// The saved version a pinned run (`name@N`) runs — recorded as
+    /// `distri.agent.version_no`.
+    pub agent_version_no: Option<u32>,
     /// Caller-supplied tags serialized to a JSON object string — recorded as
     /// `distri.tags`.
     pub tags_json: Option<String>,

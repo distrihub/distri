@@ -1,3 +1,4 @@
+pub mod a2a_card_test;
 pub mod artifacts_test;
 pub mod connections_test;
 pub mod decisions_test;

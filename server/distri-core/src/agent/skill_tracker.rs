@@ -77,6 +77,13 @@ impl ActiveSkillTracker {
     }
 
     /// Get skill IDs currently tracked
+    /// Every tracked skill (durable runs store them across segments).
+    pub fn snapshots(&self) -> Vec<SkillSnapshot> {
+        let mut all: Vec<SkillSnapshot> = self.skills.values().cloned().collect();
+        all.sort_by_key(|s| s.loaded_at);
+        all
+    }
+
     pub fn tracked_skill_ids(&self) -> Vec<String> {
         self.skills.keys().cloned().collect()
     }

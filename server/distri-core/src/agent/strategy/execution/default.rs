@@ -49,12 +49,19 @@ impl AgentExecutor {
         let enhanced_tools = context.get_tools().await;
 
         // Get external tool timeout from agent definition strategy
-        let external_tool_timeout_secs = self
+        let explicit_timeout = self
             .agent_definition
             .as_ref()
             .and_then(|def| def.strategy.as_ref())
-            .map(|s| s.get_external_tool_timeout_secs())
-            .unwrap_or(DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECS);
+            .and_then(|s| s.external_tool_timeout_secs);
+        let external_tool_timeout_secs =
+            explicit_timeout.unwrap_or(DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECS);
+        // Durable mode: the same setting is the pending call's deadline,
+        // 15 minutes by default (S7).
+        if let Some(durable) = &context.durable {
+            *durable.deadline_secs.write().await =
+                Some(explicit_timeout.unwrap_or(distri_types::DEFAULT_PENDING_CALL_DEADLINE_SECS));
+        }
 
         // NOTE: the ToolCalls event is emitted inside
         // `execute_tool_calls_with_timeout` AFTER all external tool calls are
@@ -96,6 +103,13 @@ impl AgentExecutor {
         if !response.tool_calls.is_empty() {
             for tool_call in &response.tool_calls {
                 parts.push(Part::ToolCall(tool_call.clone()));
+            }
+            // Durable mode: journal the step's tool-call parts before
+            // dispatch, so a crash or a park never loses them (S2).
+            if let Some(durable) = context.durable.as_ref().filter(|_| !context.dry_run) {
+                durable
+                    .begin_step(step_id, parts.clone(), &response.tool_calls)
+                    .await;
             }
 
             let tools_response = self
@@ -535,8 +549,54 @@ pub async fn execute_tool_calls_with_timeout(
         String,
         tokio::sync::oneshot::Receiver<distri_types::ToolResponse>,
     > = HashMap::new();
+    // Durable mode: every external call becomes a pending call row, created
+    // BEFORE the ToolCalls event (a client claims it as soon as it sees the
+    // event). Nothing waits in memory: the step parks.
+    let durable = context.durable.clone().filter(|_| !context.dry_run);
+    if let Some(d) = &durable {
+        let deadline_secs = d
+            .deadline_secs
+            .read()
+            .await
+            .unwrap_or(distri_types::DEFAULT_PENDING_CALL_DEADLINE_SECS);
+        let deadline = chrono::Utc::now() + chrono::Duration::seconds(deadline_secs as i64);
+        let mut pending = Vec::new();
+        let mut replay_safe = Vec::new();
+        for (tool, tool_call) in &tool_tuples {
+            if tool.is_external() {
+                let created = d
+                    .runtime
+                    .pending_calls
+                    .create(distri_types::NewPendingCall {
+                        id: tool_call.tool_call_id.clone(),
+                        workspace_id: context.workspace_id.clone(),
+                        task_id: context.task_id.clone(),
+                        thread_id: context.thread_id.clone(),
+                        kind: distri_types::PendingCallKind::ClientTool,
+                        tool_name: Some(tool_call.tool_name.clone()),
+                        request: serde_json::json!({
+                            "tool_call_id": tool_call.tool_call_id,
+                            "tool_name": tool_call.tool_name,
+                            "input": tool_call.input,
+                        }),
+                        deadline: Some(deadline),
+                    })
+                    .await;
+                if let Err(e) = created {
+                    return Err(AgentError::ToolExecution(format!(
+                        "failed to record pending call {}: {e}",
+                        tool_call.tool_call_id
+                    )));
+                }
+                pending.push(tool_call.tool_call_id.clone());
+            } else if tool.replay_safe() {
+                replay_safe.push(tool_call.tool_call_id.clone());
+            }
+        }
+        d.set_dispatch(pending, replay_safe).await;
+    }
     for (tool, tool_call) in &tool_tuples {
-        if tool.is_external() {
+        if tool.is_external() && durable.is_none() {
             match external_tool_calls_store
                 .register_external_tool_call(&tool_call.tool_call_id, &context.task_id)
                 .await
@@ -587,7 +647,7 @@ pub async fn execute_tool_calls_with_timeout(
     // "needs you" while it can still be answered. Back to running once the
     // batch has returned; a timed-out call still ends the step as
     // input-required in the caller.
-    let waits_on_client = !pending_receivers.is_empty() && !context.dry_run;
+    let waits_on_client = !pending_receivers.is_empty() && !context.dry_run && durable.is_none();
     if waits_on_client {
         context
             .update_status(crate::types::TaskStatus::InputRequired)
@@ -616,6 +676,7 @@ pub async fn execute_tool_calls_with_timeout(
         let external_tool_calls_store = external_tool_calls_store.clone();
         let pending_receivers = pending_receivers.clone();
         let semaphore = semaphore.clone();
+        let durable = durable.clone();
         async move {
             // Hold a permit for the duration of this tool's execution. With
             // `max_parallel == 1` (a batch containing a mutating tool) this
@@ -667,6 +728,22 @@ pub async fn execute_tool_calls_with_timeout(
                     tool_call.tool_name.clone(),
                     parts,
                 ));
+            }
+
+            if tool.is_external() && durable.is_some() {
+                // Parked: the answer arrives as a completed pending call.
+                context
+                    .emit(AgentEventType::ToolExecutionStart {
+                        step_id: step_id.clone(),
+                        tool_call_id: tool_call.tool_call_id.clone(),
+                        tool_call_name: tool_call.tool_name.clone(),
+                        input: tool_call.input.clone(),
+                    })
+                    .await;
+                return ToolResultWithSkip::Skip {
+                    tool_call_id: tool_call.tool_call_id.clone(),
+                    reason: "pending".to_string(),
+                };
             }
 
             if tool.is_external() {
@@ -726,30 +803,10 @@ pub async fn execute_tool_calls_with_timeout(
                 ));
             }
 
-            // Execute the tool based on its type
-            let (parts, success) = if tool.needs_executor_context() {
-                // ExecutorContext-based tool
-                match execute_executor_context_tool(
-                    tool.as_ref(),
-                    tool_call.clone(),
-                    context.clone(),
-                )
-                .await
-                {
-                    Ok(parts) => (parts, true),
-                    Err(e) => (vec![Part::Text(e.to_string())], false),
-                }
-            } else {
-                // ToolContext-based tool
-                let tool_context = crate::tools::context::to_tool_context(context.as_ref());
-                match tool
-                    .execute(tool_call.clone(), Arc::new(tool_context))
-                    .await
-                {
-                    Ok(parts) => (parts, true),
-                    Err(e) => (vec![Part::Text(e.to_string())], false),
-                }
-            };
+            if let Some(d) = &durable {
+                d.mark_in_flight(&tool_call.tool_call_id).await;
+            }
+            let (parts, success) = run_inline_tool(tool.as_ref(), tool_call, &context).await;
             // Emit completion event
             context
                 .emit(AgentEventType::ToolExecutionEnd {
@@ -759,12 +816,16 @@ pub async fn execute_tool_calls_with_timeout(
                     success,
                 })
                 .await;
-            // Wrap parts into ToolResponse
-            ToolResultWithSkip::ToolResult(crate::types::ToolResponse::from_parts(
+            let response = crate::types::ToolResponse::from_parts(
                 tool_call.tool_call_id.clone(),
                 tool_call.tool_name.clone(),
                 parts,
-            ))
+            );
+            // Durable mode: save each inline result as it finishes (S2).
+            if let Some(d) = &durable {
+                d.record_result(&response).await;
+            }
+            ToolResultWithSkip::ToolResult(response)
         }
     }))
     .await;
@@ -776,6 +837,37 @@ pub async fn execute_tool_calls_with_timeout(
     }
 
     Ok(results)
+}
+
+/// Run one inline (non-external) tool, returning its parts and whether it
+/// succeeded. Shared by the step executor and a durable resume re-running a
+/// replay-safe call.
+pub(crate) async fn run_inline_tool(
+    tool: &dyn Tool,
+    tool_call: &crate::types::ToolCall,
+    context: &Arc<ExecutorContext>,
+) -> (Vec<Part>, bool) {
+    {
+        // Execute the tool based on its type
+        let (parts, success) = if tool.needs_executor_context() {
+            // ExecutorContext-based tool
+            match execute_executor_context_tool(tool, tool_call.clone(), context.clone()).await {
+                Ok(parts) => (parts, true),
+                Err(e) => (vec![Part::Text(e.to_string())], false),
+            }
+        } else {
+            // ToolContext-based tool
+            let tool_context = crate::tools::context::to_tool_context(context.as_ref());
+            match tool
+                .execute(tool_call.clone(), Arc::new(tool_context))
+                .await
+            {
+                Ok(parts) => (parts, true),
+                Err(e) => (vec![Part::Text(e.to_string())], false),
+            }
+        };
+        (parts, success)
+    }
 }
 
 /// Handle external tool execution with inline behavior - waits for response from client.

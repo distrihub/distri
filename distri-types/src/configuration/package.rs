@@ -12,6 +12,10 @@ use utoipa::ToSchema;
 pub struct AgentCloudMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_owner: Option<bool>,
+    /// A system agent: defined in the system workspace, callable from every
+    /// workspace but not listed, read or shadowed there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_system: Option<bool>,
     /// True when the agent belongs to the current workspace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_workspace: Option<bool>,
@@ -195,26 +199,133 @@ impl AgentConfig {
             ),
         };
 
+        // The agent's own version; the protocol version rides on each
+        // supported interface.
         let version = version
             .or_else(crate::agent::default_agent_version)
-            .unwrap_or_else(|| distri_a2a::A2A_VERSION.to_string());
+            .unwrap_or_else(|| "0.1.0".to_string());
+
+        let binding = server_config
+            .preferred_transport
+            .clone()
+            .unwrap_or_else(|| distri_a2a::TRANSPORT_PROTOCOL_JSONRPC.to_string());
+        let mut default_input_modes = server_config.default_input_modes.clone();
+        if default_input_modes.is_empty() {
+            default_input_modes = vec!["text/plain".to_string()];
+        }
+        let mut default_output_modes = server_config.default_output_modes.clone();
+        if default_output_modes.is_empty() {
+            default_output_modes = vec!["text/plain".to_string()];
+        }
+
+        let descriptor = crate::a2a_extensions::AgentDescriptor::of(self, None);
+        let mut capabilities = server_config.capabilities.clone();
+        capabilities
+            .extensions
+            .retain(|e| e.uri != crate::a2a_extensions::AGENT_EXTENSION_URI);
+        capabilities.extensions.push(descriptor.agent_extension());
 
         distri_a2a::AgentCard {
             version,
-            url: format!("{}/agents/{}", server_config.base_url, name),
+            supported_interfaces: vec![distri_a2a::AgentInterface {
+                url: format!("{}/agents/{}", server_config.base_url, name),
+                protocol_binding: binding,
+                protocol_version: distri_a2a::A2A_VERSION.to_string(),
+                tenant: None,
+            }],
             name,
             description,
             icon_url,
             documentation_url: server_config.documentation_url.clone(),
             provider: Some(server_config.agent_provider.clone()),
-            preferred_transport: server_config.preferred_transport.clone(),
-            capabilities: server_config.capabilities.clone(),
-            default_input_modes: server_config.default_input_modes.clone(),
-            default_output_modes: server_config.default_output_modes.clone(),
+            capabilities,
+            default_input_modes,
+            default_output_modes,
             skills,
-            security_schemes: server_config.security_schemes.clone(),
-            security: server_config.security.clone(),
+            security_schemes: server_config
+                .security_schemes
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            security_requirements: server_config
+                .security
+                .iter()
+                .map(|r| {
+                    distri_a2a::SecurityRequirement(
+                        r.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    )
+                })
+                .collect(),
+            signatures: vec![],
         }
+    }
+}
+
+#[cfg(test)]
+mod card_tests {
+    use super::*;
+    use crate::a2a_extensions::{AGENT_EXTENSION_URI, AgentDescriptor};
+
+    /// R7: the card is the public descriptor — never the definition.
+    #[tokio::test]
+    async fn card_never_carries_the_definition() {
+        let def: StandardDefinition = serde_json::from_value(serde_json::json!({
+            "name": "shop",
+            "description": "shops",
+            "version": "1.2.0",
+            "instructions": "TOP SECRET PROMPT",
+            "runtime": "browser",
+            "tools": {
+                "external": ["add_to_cart", "search"],
+                "builtin": ["SECRET_BUILTIN_TOOL"],
+                "mcp": [{"server": "SECRET_MCP_SERVER"}]
+            },
+            "mcp_servers": [{"name": "SECRET_MCP_SERVER"}],
+            "model_settings": {"model": "SECRET-MODEL-X"},
+            "connections": [{"provider": "SECRET_CONNECTION"}]
+        }))
+        .expect("definition");
+        let config = AgentConfig::StandardAgent(def);
+        let card = config.to_card(&crate::configuration::ServerConfig::default());
+        let raw = serde_json::to_string(&card).unwrap();
+        for secret in [
+            "TOP SECRET PROMPT",
+            "SECRET_BUILTIN_TOOL",
+            "SECRET_MCP_SERVER",
+            "SECRET-MODEL-X",
+            "SECRET_CONNECTION",
+        ] {
+            assert!(
+                !raw.contains(secret),
+                "{secret} leaked onto the card: {raw}"
+            );
+        }
+        for key in [
+            "instructions",
+            "tools",
+            "mcp_servers",
+            "model_settings",
+            "connections",
+        ] {
+            assert!(
+                !raw.contains(&format!("\"{key}\"")),
+                "{key} on the card: {raw}"
+            );
+        }
+        let d = AgentDescriptor::from_card(&card).expect("agent extension");
+        assert_eq!(d.agent_type, "standard_agent");
+        assert_eq!(d.external_tools, vec!["add_to_cart", "search"]);
+        assert!(!d.any_tool);
+        assert_eq!(d.runtime.as_deref(), Some("web"));
+        assert_eq!(d.version_no, None);
+        assert_eq!(
+            card.capabilities
+                .extensions
+                .iter()
+                .filter(|e| e.uri == AGENT_EXTENSION_URI)
+                .count(),
+            1
+        );
     }
 }
 

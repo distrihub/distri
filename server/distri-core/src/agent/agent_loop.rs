@@ -1,6 +1,7 @@
 use distri_types::{AgentPlan, ExecutionResult, ExecutionStatus, Part};
 use serde_json::Value;
 
+use crate::durable::SegmentKind;
 use crate::{
     agent::{
         strategy::{
@@ -14,6 +15,17 @@ use crate::{
     verbose_log, AgentError, StandardDefinition,
 };
 use std::sync::Arc;
+
+/// What resuming a parked step found.
+enum FoldOutcome {
+    /// No journaled step.
+    Nothing,
+    /// The step is stored with every result; `end_turn` when a result asks
+    /// the turn to end (`should_continue: false`).
+    Folded { end_turn: bool },
+    /// Some calls are still pending (a crashed segment resumed early).
+    StillWaiting(distri_types::WaitingOn),
+}
 
 /// Core agent execution loop using strategy pattern
 #[derive(Clone, Debug)]
@@ -179,10 +191,30 @@ impl AgentLoop {
             .update_status(crate::types::TaskStatus::Running)
             .await;
 
+        let durable = context.durable.clone();
+        let mut end_turn_after_fold = false;
+        match durable.as_ref().map(|d| d.kind) {
+            Some(SegmentKind::Resume) | Some(SegmentKind::ResumeWithMessage) => {
+                // A resumed segment: fold the parked step's results into one
+                // tool-results entry (S2); the triggering message is already
+                // saved, so it is not processed again.
+                match self.fold_pending_step(&context).await? {
+                    FoldOutcome::StillWaiting(waiting) => {
+                        return self.park(&context, waiting).await;
+                    }
+                    FoldOutcome::Folded { end_turn } => end_turn_after_fold = end_turn,
+                    FoldOutcome::Nothing => {}
+                }
+                if durable.as_ref().map(|d| d.kind) == Some(SegmentKind::ResumeWithMessage) {
+                    self.process_message(&message, context.clone()).await?;
+                }
+            }
+            _ => {
+                // Save the initial message through orchestrator if available
+                self.process_message(&message, context.clone()).await?;
+            }
+        }
         let mut execution_history = context.get_execution_history().await;
-
-        // Save the initial message through orchestrator if available
-        self.process_message(&message, context.clone()).await?;
 
         // Calculate context size after message is saved but before LLM calls
         if let Err(e) = context.calculate_context_size().await {
@@ -216,9 +248,13 @@ impl AgentLoop {
         let max_iterations = self.agent_def.max_iterations.unwrap_or(MAX_ITERATIONS);
 
         let mut error_iterations = 0;
+        let mut last_planning_error: Option<AgentError> = None;
         let mut step_index = 0;
         let mut plan_cycle: usize = 0;
         loop {
+            if end_turn_after_fold {
+                break;
+            }
             // Snapshot at the top of each iteration so per-step deltas cover the
             // planning LLM call + any tools executed before the next plan cycle.
             context.snapshot_step_start().await;
@@ -267,6 +303,35 @@ impl AgentLoop {
 
             if error_iterations > 2 {
                 tracing::error!("Too many errors. Exiting...");
+                // Only now is the planning failure the run's end: one
+                // terminal PLANNING_ERROR (retries above emit none, S12).
+                if let Some(e) = last_planning_error.take() {
+                    context
+                        .update_status(crate::types::TaskStatus::Failed)
+                        .await;
+                    context
+                        .emit(AgentEventType::RunError {
+                            message: format!("Planning failed: {}", e),
+                            code: Some("PLANNING_ERROR".to_string()),
+                            usage: Some(context.get_step_usage().await),
+                        })
+                        .await;
+                    return Err(e);
+                }
+                break;
+            }
+
+            // Durable runs count steps across segments, so a resumed task
+            // cannot loop past its limit.
+            if durable.is_some()
+                && context.get_usage().await.current_iteration >= max_iterations
+                && context.get_final_result().await.is_none()
+            {
+                verbose_log!(
+                    context.verbose,
+                    "Max iterations ({}) reached across segments, stopping",
+                    max_iterations
+                );
                 break;
             }
 
@@ -319,13 +384,12 @@ impl AgentLoop {
                         tracing::error!("Planning failed: {}", e);
                         error_iterations = error_iterations + 1;
 
-                        // Emit RunError event so UI can display the actual error
+                        // A retried planning error is not the run's end: no
+                        // terminal RunError here (it closed the client stream
+                        // while the loop retried). The step closes as failed;
+                        // exhausting the retries emits the one terminal error.
                         context
-                            .emit(AgentEventType::RunError {
-                                message: format!("Planning failed: {}", e),
-                                code: Some("PLANNING_ERROR".to_string()),
-                                usage: Some(context.get_step_usage().await),
-                            })
+                            .emit_verbose(format!("Planning failed (will retry): {}", e))
                             .await;
 
                         let result = ExecutionResult {
@@ -336,6 +400,7 @@ impl AgentLoop {
                             reason: Some(format!("Planning failed: {}", e)),
                         };
                         context.store_execution_result(&result).await?;
+                        last_planning_error = Some(e);
                         // Close the step span we opened before continuing
                         context
                             .emit(AgentEventType::StepCompleted {
@@ -457,7 +522,7 @@ impl AgentLoop {
                     context
                         .emit(AgentEventType::RunError {
                             message: format!("Step execution failed: {}", e),
-                            code: Some("EXECUTION_ERROR".to_string()),
+                            code: Some(crate::a2a::agent_run_error_code(&e).to_string()),
                             usage: Some(context.get_step_usage().await),
                         })
                         .await;
@@ -485,9 +550,39 @@ impl AgentLoop {
 
             if result.is_input_required() {
                 verbose_log!(context.verbose, "Input required, stopping execution");
+                let pending = match &durable {
+                    Some(d) => d
+                        .state
+                        .lock()
+                        .await
+                        .pending_step
+                        .as_ref()
+                        .map(|p| p.pending.clone())
+                        .unwrap_or_default(),
+                    None => Vec::new(),
+                };
+                if !pending.is_empty() {
+                    // Durable: the step's calls wait outside the worker. The
+                    // step stays journaled (folded on resume); park.
+                    context
+                        .emit(AgentEventType::StepCompleted {
+                            step_id: iteration_step_id.clone(),
+                            success: true,
+                            context_budget: Some(context.get_usage().await.context_budget.clone()),
+                            usage: Some(context.get_step_usage().await),
+                        })
+                        .await;
+                    let deadline = self.earliest_deadline(&context, &pending).await;
+                    return self
+                        .park(&context, distri_types::WaitingOn { pending, deadline })
+                        .await;
+                }
                 context
                     .update_status(crate::types::TaskStatus::InputRequired)
                     .await;
+                // Keep the step's tool-call parts (and any inline results):
+                // breaking before storing lost them (S11).
+                context.store_execution_result(&result).await?;
                 context
                     .emit(AgentEventType::StepCompleted {
                         step_id: iteration_step_id.clone(),
@@ -497,6 +592,10 @@ impl AgentLoop {
                     })
                     .await;
                 break;
+            }
+            // Durable: the step is stored whole below; drop its journal.
+            if let Some(d) = &durable {
+                d.state.lock().await.pending_step = None;
             }
             // Store both the plan step and execution result in scratchpad store
             context.store_execution_result(&result).await?;
@@ -631,7 +730,14 @@ impl AgentLoop {
         let final_success = validation_result.is_ok();
 
         let last_result = execution_history.last();
-        if let Some(last_result) = last_result {
+        let input_required = matches!(
+            context.get_status().await,
+            Some(crate::types::TaskStatus::InputRequired)
+        );
+        if input_required {
+            // Waiting on input is not completion: a later step's status must
+            // not overwrite it (S11).
+        } else if let Some(last_result) = last_result {
             // Update task status based on completion result
             let final_status = last_result.status.clone().into();
             context.update_status(final_status).await;
@@ -659,6 +765,24 @@ impl AgentLoop {
             failed_steps,
             final_result
         );
+
+        // Durable: the final answer is saved before the terminal event, so a
+        // stream that ends on it reads the answer from the store (B3) —
+        // whichever segment and server produced it.
+        if durable.is_some() {
+            if let Some(text) = final_result
+                .as_ref()
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .filter(|t| !t.is_empty())
+            {
+                context
+                    .save_message(&Message::final_answer(&context.task_id, text))
+                    .await;
+            }
+        }
 
         context
             .emit(AgentEventType::RunFinished {
@@ -756,6 +880,169 @@ impl AgentLoop {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /// End the segment waiting on `waiting`: InputRequired, one `RunParked`
+    /// (not terminal), no RunFinished. The worker parks the claim.
+    async fn park(
+        &self,
+        context: &Arc<ExecutorContext>,
+        waiting: distri_types::WaitingOn,
+    ) -> Result<Option<Value>, AgentError> {
+        context
+            .update_status(crate::types::TaskStatus::InputRequired)
+            .await;
+        let attempt = context
+            .durable
+            .as_ref()
+            .map(|d| d.claim.attempt)
+            .unwrap_or(0);
+        context
+            .emit(AgentEventType::RunParked {
+                task_id: context.task_id.clone(),
+                pending: waiting.pending.clone(),
+                deadline: waiting.deadline,
+                attempt,
+            })
+            .await;
+        if let Some(d) = &context.durable {
+            *d.parked.lock().await = Some(waiting);
+        }
+        Ok(None)
+    }
+
+    async fn earliest_deadline(
+        &self,
+        context: &Arc<ExecutorContext>,
+        pending: &[String],
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        let d = context.durable.as_ref()?;
+        let mut earliest = None;
+        for id in pending {
+            if let Ok(Some(call)) = d.runtime.pending_calls.get(id).await {
+                if let Some(dl) = call.deadline {
+                    earliest =
+                        Some(earliest.map_or(dl, |e: chrono::DateTime<chrono::Utc>| e.min(dl)));
+                }
+            }
+        }
+        earliest
+    }
+
+    /// Fold the journaled step of a parked (or crashed) segment into ONE
+    /// tool-results entry, one result per tool call, in call order (S2):
+    /// inline results as recorded, pending calls as answered (completed,
+    /// expired, canceled, interrupted), an inline call cut off by a crash
+    /// re-run when replay-safe, else `interrupted` (R4).
+    async fn fold_pending_step(
+        &self,
+        context: &Arc<ExecutorContext>,
+    ) -> Result<FoldOutcome, AgentError> {
+        let Some(durable) = context.durable.clone() else {
+            return Ok(FoldOutcome::Nothing);
+        };
+        let Some(step) = durable.state.lock().await.pending_step.clone() else {
+            return Ok(FoldOutcome::Nothing);
+        };
+        let store = durable.runtime.pending_calls.clone();
+        let calls: std::collections::HashMap<String, distri_types::PendingCall> = store
+            .list_for_task(&context.task_id)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))?
+            .into_iter()
+            .map(|c| (c.id.clone(), c))
+            .collect();
+
+        let still_pending: Vec<String> = step
+            .pending
+            .iter()
+            .filter(|id| {
+                calls
+                    .get(*id)
+                    .is_some_and(|c| c.status == distri_types::PendingStatus::Pending)
+            })
+            .cloned()
+            .collect();
+        if !still_pending.is_empty() {
+            let deadline = self.earliest_deadline(context, &still_pending).await;
+            return Ok(FoldOutcome::StillWaiting(distri_types::WaitingOn {
+                pending: still_pending,
+                deadline,
+            }));
+        }
+
+        let tools = context.get_tools().await;
+        let mut results = Vec::with_capacity(step.tool_calls.len());
+        let mut fresh = Vec::new();
+        for call in &step.tool_calls {
+            let id = &call.tool_call_id;
+            let response = if let Some(r) = step.results.iter().find(|r| &r.tool_call_id == id) {
+                r.clone()
+            } else if step.pending.contains(id) {
+                let result = calls
+                    .get(id)
+                    .and_then(|c| c.result.clone())
+                    .unwrap_or_else(distri_types::CallResult::interrupted);
+                let r = result.to_tool_response(id, &call.tool_name);
+                fresh.push(r.clone());
+                r
+            } else if step.replay_safe.contains(id) {
+                let tool = crate::agent::tool_lookup::find_tool_by_name(&tools, &call.tool_name);
+                let r = match tool {
+                    Some(tool) => {
+                        let (parts, _) =
+                            crate::agent::strategy::execution::default::run_inline_tool(
+                                tool.as_ref(),
+                                call,
+                                context,
+                            )
+                            .await;
+                        crate::types::ToolResponse::from_parts(
+                            id.clone(),
+                            call.tool_name.clone(),
+                            parts,
+                        )
+                    }
+                    None => distri_types::CallResult::interrupted()
+                        .to_tool_response(id, &call.tool_name),
+                };
+                fresh.push(r.clone());
+                r
+            } else {
+                // In flight when the worker died and not replay-safe: never
+                // run twice. A synchronous sub-agent lands here too.
+                let r =
+                    distri_types::CallResult::interrupted().to_tool_response(id, &call.tool_name);
+                fresh.push(r.clone());
+                r
+            };
+            results.push(response);
+        }
+
+        let mut parts = step.assistant_parts.clone();
+        parts.extend(results.into_iter().map(Part::ToolResult));
+        let end_turn = crate::agent::strategy::execution::default::parts_request_turn_end(&parts);
+        let result = ExecutionResult {
+            step_id: step.step_id.clone(),
+            status: ExecutionStatus::Success,
+            parts,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            reason: None,
+        };
+        context.store_execution_result(&result).await?;
+        if !fresh.is_empty() {
+            context
+                .emit(AgentEventType::ToolResults {
+                    step_id: step.step_id.clone(),
+                    parent_message_id: None,
+                    results: fresh,
+                })
+                .await;
+        }
+        context.increment_iteration().await;
+        durable.state.lock().await.pending_step = None;
+        durable.sync_from_context(context).await;
+        Ok(FoldOutcome::Folded { end_turn })
     }
 
     /// Validates that the agent properly completed the task

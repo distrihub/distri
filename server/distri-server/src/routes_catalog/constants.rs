@@ -86,17 +86,22 @@ macro_rules! define_routes {
 define_routes! {
     // ── Agents (the embed-critical surface: a2a dispatch + CRUD) ────────────
     /// Agent card — a2a discovery doc; intentionally public.
-    AgentCard         => "/agents/{agent_name}/.well-known/agent.json" { GET: Public },
+    AgentCard         => "/agents/{agent_name}/.well-known/agent-card.json" { GET: Public },
+    /// A2A 0.x card path, kept for one release.
+    AgentCardLegacy   => "/agents/{agent_name}/.well-known/agent.json" { GET: Public },
     /// Lightweight agent-card list — the client/external surface. Returns only
     /// discovery metadata (name, description, version, icon, skills), never the
     /// system prompt / tools / model config that the full `/agents` list exposes.
     AgentCards        => "/agents/cards" { GET: Read },
-    Agents            => "/agents" { GET: Read, POST: Write },
-    AgentValidate     => "/agents/{id:.*}/validate" { GET: Execute },
+    /// The full definition list (instructions, tools, model): a developer
+    /// surface (R8), so `Write`. Runtime clients list `/agents/cards`.
+    Agents            => "/agents" { GET: Write, POST: Write },
+    AgentValidate     => "/agents/{id:.*}/validate" { GET: Write },
     AgentCompleteTool => "/agents/{id:.*}/complete-tool" { POST: Execute },
-    AgentDag          => "/agents/{id:.*}/dag" { GET: Execute },
-    /// a2a JSON-RPC dispatch (POST=run) + agent definition CRUD.
-    AgentDispatch     => "/agents/{id:.*}" { GET: Read, POST: Execute, PUT: Write, DELETE: Manage },
+    AgentDag          => "/agents/{id:.*}/dag" { GET: Write },
+    /// a2a JSON-RPC dispatch (POST=run) + agent definition CRUD. Reading the
+    /// definition (GET: definition + markdown) is a developer surface (R8).
+    AgentDispatch     => "/agents/{id:.*}" { GET: Write, POST: Execute, PUT: Write, DELETE: Manage },
 
     // ── Hooks / tasks / tools (run surface) ─────────────────────────────────
     EventHooks        => "/event/hooks" { POST: Execute },
@@ -105,6 +110,10 @@ define_routes! {
     /// Live event stream (SSE) for one task — a monitor's per-child feed.
     TaskEvents        => "/tasks/{task_id}/events" { GET: Execute },
     TaskGet           => "/tasks/{task_id}" { GET: Execute },
+    /// Durable runs: the task's pending client calls (a reloaded client finds them).
+    TaskPendingCalls  => "/tasks/{task_id}/pending-calls" { GET: Execute },
+    /// Durable runs: a client claims a pending call before running it.
+    PendingCallClaim  => "/pending-calls/{id}/claim" { POST: Execute },
     /// Run tree: root tasks with their sub-agents and background forks.
     Runs              => "/runs" { GET: Execute },
     RunGet            => "/runs/{task_id}" { GET: Execute },
@@ -117,6 +126,8 @@ define_routes! {
     Thread            => "/threads/{thread_id}" { GET: Execute, PUT: Execute, DELETE: Execute },
     ThreadMessageRead => "/threads/{thread_id}/messages/{message_id}/read" { GET: Execute, POST: Execute },
     ThreadReadStatus  => "/threads/{thread_id}/read-status" { GET: Execute },
+    /// Durable runs: pending client calls of every task in the thread.
+    ThreadPendingCalls=> "/threads/{thread_id}/pending-calls" { GET: Execute },
     ThreadMessageVote => "/threads/{thread_id}/messages/{message_id}/vote" { GET: Execute, POST: Execute, DELETE: Execute },
     ThreadMessageVotes=> "/threads/{thread_id}/messages/{message_id}/votes" { GET: Execute },
 

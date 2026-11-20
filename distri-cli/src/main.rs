@@ -76,7 +76,10 @@ enum Commands {
 
     /// Run a single task against an agent
     Run {
-        #[clap(long, help = "Agent name (defaults to 'distri_runner')")]
+        #[clap(
+            long,
+            help = "Agent name, or name@N to run a saved version (defaults to 'distri_runner')"
+        )]
         agent: Option<String>,
         #[clap(long, help = "Task text to send", required = true)]
         task: String,
@@ -94,9 +97,9 @@ enum Commands {
         /// Falls back to DISTRI_TASK_ID env var, then auto-generated.
         #[clap(long)]
         task_id: Option<String>,
-        /// Explicit thread ID (alias for --resume, used by deepagent containers).
-        /// Falls back to DISTRI_THREAD_ID env var.
-        #[clap(long)]
+        /// Explicit thread ID — the A2A `contextId` (alias for --resume, used by
+        /// deepagent containers). Falls back to DISTRI_THREAD_ID env var.
+        #[clap(long, alias = "context-id")]
         thread_id: Option<String>,
         /// W3C traceparent header for distributed tracing.
         #[clap(long)]
@@ -109,6 +112,29 @@ enum Commands {
         /// Repeatable: --header x-trace-source=cli
         #[clap(long = "header", value_name = "KEY=VALUE")]
         headers: Vec<String>,
+        /// Non-interactive A2A mode: print the protocol JSON (the
+        /// `SendMessage` result, or one JSON-RPC frame per line with --stream).
+        /// Any of --json/--stream/--async/--metadata/--data-part/--extensions
+        /// switches `run` to this mode: a plain A2A send, no local tools.
+        #[clap(long)]
+        json: bool,
+        /// A2A mode: `SendStreamingMessage`, one line per frame
+        #[clap(long)]
+        stream: bool,
+        /// A2A mode: return once the task exists (prints its id); the run goes on
+        #[clap(long = "async")]
+        async_: bool,
+        /// A2A mode: request metadata (inline JSON, @file, a path, or -)
+        #[clap(long, value_name = "JSON|FILE|-")]
+        metadata: Option<String>,
+        /// A2A mode: add a DataPart (inline JSON, @file, a path, or -). Repeatable.
+        #[clap(long = "data-part", value_name = "JSON|FILE|-")]
+        data_parts: Vec<String>,
+        /// A2A mode: extensions to activate (`A2A-Extensions`), names
+        /// (event-stream, client-tools, durable-runs, …) or URIs, comma-separated.
+        /// None: standard A2A.
+        #[clap(long, value_delimiter = ',')]
+        extensions: Vec<String>,
     },
 
     /// Every run you have going (sub-agents and background forks as a
@@ -122,6 +148,9 @@ enum Commands {
         #[clap(long)]
         agent: Option<String>,
     },
+
+    /// Tasks (A2A): list, get, cancel, subscribe, pending calls, push configs
+    Tasks(distri_cli::tasks_cli::TasksArgs),
 
     /// Agent-related commands (defaults to list)
     Agents {
@@ -330,6 +359,26 @@ enum Commands {
 enum AgentsCommands {
     /// List agents from the server
     List,
+    /// The agent's public A2A card (what any A2A client sees)
+    Card {
+        #[clap(help = "Agent name, or name@N for a saved version")]
+        agent: String,
+        /// The authenticated extended card (`GetExtendedAgentCard`)
+        #[clap(long)]
+        extended: bool,
+        /// Print the card JSON
+        #[clap(long)]
+        json: bool,
+    },
+    /// The agent's saved versions (number, date, breaking, note); run one
+    /// with `distri run --agent name@N`
+    Versions {
+        #[clap(help = "Agent name")]
+        agent: String,
+        /// Print the versions as JSON
+        #[clap(long)]
+        json: bool,
+    },
     /// Delete an agent by name or ID
     Delete {
         #[clap(help = "Agent name or UUID")]
@@ -783,7 +832,46 @@ async fn main() -> Result<()> {
             traceparent,
             tags,
             headers,
+            json,
+            stream,
+            async_,
+            metadata,
+            data_parts,
+            extensions,
         } => {
+            let a2a_mode = json
+                || stream
+                || async_
+                || metadata.is_some()
+                || !data_parts.is_empty()
+                || !extensions.is_empty();
+            if a2a_mode {
+                let header_map = parse_key_value_pairs(&headers);
+                if !header_map.is_empty() {
+                    config.headers = Some(header_map);
+                }
+                let raw_client = Distri::from_config(config.clone());
+                let agent = distri_cli::tasks_cli::resolve_agent(agent.as_deref());
+                distri_cli::tasks_cli::run_raw_send(
+                    &raw_client,
+                    distri_cli::tasks_cli::RawSend {
+                        agent,
+                        text: Some(task),
+                        data_parts,
+                        metadata,
+                        context_id: thread_id
+                            .or_else(|| std::env::var("DISTRI_THREAD_ID").ok())
+                            .or_else(|| resume.as_ref().map(|r| resolve_resume_arg(r))),
+                        task_id,
+                        stream,
+                        async_,
+                        json,
+                        extensions: distri_cli::tasks_cli::extension_uris(&extensions),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
             let cli_overrides = parse_cli_overrides(overrides.as_deref());
             let override_model = cli_overrides.model.clone();
             let extra_tools = cli_overrides.dynamic_tools.unwrap_or_default();
@@ -839,13 +927,19 @@ async fn main() -> Result<()> {
 
             // Verify the agent exists before registering anything. Only existence
             // matters here, so the cheap card fetch is enough.
+            // `name@N` runs saved version N: the card is the pinned one.
             if app.fetch_agent_card(&agent_name).await?.is_none() {
                 return Err(anyhow::anyhow!(
-                    "Agent '{}' not found on {}",
-                    agent_name,
+                    "{} on {}",
+                    distri_cli::tasks_cli::not_found_message(&agent_name),
                     base_url
                 ));
             }
+            // The server names the bare agent on its events, so local tools
+            // are keyed by the bare name (`name@N` → `name`).
+            let tool_agent = distri_types::AgentRef::parse(&agent_name)
+                .map(|r| r.name)
+                .unwrap_or_else(|_| agent_name.clone());
             // Register local CLI tool handlers + ship their schemas to the
             // server. The CLI is always the execution environment for any
             // external tool calls the server delegates back — there is no
@@ -855,7 +949,7 @@ async fn main() -> Result<()> {
                 PermissionEngine::load(&workspace, cli.config.as_deref(), cli.permission_mode)?;
             let mut tool_defs = register_all(
                 &app.registry(),
-                &agent_name,
+                &tool_agent,
                 &workspace,
                 permissions,
                 std::sync::Arc::new(distri_cli::interact::TerminalBroker),
@@ -933,7 +1027,20 @@ async fn main() -> Result<()> {
                 tui::runs::print_plain(&client, thread).await?;
             }
         }
+        Commands::Tasks(args) => {
+            distri_cli::tasks_cli::run(args, &client).await?;
+        }
         Commands::Agents { command } => match command.unwrap_or(AgentsCommands::List) {
+            AgentsCommands::Card {
+                agent,
+                extended,
+                json,
+            } => {
+                distri_cli::tasks_cli::print_card(&client, &agent, extended, json).await?;
+            }
+            AgentsCommands::Versions { agent, json } => {
+                distri_cli::tasks_cli::print_versions(&client, &agent, json).await?;
+            }
             AgentsCommands::List => {
                 for agent in app.list_agents().await? {
                     println!("{} - {}", agent.get_name(), agent.get_description());

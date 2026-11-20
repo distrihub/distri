@@ -61,6 +61,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
         web::resource(Route::Token.path()).route(web::post().to(crate::token_auth::issue_token)),
     )
     .service(web::resource(Route::AgentCard.path()).route(web::get().to(get_agent_card)))
+    .service(web::resource(Route::AgentCardLegacy.path()).route(web::get().to(get_agent_card)))
     .service(web::resource(Route::AgentCards.path()).route(web::get().to(list_agent_cards)))
     .service(
         web::resource(Route::Agents.path())
@@ -87,6 +88,18 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     // Specific /tasks/{id}/events before the bare /tasks/{id} resource.
     .service(web::resource(Route::TaskEvents.path()).route(web::get().to(task_events_handler)))
     .service(web::resource(Route::TaskGet.path()).route(web::get().to(get_task_handler)))
+    .service(
+        web::resource(Route::TaskPendingCalls.path())
+            .route(web::get().to(task_pending_calls_handler)),
+    )
+    .service(
+        web::resource(Route::ThreadPendingCalls.path())
+            .route(web::get().to(thread_pending_calls_handler)),
+    )
+    .service(
+        web::resource(Route::PendingCallClaim.path())
+            .route(web::post().to(claim_pending_call_handler)),
+    )
     .service(web::resource(Route::Tools.path()).route(web::get().to(list_tools)))
     // Webhook endpoint for triggering agents
     // Thread endpoints
@@ -257,9 +270,14 @@ async fn list_agent_cards(
         .await;
 
     let server_config = server_config.get_ref();
+    let durable = executor.durable_runs_for_caller().await;
     let cards: Vec<AgentCard> = agents_with_metadata
         .into_iter()
-        .map(|(config, _cloud)| config.to_card(server_config))
+        .map(|(config, _cloud)| {
+            let mut card = config.to_card(server_config);
+            distri_types::a2a_extensions::set_card_extensions(&mut card, durable);
+            card
+        })
         .collect();
 
     HttpResponse::Ok().json(cards)
@@ -553,7 +571,17 @@ async fn get_agent_definition(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
-    let agent_id = id.into_inner();
+    let agent_id = agent_ref_from_path(&id.into_inner());
+    // `name@N`: that saved version's definition.
+    if let Ok(agent) = distri_types::AgentRef::parse(&agent_id) {
+        if agent.version_no().is_some() {
+            if let Err(e) = executor.resolve_agent(&agent).await {
+                if let Some(resp) = agent_ref_error(&e) {
+                    return resp;
+                }
+            }
+        }
+    }
 
     // Try store with cloud metadata first, then fall back to orchestrator resolution
     let (agent, cloud_metadata) = if let Some((cfg, meta)) = executor
@@ -722,12 +750,40 @@ async fn validate_agent_handler(
     })
 }
 
+/// An agent path segment as written: `name` or `name@N` (spec
+/// agent-versions V1). `@` may arrive raw or as `%40`, and the `/` of a
+/// package name as `%2F`.
+pub fn agent_ref_from_path(raw: &str) -> String {
+    if !raw.contains('%') {
+        return raw.to_string();
+    }
+    raw.replace("%40", "@")
+        .replace("%2F", "/")
+        .replace("%2f", "/")
+}
+
+/// The HTTP answer to an agent reference that names no agent or version.
+fn agent_ref_error(e: &AgentError) -> Option<HttpResponse> {
+    match e {
+        AgentError::NotFound(m) => Some(HttpResponse::NotFound().json(json!({ "error": m }))),
+        AgentError::AgentVersionNotFound { agent, version } => {
+            Some(HttpResponse::NotFound().json(json!({
+                "error": "agent version not found",
+                "agent": agent,
+                "version": version,
+            })))
+        }
+        AgentError::Validation(m) => Some(HttpResponse::BadRequest().json(json!({ "error": m }))),
+        _ => None,
+    }
+}
+
 async fn get_agent_card(
     agent_name: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
-    let agent_name = agent_name.into_inner();
+    let agent_name = agent_ref_from_path(&agent_name.into_inner());
 
     let handler = A2AHandler::new(executor.get_ref().clone());
     match handler
@@ -735,6 +791,9 @@ async fn get_agent_card(
         .await
     {
         Ok(card) => HttpResponse::Ok().json(card),
+        Err(distri_core::a2a::A2AError::AgentError(e)) if agent_ref_error(&e).is_some() => {
+            agent_ref_error(&e).unwrap_or_else(|| HttpResponse::NotFound().finish())
+        }
         Err(e) => {
             let e: distri_a2a::JsonRpcError = e.into();
             HttpResponse::InternalServerError().json(e)
@@ -749,14 +808,49 @@ async fn a2a_handler(
     id: web::Path<String>,
     req: web::Json<JsonRpcRequest>,
     executor: web::Data<Arc<AgentOrchestrator>>,
+    server_config: Option<web::Data<ServerConfig>>,
     http_request: HttpRequest,
     verbose: Option<web::Data<Option<VerboseLog>>>,
 ) -> Either<
-    Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
+    actix_web::CustomizeResponder<
+        Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
+    >,
     HttpResponse,
 > {
-    let agent_id = id.into_inner();
+    use actix_web::Responder as _;
+    // `name` or `name@N`; the service resolves the reference.
+    let agent_id = agent_ref_from_path(&id.into_inner());
     let req = req.into_inner();
+
+    // A2A extensions: activated by the `A2A-Extensions` header (comma-
+    // separated or repeated) and `Message.extensions`; echoed back.
+    let header_extensions = distri_a2a::parse_extensions_header(
+        http_request
+            .headers()
+            .get_all(distri_a2a::EXTENSIONS_HEADER)
+            .filter_map(|v| v.to_str().ok()),
+    );
+    let activation = distri_core::a2a::service::request_activation(&req, &header_extensions);
+    let durable = executor.durable_runs_for_caller().await;
+    let mut card_extensions = server_config
+        .as_ref()
+        .map(|c| c.capabilities.extensions.clone())
+        .unwrap_or_default();
+    card_extensions.extend(distri_types::a2a_extensions::card_extensions(durable));
+    if let Some(uri) = activation.missing_required(&card_extensions) {
+        let resp = distri_a2a::JsonRpcResponse::error(
+            req.id.clone(),
+            distri_a2a::JsonRpcError::extension_support_required(uri),
+        );
+        return actix_web::Either::Right(HttpResponse::Ok().json(resp));
+    }
+    let supported: Vec<String> = card_extensions.iter().map(|e| e.uri.clone()).collect();
+    let echo = if activation.is_legacy() {
+        Vec::new()
+    } else {
+        activation.echo(&supported)
+    };
+    let echo_header = (!echo.is_empty()).then(|| echo.join(", "));
     let executor = executor.get_ref();
     let verbose = verbose
         .as_ref()
@@ -792,11 +886,12 @@ async fn a2a_handler(
             verbose,
             workspace_model_settings,
             caller,
+            extensions: header_extensions,
         })
         .await;
     match result {
         futures_util::future::Either::Left(stream) => {
-            actix_web::Either::Left(Sse::from_stream(stream.map(|r| match r {
+            let mut sse = Sse::from_stream(stream.map(|r| match r {
                 Ok(m) => {
                     let mut data = sse::Data::new(m.data);
                     if m.event.is_some() {
@@ -805,10 +900,19 @@ async fn a2a_handler(
                     Ok(sse::Event::Data(data))
                 }
                 Err(e) => Err(e),
-            })))
+            }))
+            .customize();
+            if let Some(v) = &echo_header {
+                sse = sse.insert_header((distri_a2a::EXTENSIONS_HEADER, v.clone()));
+            }
+            actix_web::Either::Left(sse)
         }
         futures_util::future::Either::Right(response) => {
-            actix_web::Either::Right(HttpResponse::Ok().json(response))
+            let mut builder = HttpResponse::Ok();
+            if let Some(v) = &echo_header {
+                builder.insert_header((distri_a2a::EXTENSIONS_HEADER, v.clone()));
+            }
+            actix_web::Either::Right(builder.json(response))
         }
     }
 }
@@ -1625,11 +1729,30 @@ async fn get_task_handler(
 async fn task_events_handler(
     path: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
+    http_request: HttpRequest,
 ) -> Either<
-    Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
+    actix_web::CustomizeResponder<
+        Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
+    >,
     HttpResponse,
 > {
+    use actix_web::Responder as _;
     let task_id = path.into_inner();
+    // This is `event-stream`'s own method, so it activates `event-stream`;
+    // envelopes of `client-tools` / `durable-runs` follow the request's
+    // `A2A-Extensions` header, as on a stream (G3).
+    let active = distri_core::a2a::mapper::task_events_activation(
+        http_request
+            .headers()
+            .get_all(distri_a2a::EXTENSIONS_HEADER)
+            .filter_map(|v| v.to_str().ok()),
+    );
+    let echo = active.echo(
+        &distri_types::a2a_extensions::card_extensions(executor.durable_runs_for_caller().await)
+            .iter()
+            .map(|e| e.uri.clone())
+            .collect::<Vec<_>>(),
+    );
     // The broadcaster is keyed by task id alone; the task store decides who
     // may read a task (a multi-tenant host scopes it to the caller), so a task
     // it does not return is not found and its events are never streamed.
@@ -1650,10 +1773,24 @@ async fn task_events_handler(
     // hold connections open after a child finishes. Cloud's Redis broadcaster
     // replays buffered events first; the in-process one is live-only.
     match executor.broadcaster().follow_stream(&task_id).await {
-        Ok(stream) => actix_web::Either::Left(Sse::from_stream(stream.map(|event| {
-            let payload = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
-            Ok(sse::Event::Data(sse::Data::new(payload)))
-        }))),
+        Ok(stream) => {
+            let stream = stream
+                .filter(move |event| {
+                    futures_util::future::ready(distri_core::a2a::mapper::task_events_include(
+                        &active, event,
+                    ))
+                })
+                .map(|event| {
+                    let payload =
+                        serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
+                    Ok(sse::Event::Data(sse::Data::new(payload)))
+                });
+            let mut sse = Sse::from_stream(stream).customize();
+            if !echo.is_empty() {
+                sse = sse.insert_header((distri_a2a::EXTENSIONS_HEADER, echo.join(", ")));
+            }
+            actix_web::Either::Left(sse)
+        }
         Err(e) => actix_web::Either::Right(HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to subscribe to task events: {}", e)
         }))),
@@ -2155,7 +2292,13 @@ struct CompleteToolRequest {
     tool_response: distri_types::ToolResponse,
 }
 
-/// Complete an external tool execution
+/// Complete an external tool execution. Durable mode (S3): a duplicate is
+/// 200 `{status:"duplicate"}`, a conflict or a late (expired) result 409, an
+/// unknown call 400 with the legacy "No pending external tool execution
+/// found" text.
+///
+/// The path's agent (`name` or `name@N`) is not used: the answer resumes the
+/// task at the version it is pinned to (spec agent-versions V3).
 async fn complete_tool_handler(
     request: web::Json<CompleteToolRequest>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -2163,18 +2306,113 @@ async fn complete_tool_handler(
     let req = request.into_inner();
 
     let orchestrator: Arc<AgentOrchestrator> = executor.get_ref().clone();
-    match orchestrator
-        .complete_tool(&req.tool_call_id, req.tool_response)
+    let outcome = orchestrator
+        .clone()
+        .complete_tool_call(&req.tool_call_id, req.tool_response)
+        .await;
+    match outcome {
+        Ok(distri_core::durable::CompleteToolOutcome::Completed) => {
+            HttpResponse::Ok().json(json!({
+                "success": true,
+                "status": "completed",
+                "message": "Tool completed successfully"
+            }))
+        }
+        Ok(distri_core::durable::CompleteToolOutcome::Duplicate) => {
+            HttpResponse::Ok().json(json!({
+                "success": true,
+                "status": "duplicate",
+                "message": "Tool already completed with this result"
+            }))
+        }
+        Err(e) => {
+            let mut builder = if e.http_status() == 409 {
+                HttpResponse::Conflict()
+            } else {
+                HttpResponse::BadRequest()
+            };
+            builder.json(json!({
+                "success": false,
+                "status": e.status(),
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+/// `GET /tasks/{task_id}/pending-calls` — the task's pending calls (bare
+/// array).
+async fn task_pending_calls_handler(
+    path: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let task_id = path.into_inner();
+    match executor.list_task_pending_calls(&task_id).await {
+        Ok(Some(calls)) => {
+            HttpResponse::Ok().json(distri_core::a2a::service::pending_calls_json(&calls))
+        }
+        // A task that does not exist (yet) or that the caller cannot read:
+        // an empty list, so the answer reveals nothing either way (G4).
+        Ok(None) => HttpResponse::Ok().json(json!([])),
+        Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
+    }
+}
+
+/// `GET /threads/{thread_id}/pending-calls` — pending calls of the thread's
+/// tasks (bare array), for a client that reloaded (S4).
+async fn thread_pending_calls_handler(
+    path: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    match executor.list_thread_pending_calls(&thread_id).await {
+        Ok(Some(calls)) => {
+            HttpResponse::Ok().json(distri_core::a2a::service::pending_calls_json(&calls))
+        }
+        // Unknown or not the caller's: empty, as for a thread with no calls (G4).
+        Ok(None) => HttpResponse::Ok().json(json!([])),
+        Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
+    }
+}
+
+#[derive(Deserialize)]
+struct ClaimPendingCallRequest {
+    instance_id: String,
+    /// Lease in seconds (default 60).
+    #[serde(default)]
+    lease_secs: Option<u64>,
+}
+
+/// `POST /pending-calls/{id}/claim {instance_id}` — 200 `{claimed:true,
+/// until}`; 409 `{claimed:false, claimed_by, until}` when another instance
+/// holds it (or `{status}` when it is no longer pending); 404 unknown (S5).
+async fn claim_pending_call_handler(
+    path: web::Path<String>,
+    request: web::Json<ClaimPendingCallRequest>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    use distri_types::ClientClaimOutcome;
+    let id = path.into_inner();
+    let req = request.into_inner();
+    let lease = std::time::Duration::from_secs(req.lease_secs.unwrap_or(60).clamp(1, 3600));
+    match executor
+        .claim_pending_call(&id, &req.instance_id, lease)
         .await
     {
-        Ok(()) => HttpResponse::Ok().json(json!({
-            "success": true,
-            "message": "Tool completed successfully"
+        Ok(ClientClaimOutcome::Claimed { until }) => {
+            HttpResponse::Ok().json(json!({ "claimed": true, "until": until.to_rfc3339() }))
+        }
+        Ok(ClientClaimOutcome::Held { by, until }) => HttpResponse::Conflict().json(json!({
+            "claimed": false,
+            "claimed_by": by,
+            "until": until.to_rfc3339()
         })),
-        Err(e) => HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": e
-        })),
+        Ok(ClientClaimOutcome::Closed(status)) => {
+            HttpResponse::Conflict().json(json!({ "claimed": false, "status": status.as_str() }))
+        }
+        Ok(ClientClaimOutcome::NotFound) => HttpResponse::NotFound()
+            .json(json!({ "error": format!("pending call '{id}' not found") })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
     }
 }
 
@@ -2356,5 +2594,373 @@ mod tests {
 
         let stored = executor.stores.agent_store.get("test_agent_store").await;
         assert!(stored.is_some(), "agent config should be persisted");
+    }
+
+    fn memory_store_config() -> StoreConfig {
+        let mut store_config = StoreConfig::default();
+        store_config.metadata.db_config = Some(DbConnectionConfig {
+            database_url: format!("file:{}?mode=memory&cache=shared", uuid::Uuid::new_v4()),
+            max_connections: 1,
+        });
+        store_config
+    }
+
+    async fn durable_executor(store: distri_core::InMemoryDurableStore) -> Arc<AgentOrchestrator> {
+        let runtime = distri_core::durable::DurableRuntime::new(
+            Arc::new(store.clone()),
+            Arc::new(store),
+            Arc::new(distri_core::InProcessWakeNotifier::new()),
+            Arc::new(distri_core::durable::NoopResumeHook),
+        );
+        Arc::new(
+            AgentOrchestratorBuilder::default()
+                .with_store_config(memory_store_config())
+                .with_durable_runtime(runtime)
+                .build()
+                .await
+                .unwrap(),
+        )
+    }
+
+    async fn body_json(resp: HttpResponse) -> serde_json::Value {
+        let bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    fn pending_call(id: &str, task_id: &str, thread_id: &str) -> distri_types::NewPendingCall {
+        distri_types::NewPendingCall {
+            id: id.into(),
+            workspace_id: None,
+            task_id: task_id.into(),
+            thread_id: thread_id.into(),
+            kind: distri_types::PendingCallKind::ClientTool,
+            tool_name: Some("pick".into()),
+            request: json!({ "tool_call_id": id, "tool_name": "pick", "input": {} }),
+            deadline: None,
+        }
+    }
+
+    /// G4: a thread or task that does not exist (yet), or one the caller's
+    /// stores do not return (another user's), lists no pending calls with
+    /// 200 — never a 404 that tells the two apart, never the other's calls.
+    #[actix_rt::test]
+    async fn pending_calls_of_unknown_or_unreadable_threads_are_empty() {
+        use distri_types::PendingCallStore as _;
+        let store = distri_core::InMemoryDurableStore::default();
+        let executor = durable_executor(store.clone()).await;
+        // Someone else's run: its rows are not in this caller's stores.
+        store
+            .create(pending_call("call_theirs", "task-theirs", "thread-theirs"))
+            .await
+            .unwrap();
+        // The caller's own task, as a control.
+        executor
+            .stores
+            .task_store
+            .get_or_create_task("thread-mine", "task-mine")
+            .await
+            .unwrap();
+        store
+            .create(pending_call("call_mine", "task-mine", "thread-mine"))
+            .await
+            .unwrap();
+
+        for (path, want) in [("thread-unknown", json!([])), ("thread-theirs", json!([]))] {
+            let resp = thread_pending_calls_handler(
+                web::Path::from(path.to_string()),
+                web::Data::new(executor.clone()),
+            )
+            .await;
+            assert_eq!(resp.status(), actix_web::http::StatusCode::OK, "{path}");
+            assert_eq!(body_json(resp).await, want, "{path}");
+        }
+        for (path, len) in [("task-unknown", 0), ("task-theirs", 0), ("task-mine", 1)] {
+            let resp = task_pending_calls_handler(
+                web::Path::from(path.to_string()),
+                web::Data::new(executor.clone()),
+            )
+            .await;
+            assert_eq!(resp.status(), actix_web::http::StatusCode::OK, "{path}");
+            let body = body_json(resp).await;
+            assert_eq!(body.as_array().unwrap().len(), len, "{path}: {body}");
+            assert!(!body.to_string().contains("call_theirs"));
+        }
+    }
+
+    /// G3: `GET /tasks/{id}/events` sends `client-tools` envelopes only when
+    /// the request's `A2A-Extensions` header activates the extension.
+    #[actix_rt::test]
+    async fn task_events_follow_the_extensions_header() {
+        use actix_web::Responder as _;
+        use distri_types::{AgentEvent, AgentEventType};
+        let temp_dir = tempdir().unwrap();
+        let executor = build_executor(temp_dir.path()).await;
+
+        for header in [
+            None,
+            Some(distri_types::a2a_extensions::DistriExtension::ClientTools.uri()),
+        ] {
+            let task_id = uuid::Uuid::new_v4().to_string();
+            executor
+                .stores
+                .task_store
+                .get_or_create_task("thread-events", &task_id)
+                .await
+                .unwrap();
+            let mut req = TestRequest::get();
+            if let Some(h) = header {
+                req = req.insert_header((distri_a2a::EXTENSIONS_HEADER, h));
+            }
+            let http_request = req.to_http_request();
+            let resp = match task_events_handler(
+                web::Path::from(task_id.clone()),
+                web::Data::new(executor.clone()),
+                http_request.clone(),
+            )
+            .await
+            {
+                Either::Left(sse) => sse.respond_to(&http_request).map_into_boxed_body(),
+                Either::Right(r) => panic!("expected a stream, got {}", r.status()),
+            };
+            let echoed = resp
+                .headers()
+                .get(distri_a2a::EXTENSIONS_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            assert!(
+                echoed.contains("event-stream"),
+                "event-stream echoed: {echoed}"
+            );
+            let orch = executor.clone();
+            let tid = task_id.clone();
+            tokio::spawn(async move {
+                let broadcaster = orch.broadcaster();
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                for e in [
+                    AgentEventType::RunStarted {},
+                    AgentEventType::ToolCalls {
+                        step_id: "s".into(),
+                        parent_message_id: None,
+                        tool_calls: vec![],
+                    },
+                    AgentEventType::RunFinished {
+                        success: true,
+                        total_steps: 1,
+                        failed_steps: 0,
+                        usage: None,
+                        context_budget: None,
+                    },
+                ] {
+                    let mut ev = AgentEvent::new(e);
+                    ev.task_id = tid.clone();
+                    broadcaster.publish(&tid, ev).await.unwrap();
+                }
+            });
+            let body = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                actix_web::body::to_bytes(resp.into_body()),
+            )
+            .await
+            .expect("stream ends on the task's end")
+            .unwrap();
+            let body = String::from_utf8_lossy(&body);
+            assert!(body.contains("run_started"), "{body}");
+            assert!(body.contains("run_finished"), "{body}");
+            assert_eq!(
+                body.contains("tool_calls"),
+                header.is_some(),
+                "header {header:?}: {body}"
+            );
+        }
+    }
+
+    /// An agent store with history: each save is a version (spec
+    /// agent-versions V2), like cloud's `agent_config_versions`.
+    #[derive(Default)]
+    struct HistoryStore(std::sync::Mutex<HashMap<String, Vec<distri_types::AgentConfig>>>);
+
+    #[async_trait::async_trait]
+    impl distri_types::stores::AgentStore for HistoryStore {
+        async fn list(
+            &self,
+            _c: Option<String>,
+            _l: Option<usize>,
+        ) -> (Vec<distri_types::AgentConfig>, Option<String>) {
+            let all = self.0.lock().unwrap();
+            (
+                all.values().filter_map(|v| v.last().cloned()).collect(),
+                None,
+            )
+        }
+        async fn get(&self, name: &str) -> Option<distri_types::AgentConfig> {
+            self.0.lock().unwrap().get(name)?.last().cloned()
+        }
+        async fn get_version(&self, name: &str, n: u32) -> Option<distri_types::AgentConfig> {
+            let all = self.0.lock().unwrap();
+            all.get(name)?.get((n as usize).checked_sub(1)?).cloned()
+        }
+        async fn register(&self, c: distri_types::AgentConfig) -> anyhow::Result<()> {
+            self.0
+                .lock()
+                .unwrap()
+                .entry(c.get_name().to_string())
+                .or_default()
+                .push(c);
+            Ok(())
+        }
+        async fn update(&self, c: distri_types::AgentConfig) -> anyhow::Result<()> {
+            self.register(c).await
+        }
+        async fn clear(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn delete(&self, _id: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    async fn versioned_executor(history: bool) -> Arc<AgentOrchestrator> {
+        let mut stores = distri_core::initialize_stores(&memory_store_config())
+            .await
+            .unwrap();
+        if history {
+            stores.agent_store = Arc::new(HistoryStore::default());
+        }
+        let executor = Arc::new(
+            AgentOrchestratorBuilder::default()
+                .with_stores(stores)
+                .build()
+                .await
+                .unwrap(),
+        );
+        for (name, instructions) in [("helper", "v1"), ("helper", "v2"), ("pkg/agent", "v1")] {
+            executor
+                .register_agent_definition(StandardDefinition {
+                    name: name.into(),
+                    description: "versioned".into(),
+                    instructions: instructions.into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        }
+        executor
+    }
+
+    macro_rules! versioned_app {
+        ($history:expr) => {
+            actix_web::test::init_service(
+                actix_web::App::new()
+                    .app_data(web::Data::new(versioned_executor($history).await))
+                    .app_data(web::Data::new(ServerConfig {
+                        base_url: "http://h/v1".into(),
+                        ..Default::default()
+                    }))
+                    .configure(distri),
+            )
+            .await
+        };
+    }
+
+    macro_rules! get_json {
+        ($app:expr, $uri:expr) => {{
+            let resp =
+                actix_web::test::call_service(&$app, TestRequest::get().uri($uri).to_request())
+                    .await;
+            let status = resp.status().as_u16();
+            let body = actix_web::test::read_body(resp).await;
+            (
+                status,
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap_or_default(),
+            )
+        }};
+    }
+
+    #[test]
+    fn agent_path_segments_decode_at_and_slash() {
+        assert_eq!(agent_ref_from_path("a@3"), "a@3");
+        assert_eq!(agent_ref_from_path("a%403"), "a@3");
+        assert_eq!(agent_ref_from_path("pkg%2Fa%402"), "pkg/a@2");
+        assert_eq!(agent_ref_from_path("pkg%2fa"), "pkg/a");
+    }
+
+    #[actix_rt::test]
+    async fn a_pinned_card_is_served_on_name_at_n() {
+        let app = versioned_app!(true);
+        for uri in [
+            "/agents/helper@1/.well-known/agent-card.json",
+            "/agents/helper%401/.well-known/agent-card.json",
+            "/agents/helper@1/.well-known/agent.json",
+        ] {
+            let (status, card) = get_json!(app, uri);
+            assert_eq!(status, 200, "{uri}: {card}");
+            assert_eq!(card["name"], "helper", "{uri}");
+            assert_eq!(
+                card["supportedInterfaces"][0]["url"], "http://h/v1/agents/helper@1",
+                "{uri}"
+            );
+            let ext = card["capabilities"]["extensions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["uri"] == distri_types::a2a_extensions::AGENT_EXTENSION_URI)
+                .cloned()
+                .unwrap();
+            assert_eq!(ext["params"]["version_no"], 1, "{uri}");
+        }
+        // A package name with `/` sent as %2F.
+        let (status, card) = get_json!(app, "/agents/pkg%2Fagent%401/.well-known/agent-card.json");
+        assert_eq!(status, 200, "{card}");
+        assert_eq!(
+            card["supportedInterfaces"][0]["url"],
+            "http://h/v1/agents/pkg/agent@1"
+        );
+
+        // An unknown version is a 404.
+        let (status, body) = get_json!(app, "/agents/helper@9/.well-known/agent-card.json");
+        assert_eq!(status, 404);
+        assert_eq!(body["error"], "agent version not found");
+        // `name@N` on the definition route: that version.
+        let (status, body) = get_json!(app, "/agents/helper@1");
+        assert_eq!(status, 200);
+        let text = body.to_string();
+        assert!(text.contains(r#""instructions":"v1""#), "{text}");
+        let (status, _) = get_json!(app, "/agents/helper@9");
+        assert_eq!(status, 404);
+    }
+
+    #[actix_rt::test]
+    async fn a_server_without_history_only_has_latest() {
+        let app = versioned_app!(false);
+        let (status, card) = get_json!(app, "/agents/helper@latest/.well-known/agent-card.json");
+        assert_eq!(status, 200, "{card}");
+        assert_eq!(
+            card["supportedInterfaces"][0]["url"],
+            "http://h/v1/agents/helper"
+        );
+        let (status, body) = get_json!(app, "/agents/helper@1/.well-known/agent-card.json");
+        assert_eq!(status, 404);
+        assert_eq!(body["error"], "agent version not found");
+
+        // A2A on an unknown version: -32001 with the agent and version.
+        let req = TestRequest::post()
+            .uri("/agents/helper%401")
+            .set_json(json!({
+                "jsonrpc": "2.0", "id": "1", "method": "SendMessage",
+                "params": { "message": {
+                    "messageId": "m1", "role": "ROLE_USER",
+                    "parts": [{ "text": "hi" }]
+                }}
+            }))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        let body: serde_json::Value =
+            serde_json::from_slice(&actix_web::test::read_body(resp).await).unwrap();
+        assert_eq!(body["error"]["code"], -32001, "{body}");
+        assert_eq!(
+            body["error"]["data"],
+            json!({ "agent": "helper", "version": 1 })
+        );
     }
 }

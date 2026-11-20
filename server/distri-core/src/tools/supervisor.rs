@@ -54,6 +54,10 @@ impl Tool for GetTaskTool {
         "get_task".to_string()
     }
 
+    fn replay_safe(&self) -> bool {
+        true
+    }
+
     fn get_description(&self) -> String {
         "Read a task's current status, parent, and timing by task_id. \
          Use when a supervisor agent needs to inspect a child task it \
@@ -219,10 +223,14 @@ impl ExecutorContextTool for WaitTaskTool {
 
         let timed_out = tokio::time::timeout(timeout, async {
             while let Some(event) = stream.next().await {
+                // A parked task waits on input: return its input-required
+                // status rather than blocking until the timeout (B5).
                 if event.task_id == input.id
                     && matches!(
                         &event.event,
-                        AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
+                        AgentEventType::RunFinished { .. }
+                            | AgentEventType::RunError { .. }
+                            | AgentEventType::RunParked { .. }
                     )
                 {
                     return false;
@@ -376,6 +384,10 @@ impl Tool for ListMyTasksTool {
         "list_my_tasks".to_string()
     }
 
+    fn replay_safe(&self) -> bool {
+        true
+    }
+
     fn get_description(&self) -> String {
         "List tasks the supervisor agent can see. Two scopes: \
          'descendants' (default, lists the parent_task_id tree under \
@@ -477,6 +489,10 @@ pub struct GetTaskResultTool;
 impl Tool for GetTaskResultTool {
     fn get_name(&self) -> String {
         "get_task_result".to_string()
+    }
+
+    fn replay_safe(&self) -> bool {
+        true
     }
 
     fn get_description(&self) -> String {

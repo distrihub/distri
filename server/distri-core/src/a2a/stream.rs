@@ -126,13 +126,14 @@ pub async fn init_thread_get_message(
 /// Prepare ExecutorContext with metadata, browser session, definition overrides, etc.
 /// Returns `(ExecutorContext, definition_overrides)` or an error.
 pub async fn prepare_execution(
-    agent_id: &str,
+    // The agent comes from the context (its name at its pinned version).
+    _agent_id: &str,
     params: &MessageSendParams,
     executor: &Arc<AgentOrchestrator>,
     executor_context: &Arc<ExecutorContext>,
 ) -> Result<(ExecutorContext, DefinitionOverrides), AgentError> {
     let metadata_struct: ExecutorContextMetadata = match params.metadata.clone() {
-        Some(m) => serde_json::from_value(m)
+        Some(m) => serde_json::from_value(serde_json::Value::Object(m))
             .map_err(|e| AgentError::Validation(format!("Invalid metadata: {e}")))?,
         None => ExecutorContextMetadata::default(),
     };
@@ -184,7 +185,7 @@ pub async fn prepare_execution(
     }
 
     // Determine if browser should be used
-    let mut should_stream_browser = match executor.get_agent(agent_id).await {
+    let mut should_stream_browser = match executor.context_agent(&exec_ctx).await {
         Some(AgentConfig::StandardAgent(def)) => def.should_use_browser(),
         _ => false,
     };
@@ -253,6 +254,11 @@ pub(crate) async fn run_and_settle<F>(
         }
         RunEnd::Failed(e) => {
             tracing::error!("Background execution error for task {}: {}", task_id, e);
+            // The loop already recorded the failure and its terminal event:
+            // a second RunError would be a second end.
+            if executor_context.get_status().await == Some(crate::types::TaskStatus::Failed) {
+                return;
+            }
             // Emit a terminal RunError so SSE subscribers (gateway,
             // web client) see the real failure instead of watching the
             // stream close silently.
@@ -262,7 +268,7 @@ pub(crate) async fn run_and_settle<F>(
             executor_context
                 .emit(AgentEventType::RunError {
                     message: e.to_string(),
-                    code: Some("EXECUTION_ERROR".to_string()),
+                    code: Some(crate::a2a::run_error_code(&e).to_string()),
                     usage: Some(executor_context.get_step_usage().await),
                 })
                 .await;

@@ -239,7 +239,9 @@ pub struct ServerConfig {
     pub default_output_modes: Vec<String>,
     #[serde(default)]
     #[schema(value_type = Object)]
+    #[schemars(with = "HashMap<String, serde_json::Value>")]
     pub security_schemes: HashMap<String, SecurityScheme>,
+    /// Card `securityRequirements`: scheme name → scopes.
     #[serde(default)]
     pub security: Vec<HashMap<String, Vec<String>>>,
     #[serde(default = "default_capabilities")]
@@ -253,10 +255,10 @@ pub struct ServerConfig {
 
 fn default_capabilities() -> AgentCapabilities {
     AgentCapabilities {
-        streaming: true,
-        push_notifications: false,
-        state_transition_history: true,
+        streaming: Some(true),
+        push_notifications: Some(false),
         extensions: vec![],
+        extended_agent_card: Some(false),
     }
 }
 

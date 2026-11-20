@@ -389,7 +389,9 @@ impl AgentOrchestrator {
         // target. Tool inheritance is irrelevant here — pass `None` to
         // skip the extra lookup.
         let resolved = ResolvedTarget::from_target(target, None);
-        let def = self.standard_definition(&resolved.agent_id).await?;
+        let def = self
+            .standard_definition(&resolved.agent_ref(parent_ctx))
+            .await?;
         let hint = target
             .executor
             .clone()
@@ -407,12 +409,10 @@ impl AgentOrchestrator {
     /// (workflow, etc — those don't dispatch via `RemoteTaskRunner`).
     async fn standard_definition(
         self: &Arc<Self>,
-        agent_id: &str,
+        agent: &distri_types::AgentRef,
     ) -> Result<StandardDefinition, AgentError> {
-        let cfg = self
-            .get_agent(agent_id)
-            .await
-            .ok_or_else(|| AgentError::NotFound(format!("Agent {agent_id} not found")))?;
+        let agent_id = &agent.name;
+        let cfg = self.resolve_agent(agent).await?;
         match cfg {
             distri_types::configuration::AgentConfig::StandardAgent(def) => Ok(def),
             other => Err(AgentError::Validation(format!(
@@ -435,7 +435,7 @@ impl AgentOrchestrator {
         self: &Arc<Self>,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Option<distri_types::ToolsConfig> {
-        let cfg = self.get_agent(&parent_ctx.agent_id).await?;
+        let cfg = self.context_agent(parent_ctx).await?;
         match cfg {
             distri_types::configuration::AgentConfig::StandardAgent(def) => {
                 def.tools.map(filter_for_subtask)
@@ -586,7 +586,7 @@ impl AgentOrchestrator {
     /// Flip a detached child's row to Failed if its loop ended without
     /// reaching a terminal state. No-op when the row is already terminal
     /// (the normal success path) or missing.
-    async fn settle_detached_task(self: &Arc<Self>, task_id: &str) {
+    pub(crate) async fn settle_detached_task(self: &Arc<Self>, task_id: &str) {
         let terminal = self
             .stores
             .task_store
@@ -594,7 +594,9 @@ impl AgentOrchestrator {
             .await
             .ok()
             .flatten()
-            .map(|t| t.status.is_terminal())
+            // InputRequired is settled too: the child waits on input (it
+            // parked), it did not fail (B1).
+            .map(|t| t.status.is_terminal() || t.status == distri_types::TaskStatus::InputRequired)
             .unwrap_or(true);
         if !terminal {
             if let Err(e) = self
@@ -638,6 +640,8 @@ impl AgentOrchestrator {
             .await
             .map_err(|e| AgentError::Session(format!("cancel_task_cascade failed: {e}")))?;
 
+        let ids: Vec<String> = cancelled.iter().map(|t| t.id.clone()).collect();
+        self.cancel_durable(&ids).await;
         let coordinator = self.coordinator();
         for task in &cancelled {
             // Errors from coordinator.cancel are best-effort: the
@@ -700,15 +704,22 @@ impl AgentOrchestrator {
         origin: &ChildRun,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<Arc<ExecutorContext>, AgentError> {
+        let agent = resolved.agent_ref(parent_ctx);
         let mut child = parent_ctx.new_task(&resolved.agent_id).await;
+        child.agent_version_no = agent.version_no();
         child.child = Some(origin.clone()).filter(|o| !o.is_empty());
         // A child runs in its own environment, not the parent's: a server
         // agent dispatched from a web parent runs as Cloud (its prompt and its
         // own default sub-agents follow). Legacy agents inherit the parent's.
-        if let Ok(def) = self.standard_definition(&resolved.agent_id).await {
-            if let Some(env) = def.environment() {
-                child.runtime_mode = env;
+        match self.standard_definition(&agent).await {
+            Ok(def) => {
+                if let Some(env) = def.environment() {
+                    child.runtime_mode = env;
+                }
             }
+            // `name@N` with no such version: fail before a child task exists.
+            Err(e @ AgentError::AgentVersionNotFound { .. }) => return Err(e),
+            Err(_) => {}
         }
         let child_ctx = Arc::new(self.with_own_event_topic(child));
 
@@ -745,7 +756,9 @@ impl AgentOrchestrator {
     ) -> Result<AgentResult, AgentError> {
         let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
         let resolved = ResolvedTarget::from_target(&target, inherited);
-        let def = self.standard_definition(&resolved.agent_id).await?;
+        let def = self
+            .standard_definition(&resolved.agent_ref(parent_ctx))
+            .await?;
         let child_ctx = self
             .persist_child_task_remote(&resolved, invocation_blob, origin, parent_ctx)
             .await?;
@@ -804,7 +817,9 @@ impl AgentOrchestrator {
     ) -> Result<String, AgentError> {
         let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
         let resolved = ResolvedTarget::from_target(&target, inherited);
-        let def = self.standard_definition(&resolved.agent_id).await?;
+        let def = self
+            .standard_definition(&resolved.agent_ref(parent_ctx))
+            .await?;
         let child_ctx = self
             .persist_child_task_remote(&resolved, invocation_blob, origin, parent_ctx)
             .await?;
@@ -870,6 +885,7 @@ impl AgentOrchestrator {
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<Arc<ExecutorContext>, AgentError> {
         let mut child = parent_ctx.new_task(&resolved.agent_id).await;
+        child.agent_version_no = resolved.agent_ref(parent_ctx).version_no();
         child.child = Some(origin.clone()).filter(|o| !o.is_empty());
         let child_ctx = Arc::new(child);
         let inner_task_id = uuid::Uuid::new_v4().to_string();
@@ -957,11 +973,25 @@ pub fn skill_gist(skill_id: &str, result: &AgentResult) -> String {
 /// What a [`Target`] resolves to at dispatch time: the agent_id to drive
 /// the loop with, plus optional `DefinitionOverrides` for ad-hoc agents.
 pub(crate) struct ResolvedTarget {
+    /// The bare agent name (a `name@N` target is split into name + pin).
     pub(crate) agent_id: String,
+    /// The saved version the target names (`name@N`), if any.
+    pub(crate) version_no: Option<u32>,
     definition_overrides: Option<distri_types::configuration::DefinitionOverrides>,
 }
 
 impl ResolvedTarget {
+    /// The reference the child runs: the target's own pin, else — when it
+    /// names the parent's own agent (a skill fork) — the parent's pin.
+    pub(crate) fn agent_ref(&self, parent_ctx: &ExecutorContext) -> distri_types::AgentRef {
+        let version_no = self.version_no.or_else(|| {
+            (self.agent_id == parent_ctx.agent_id)
+                .then_some(parent_ctx.agent_version_no)
+                .flatten()
+        });
+        distri_types::AgentRef::new(self.agent_id.clone(), version_no)
+    }
+
     /// Resolve a [`Target`] into the (agent_id, definition_overrides)
     /// pair the orchestrator dispatches against.
     ///
@@ -982,18 +1012,26 @@ impl ResolvedTarget {
             AgentRef::Named {
                 agent_id,
                 instructions_overlay,
-            } => Self {
-                agent_id: agent_id.clone(),
-                // A skill-fork: same agent, skill body APPENDED below its own
-                // instructions for this run only. No tool inheritance — the
-                // named agent already carries its own tools.
-                definition_overrides: instructions_overlay.as_ref().map(|overlay| {
-                    distri_types::configuration::DefinitionOverrides {
-                        instructions_append: Some(overlay.clone()),
-                        ..Default::default()
-                    }
-                }),
-            },
+            } => {
+                // `name@N` pins the child to a saved version.
+                let (agent_id, version_no) = match distri_types::AgentRef::parse(agent_id) {
+                    Ok(r) => (r.name.clone(), r.version_no()),
+                    Err(_) => (agent_id.clone(), None),
+                };
+                Self {
+                    agent_id,
+                    version_no,
+                    // A skill-fork: same agent, skill body APPENDED below its own
+                    // instructions for this run only. No tool inheritance — the
+                    // named agent already carries its own tools.
+                    definition_overrides: instructions_overlay.as_ref().map(|overlay| {
+                        distri_types::configuration::DefinitionOverrides {
+                            instructions_append: Some(overlay.clone()),
+                            ..Default::default()
+                        }
+                    }),
+                }
+            }
             AgentRef::AdHoc {
                 system_prompt,
                 tools,
@@ -1017,6 +1055,7 @@ impl ResolvedTarget {
                 };
                 Self {
                     agent_id: distri_types::invocation::ADHOC_BASE_AGENT.to_string(),
+                    version_no: None,
                     definition_overrides: Some(overrides),
                 }
             }

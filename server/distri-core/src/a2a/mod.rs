@@ -1,7 +1,8 @@
+pub mod answer;
 mod handler;
 pub mod service;
 pub mod stream;
-use distri_a2a::{EventKind, JsonRpcError, Message, Part, Role, TaskStatus, TaskStatusUpdateEvent};
+use distri_a2a::{JsonRpcError, Message, Role, TaskStatus, TaskStatusUpdateEvent};
 use distri_types::{a2a_converters::MessageMetadata, AgentError};
 pub use handler::A2AHandler;
 use serde::{Deserialize, Serialize};
@@ -44,19 +45,23 @@ pub fn validate_message(message: &crate::types::Message) -> Result<(), AgentErro
 }
 
 pub fn extract_text_from_message(message: &Message) -> Option<String> {
-    let text = message
-        .parts
-        .iter()
-        .filter_map(|part| match part {
-            Part::Text(text_part) => Some(text_part.text.clone()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
+    message.text().filter(|t| !t.is_empty())
+}
+
+/// `RunError.code` for a failed run: `AUTH_REQUIRED` (A2A `auth-required`)
+/// when the run stopped on missing authorization, else `EXECUTION_ERROR`.
+pub fn run_error_code(error: &anyhow::Error) -> &'static str {
+    match error.downcast_ref::<AgentError>() {
+        Some(e) => agent_run_error_code(e),
+        None => "EXECUTION_ERROR",
+    }
+}
+
+/// [`run_error_code`] for an [`AgentError`].
+pub fn agent_run_error_code(error: &AgentError) -> &'static str {
+    match error {
+        AgentError::AuthRequired(_) => distri_types::RUN_ERROR_AUTH_REQUIRED,
+        _ => "EXECUTION_ERROR",
     }
 }
 
@@ -107,15 +112,30 @@ pub fn single_error_frame_stream(
     futures_util::stream::once(async move { Ok(SseMessage::error_frame(id, error)) })
 }
 
-/// Map an [`AgentError`] onto the JSON-RPC error code space used by the A2A
-/// endpoints. Validation errors are surfaced as `-32602 Invalid params`;
-/// `NotFound` gets a dedicated application code (`-32004`). Everything else
-/// falls through to `-32603 Internal error`.
+/// Map an [`AgentError`] onto the A2A JSON-RPC error codes. Validation
+/// errors are `-32602 Invalid params`; `NotFound` is `-32001 TaskNotFound`
+/// (the A2A methods look tasks up); everything else `-32603 Internal error`.
 pub fn agent_error_to_jsonrpc(e: AgentError) -> distri_a2a::JsonRpcError {
     match e {
         AgentError::Validation(m) => distri_a2a::JsonRpcError::invalid_params(m),
-        AgentError::NotFound(m) => distri_a2a::JsonRpcError::new(-32004, m),
+        AgentError::NotFound(m) => distri_a2a::JsonRpcError::task_not_found(m),
+        // `name@N` with no such version (spec agent-versions V1): -32001
+        // with the agent and version the caller named.
+        AgentError::AgentVersionNotFound { agent, version } => {
+            let mut e = distri_a2a::JsonRpcError::task_not_found("agent version not found");
+            e.data = Some(serde_json::json!({ "agent": agent, "version": version }));
+            e
+        }
+        AgentError::NotImplemented(m) => distri_a2a::JsonRpcError::unsupported_operation(m),
         other => distri_a2a::JsonRpcError::internal(other.to_string()),
+    }
+}
+
+/// Set `metadata["distri/created_at"]` on a message from a stored time
+/// (ms since the epoch; G1).
+pub fn stamp_message(message: &mut Message, created_at_ms: i64) {
+    if let Some(at) = chrono::DateTime::from_timestamp_millis(created_at_ms) {
+        distri_types::a2a_extensions::stamp_created_at(&mut message.metadata, at);
     }
 }
 
@@ -140,33 +160,41 @@ pub fn to_a2a_message_parts(
     let content = &message.parts.clone();
 
     // Build metadata with message type and optional agent info
-    let mut metadata = serde_json::json!({
-        "message_type": MessageMetadata::from(message.clone()),
-    });
+    let mut metadata = distri_a2a::Metadata::new();
+    metadata.insert(
+        "message_type".into(),
+        serde_json::to_value(MessageMetadata::from(message.clone())).unwrap_or_default(),
+    );
 
     // Add agent metadata if agent_id is present (for Assistant messages)
     if let Some(agent_id) = &message.agent_id {
-        metadata["agent"] = serde_json::json!({
-            "agent_id": agent_id,
-        });
+        metadata.insert(
+            "agent".into(),
+            serde_json::json!({
+                "agent_id": agent_id,
+            }),
+        );
     }
 
     // Carry the task's parent task hint so the chat store can place sub-
     // agent messages under their parent in the rendered tree. Matches the
     // routing convention used by status-update envelopes.
     if let Some(parent_task_id) = parent_task_id {
-        metadata["parent_task_id"] = serde_json::json!(parent_task_id);
+        metadata.insert("parent_task_id".into(), serde_json::json!(parent_task_id));
     }
 
     // Same `metadata.parts` shape the client sends, so developer-only parts
     // stay hidden when history is replayed.
     if let Some(parts_metadata) = &message.parts_metadata {
-        metadata["parts"] = serde_json::to_value(parts_metadata).unwrap_or_default();
+        metadata.insert(
+            "parts".into(),
+            serde_json::to_value(parts_metadata).unwrap_or_default(),
+        );
     }
 
     // The turn's final answer; earlier same-turn assistant text is a draft.
     if message.is_final {
-        metadata["is_final"] = serde_json::json!(true);
+        metadata.insert("is_final".into(), serde_json::json!(true));
     }
 
     Message {
@@ -176,10 +204,9 @@ pub fn to_a2a_message_parts(
             // Should be filtered out
             _ => Role::Agent,
         },
-        parts: content.into_iter().map(|c| c.clone().into()).collect(),
+        parts: content.iter().map(|c| c.clone().into()).collect(),
         context_id: Some(thread_id.to_string()),
         task_id: Some(task_id.to_string()),
-        kind: EventKind::Message,
         message_id: message.id.clone(),
         metadata: Some(metadata),
         ..Default::default()
@@ -207,19 +234,26 @@ pub fn to_a2a_task_update(
         agent_id: String::new(),
         parent_task_id: task.parent_task_id.clone(),
         child: Default::default(),
+        attempt: None,
     };
+
+    let mut metadata = match serde_json::to_value(&envelope) {
+        Ok(serde_json::Value::Object(m)) => m,
+        _ => distri_a2a::Metadata::new(),
+    };
+    if event.is_final {
+        metadata.insert("final".into(), serde_json::Value::Bool(true));
+    }
 
     TaskStatusUpdateEvent {
         status: TaskStatus {
             state: task.status.clone().into(),
             message: None,
-            timestamp: Some(event.created_at.to_string()),
+            timestamp: chrono::DateTime::from_timestamp_millis(event.created_at),
         },
         context_id: task.thread_id.clone(),
         task_id: task.id.clone(),
-        metadata: serde_json::to_value(&envelope).ok(),
-        kind: EventKind::TaskStatusUpdate,
-        r#final: event.is_final,
+        metadata: Some(metadata),
     }
 }
 

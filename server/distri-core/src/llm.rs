@@ -1800,6 +1800,18 @@ impl LLMExecutorTrait for crate::openai_responses_llm::OpenAIResponsesLLMExecuto
 ///
 /// The API format is determined by `model_settings.api_format` (defaults to auto-detection
 /// based on model name, e.g. "codex-*" → Responses API).
+/// Builds LLM executors in place of the provider factory (see
+/// `AgentOrchestratorBuilder::with_llm_executor_factory`). Returning `None`
+/// falls back to the provider's executor.
+pub trait LlmExecutorFactory: Send + Sync {
+    fn create(
+        &self,
+        llm_def: &LlmDefinition,
+        tools: &[Arc<dyn crate::tools::Tool>],
+        context: Arc<ExecutorContext>,
+    ) -> Option<Box<dyn LLMExecutorTrait>>;
+}
+
 pub fn create_llm_executor(
     llm_def: LlmDefinition,
     tools: Vec<Arc<dyn crate::tools::Tool>>,
@@ -1807,6 +1819,15 @@ pub fn create_llm_executor(
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 ) -> Result<Box<dyn LLMExecutorTrait>, AgentError> {
+    if let Some(factory) = context
+        .orchestrator
+        .as_ref()
+        .and_then(|o| o.llm_executor_factory.clone())
+    {
+        if let Some(executor) = factory.create(&llm_def, &tools, context.clone()) {
+            return Ok(executor);
+        }
+    }
     let ms = llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
     let provider = &ms.inner.provider;
 

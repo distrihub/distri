@@ -30,10 +30,18 @@ pub mod channels;
 pub mod coding_tools;
 pub mod context;
 mod core;
+pub mod durable;
 mod errors;
 pub mod events;
 pub mod invocation;
 pub mod runs;
+pub use durable::{
+    CallResult, Claim, ClientClaimOutcome, CompleteOutcome, DEFAULT_PENDING_CALL_DEADLINE_SECS,
+    DURABLE_RUNS_EXTENSION_URI, DurableRunState, NewPendingCall, ParkOutcome, PendingCall,
+    PendingCallKind, PendingCallStore, PendingStatus, PendingStep, QueueEntry, ReplyTo, RunInputs,
+    RunPrincipal, RunQueue, WaitingOn, WakeNotifier, card_supports_durable_runs,
+    durable_runs_extension, set_durable_runs_extension,
+};
 pub use runs::{RunListQuery, RunListResponse, RunState, RunSummary, RunTaskRow};
 
 mod mcp;
@@ -52,6 +60,10 @@ pub use hooks::*;
 pub use mcp::*;
 pub use tenant_context::*;
 pub mod a2a_converters;
+pub mod a2a_extensions;
+pub mod agent_ref;
+pub use agent_ref::{AgentRef, AgentRefError, AgentVersionSel};
+pub mod agent_contract;
 pub mod thinking;
 
 mod execution;

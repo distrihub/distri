@@ -115,6 +115,12 @@ pub struct AgentOrchestrator {
     /// scheduler tick, event bus, and workflow-as-tool A2A dispatch
     /// consult to find the workflow run a stimulus targets.
     pub workflow_trigger_registry: Option<Arc<dyn distri_workflow::WorkflowTriggerRegistry>>,
+    /// Durable runs (run queue, pending calls, wake notifier, resume hook).
+    /// `None`: runs are in-memory tasks and client tools wait on a oneshot.
+    pub durable: Option<Arc<crate::durable::DurableRuntime>>,
+    /// Builds the planning LLM executor instead of the provider factory
+    /// (tests, hosts with their own LLM routing). `None`: the provider's.
+    pub llm_executor_factory: Option<Arc<dyn crate::llm::LlmExecutorFactory>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -252,9 +258,36 @@ pub struct AgentOrchestratorBuilder {
     notifier: Option<Arc<dyn distri_types::Notifier>>,
     code_runner: Option<Arc<dyn distri_types::CodeRunner>>,
     workflow_state_store: Option<Arc<dyn distri_types::WorkflowStateStore>>,
+    durable_runs: bool,
+    durable_runtime: Option<crate::durable::DurableRuntime>,
+    llm_executor_factory: Option<Arc<dyn crate::llm::LlmExecutorFactory>>,
 }
 
 impl AgentOrchestratorBuilder {
+    /// Turn durable runs on or off (default off). On without
+    /// [`with_durable_runtime`](Self::with_durable_runtime): in-memory stores.
+    pub fn with_durable_runs(mut self, enabled: bool) -> Self {
+        self.durable_runs = enabled;
+        self
+    }
+
+    /// The stores, notifier and resume hook durable mode uses (implies
+    /// `with_durable_runs(true)`).
+    pub fn with_durable_runtime(mut self, runtime: crate::durable::DurableRuntime) -> Self {
+        self.durable_runs = true;
+        self.durable_runtime = Some(runtime);
+        self
+    }
+
+    /// Build planning LLM executors with `factory` (tests, custom routing).
+    pub fn with_llm_executor_factory(
+        mut self,
+        factory: Arc<dyn crate::llm::LlmExecutorFactory>,
+    ) -> Self {
+        self.llm_executor_factory = Some(factory);
+        self
+    }
+
     pub fn with_user_id(mut self, user_id: impl Into<String>) -> Self {
         self.user_id = Some(user_id.into());
         self
@@ -549,6 +582,15 @@ impl AgentOrchestratorBuilder {
             workflow_state_store: self
                 .workflow_state_store
                 .unwrap_or_else(|| Arc::new(distri_types::InMemoryWorkflowStateStore::default())),
+            durable: if self.durable_runs {
+                Some(Arc::new(
+                    self.durable_runtime
+                        .unwrap_or_else(crate::durable::DurableRuntime::in_memory),
+                ))
+            } else {
+                None
+            },
+            llm_executor_factory: self.llm_executor_factory,
         };
 
         // Sync system prompts to the store
@@ -1337,11 +1379,10 @@ impl AgentOrchestrator {
         context: Arc<ExecutorContext>,
         definition_overrides: Option<DefinitionOverrides>,
     ) -> Result<InvokeResult, AgentError> {
-        // Get agent definition and create agent instance
+        // Get agent definition (at the run's pinned version) and create agent instance
         let mut agent_config = self
-            .get_agent(agent_id)
-            .await
-            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
+            .resolve_agent(&Self::run_ref(agent_id, &context)?)
+            .await?;
 
         Self::apply_agent_overrides(
             &mut agent_config,
@@ -1384,11 +1425,10 @@ impl AgentOrchestrator {
         definition_overrides: Option<DefinitionOverrides>,
     ) -> Result<InvokeResult, AgentError> {
         tracing::debug!("call_agent_stream called with agent_id: {}", agent_id);
-        // Get agent config and create agent instance
+        // Get agent config (at the run's pinned version) and create agent instance
         let mut agent_config = self
-            .get_agent(agent_id)
-            .await
-            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
+            .resolve_agent(&Self::run_ref(agent_id, &context)?)
+            .await?;
 
         Self::apply_agent_overrides(
             &mut agent_config,
@@ -2122,8 +2162,112 @@ impl AgentOrchestrator {
         }
     }
 
-    /// Search for agent in DAP registry
+    /// The one place an agent is loaded for a run (spec agent-versions V2):
+    /// `name` (or `name@latest`) is the current definition, `name@N` the
+    /// saved version `N` from [`distri_types::stores::AgentStore::get_version`].
+    /// An unknown agent is `NotFound`; an unknown version (or any `@N` on a
+    /// host without history) is `AgentVersionNotFound`.
+    pub async fn resolve_agent(
+        &self,
+        agent: &distri_types::AgentRef,
+    ) -> Result<distri_types::configuration::AgentConfig, AgentError> {
+        let Some(version_no) = agent.version_no() else {
+            return self
+                .lookup_latest_agent(&agent.name)
+                .await
+                .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent.name)));
+        };
+        let store = &self.stores.agent_store;
+        if let Some(config) = store.get_version(&agent.name, version_no).await {
+            return Ok(config);
+        }
+        // An id or alias of the agent: its versions are kept under its name.
+        if let Some(latest) = self.lookup_latest_agent(&agent.name).await {
+            let name = latest.get_name();
+            if name != agent.name {
+                if let Some(config) = store.get_version(name, version_no).await {
+                    return Ok(config);
+                }
+            }
+        }
+        Err(AgentError::AgentVersionNotFound {
+            agent: agent.name.clone(),
+            version: version_no,
+        })
+    }
+
+    /// Parse a run's agent reference (`name` or `name@N`). A pinned version
+    /// must exist: `AgentVersionNotFound` otherwise, before anything runs.
+    pub async fn parse_run_ref(
+        &self,
+        agent_id: &str,
+    ) -> Result<distri_types::AgentRef, AgentError> {
+        let agent = distri_types::AgentRef::parse(agent_id)
+            .map_err(|e| AgentError::Validation(e.to_string()))?;
+        if agent.version_no().is_some() {
+            self.resolve_agent(&agent).await?;
+        }
+        Ok(agent)
+    }
+
+    /// The saved version a task's run is pinned to, from its stored run
+    /// inputs (durable runs); `None` when it runs the latest or has none.
+    pub async fn task_agent_version_no(&self, task_id: &str) -> Option<u32> {
+        let durable = self.durable.as_ref()?;
+        durable
+            .run_queue
+            .get_inputs(task_id)
+            .await
+            .ok()
+            .flatten()?
+            .agent_version_no
+    }
+
+    /// The agent a context runs: its `agent_id` at its pinned version.
+    pub async fn context_agent(
+        &self,
+        context: &ExecutorContext,
+    ) -> Option<distri_types::configuration::AgentConfig> {
+        self.resolve_agent(&distri_types::AgentRef::new(
+            context.agent_id.clone(),
+            context.agent_version_no,
+        ))
+        .await
+        .ok()
+    }
+
+    /// The reference a run of `agent_id` in `context` loads: `agent_id` as
+    /// written (`name` or `name@N`); a bare name that is the context's own
+    /// agent takes the context's pin.
+    pub(crate) fn run_ref(
+        agent_id: &str,
+        context: &ExecutorContext,
+    ) -> Result<distri_types::AgentRef, AgentError> {
+        let agent = distri_types::AgentRef::parse(agent_id)
+            .map_err(|e| AgentError::Validation(e.to_string()))?;
+        if agent.version_no().is_none() && agent.name == context.agent_id {
+            return Ok(distri_types::AgentRef::new(
+                agent.name,
+                context.agent_version_no,
+            ));
+        }
+        Ok(agent)
+    }
+
+    /// An agent by name, id or reference (`name@N` loads that saved
+    /// version; see [`Self::resolve_agent`]).
     pub async fn get_agent(&self, name: &str) -> Option<distri_types::configuration::AgentConfig> {
+        match distri_types::AgentRef::parse(name) {
+            Ok(agent) => self.resolve_agent(&agent).await.ok(),
+            Err(_) => self.lookup_latest_agent(name).await,
+        }
+    }
+
+    /// The current definition of an agent, by exact name or id.
+    async fn lookup_latest_agent(
+        &self,
+        name: &str,
+    ) -> Option<distri_types::configuration::AgentConfig> {
         // Then try exact match in store (includes full package/agent names)
         if let Some(agent) = self.stores.agent_store.get(name).await {
             // Note: todos support is now handled via TodosDelegateTool in get_agent_tools
@@ -2323,7 +2467,23 @@ impl AgentOrchestrator {
     ///     registered via `ExternalToolCallsStore`. Fire the oneshot.
     ///     (Slated for deletion once external tool calls migrate to
     ///     the wait-task model.)
+    ///
+    /// In durable mode a pending call is checked first (N3); see
+    /// [`complete_tool_call`](Self::complete_tool_call) for the typed
+    /// outcome (duplicate / conflict / expired). Here a duplicate is `Ok`.
     pub async fn complete_tool(
+        self: Arc<Self>,
+        tool_call_id: &str,
+        tool_response: distri_types::ToolResponse,
+    ) -> Result<(), String> {
+        self.complete_tool_call(tool_call_id, tool_response)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Workflow wait, then the legacy oneshot receiver.
+    pub(crate) async fn complete_tool_legacy(
         self: Arc<Self>,
         tool_call_id: &str,
         tool_response: distri_types::ToolResponse,
@@ -2558,7 +2718,7 @@ impl AgentOrchestrator {
 
     /// Whether the task store returns `task_id` to the current caller (a multi-tenant host's
     /// task store scopes reads to the caller).
-    async fn caller_can_read_task(&self, task_id: &str) -> bool {
+    pub(crate) async fn caller_can_read_task(&self, task_id: &str) -> bool {
         matches!(self.stores.task_store.get_task(task_id).await, Ok(Some(_)))
     }
 

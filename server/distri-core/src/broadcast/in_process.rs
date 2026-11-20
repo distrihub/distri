@@ -256,7 +256,11 @@ impl AgentTaskCoordinator for InProcessCoordinator {
             .task_store
             .get_task(task_id)
             .await?
-            .is_some_and(|t| !t.status.is_terminal());
+            // A run waiting on input (parked, or a legacy timed-out client
+            // call) is not done: keep InputRequired (B1).
+            .is_some_and(|t| {
+                !t.status.is_terminal() && t.status != distri_types::TaskStatus::InputRequired
+            });
         if still_open {
             self.task_store
                 .update_task_status(task_id, distri_types::TaskStatus::Completed)

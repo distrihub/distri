@@ -5,3 +5,4 @@ pub mod local_events;
 pub mod local_tools;
 pub mod permissions;
 pub mod script_tools;
+pub mod tasks_cli;

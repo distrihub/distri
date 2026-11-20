@@ -8,6 +8,11 @@ pub use auth::*;
 pub use external_tool_calls::*;
 
 pub mod diesel_store;
+pub mod durable;
+pub use durable::{
+    DieselDurableStore, DurableStores, InMemoryDurableStore, InProcessWakeNotifier,
+    initialize_durable_stores,
+};
 mod instrumentation;
 pub use instrumentation::init_diesel_instrumentation;
 pub mod models;

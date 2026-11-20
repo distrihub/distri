@@ -34,6 +34,7 @@ diesel-async = { version = "0.7.3", default-features = false, features = [
 ] }
 diesel_migrations = { version = "2.2.0", default-features = false }
 dashmap = "5.5"
+futures = { workspace = true }
 libsqlite3-sys = { version = "0.30", optional = true, features = ["bundled"] }
 pq-sys = { version = "0.7.2", optional = true, features = ["bundled"] }
 

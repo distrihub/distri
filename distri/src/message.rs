@@ -5,9 +5,7 @@
 //! definition_overrides semantics can't drift between them.
 
 use crate::Distri;
-use distri_a2a::{
-    EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
-};
+use distri_a2a::{Message as A2aMessage, MessageSendParams, Part as A2aPart, Role};
 use distri_types::configuration::DefinitionOverrides;
 use distri_types::{ExecutorContextMetadata, RuntimeMode};
 use std::collections::HashMap;
@@ -103,10 +101,9 @@ pub fn build_message_params_full(
 
     MessageSendParams {
         message: A2aMessage {
-            kind: EventKind::Message,
             message_id: uuid::Uuid::new_v4().to_string(),
             role: Role::User,
-            parts: vec![A2aPart::Text(TextPart { text: content })],
+            parts: vec![A2aPart::text(content)],
             context_id: Some(
                 thread_id
                     .map(|s| s.to_string())
@@ -122,7 +119,11 @@ pub fn build_message_params_full(
             metadata: None,
         },
         configuration: None,
-        metadata: Some(serde_json::to_value(&metadata).unwrap_or_default()),
+        metadata: match serde_json::to_value(&metadata) {
+            Ok(serde_json::Value::Object(m)) => Some(m),
+            _ => None,
+        },
+        tenant: None,
     }
 }
 
@@ -132,7 +133,8 @@ mod tests {
 
     fn parse_metadata(params: &MessageSendParams) -> ExecutorContextMetadata {
         let raw = params.metadata.as_ref().expect("metadata must be present");
-        serde_json::from_value(raw.clone()).expect("metadata must deserialize")
+        serde_json::from_value(serde_json::Value::Object(raw.clone()))
+            .expect("metadata must deserialize")
     }
 
     /// The CLI is always the execution environment for any external tool

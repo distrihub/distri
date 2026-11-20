@@ -67,29 +67,26 @@ fn filetype_mime_type_accessor_works_for_both_variants() {
     assert_eq!(u.mime_type(), "text/csv");
 }
 
-use distri_a2a::{
-    FileObject as A2AFileObject, FilePart as A2AFilePart, Message as A2AMessage, Part as A2APart,
-};
+use distri_a2a::{Message as A2AMessage, Part as A2APart, PartContent};
+use serde_json::json;
+
+fn inbound(part: A2APart) -> crate::Message {
+    A2AMessage {
+        parts: vec![part],
+        ..Default::default()
+    }
+    .try_into()
+    .unwrap()
+}
 
 #[test]
 fn a2a_pdf_inbound_becomes_part_file() {
-    let a2a_part = A2APart::File(A2AFilePart {
-        file: A2AFileObject::WithBytes {
-            bytes: "JVBERi0xLjQK".to_string(),
-            mime_type: Some("application/pdf".to_string()),
-            name: Some("doc.pdf".to_string()),
-        },
-        metadata: None,
-    });
-
-    let a2a_msg = A2AMessage {
-        parts: vec![a2a_part],
-        ..Default::default()
-    };
-
-    let distri_msg: crate::Message = a2a_msg.try_into().unwrap();
-    assert_eq!(distri_msg.parts.len(), 1);
-    match &distri_msg.parts[0] {
+    let msg = inbound(
+        A2APart::raw(b"%PDF-1.4\n".to_vec())
+            .with_media_type("application/pdf")
+            .with_filename("doc.pdf"),
+    );
+    match &msg.parts[0] {
         Part::File(FileType::Bytes {
             bytes,
             mime_type,
@@ -105,22 +102,8 @@ fn a2a_pdf_inbound_becomes_part_file() {
 
 #[test]
 fn a2a_image_inbound_still_becomes_part_image() {
-    let a2a_part = A2APart::File(A2AFilePart {
-        file: A2AFileObject::WithUri {
-            uri: "https://example.com/cat.png".to_string(),
-            mime_type: Some("image/png".to_string()),
-            name: None,
-        },
-        metadata: None,
-    });
-
-    let a2a_msg = A2AMessage {
-        parts: vec![a2a_part],
-        ..Default::default()
-    };
-
-    let distri_msg: crate::Message = a2a_msg.try_into().unwrap();
-    match &distri_msg.parts[0] {
+    let msg = inbound(A2APart::url("https://example.com/cat.png").with_media_type("image/png"));
+    match &msg.parts[0] {
         Part::Image(FileType::Url { url, mime_type, .. }) => {
             assert_eq!(url, "https://example.com/cat.png");
             assert_eq!(mime_type, "image/png");
@@ -131,49 +114,66 @@ fn a2a_image_inbound_still_becomes_part_image() {
 
 #[test]
 fn a2a_unknown_mime_inbound_becomes_part_file_no_error() {
-    let a2a_part = A2APart::File(A2AFilePart {
-        file: A2AFileObject::WithBytes {
-            bytes: "AAAA".to_string(),
-            mime_type: None,
-            name: None,
-        },
-        metadata: None,
-    });
-
-    let a2a_msg = A2AMessage {
-        parts: vec![a2a_part],
-        ..Default::default()
-    };
-
-    let distri_msg: crate::Message = a2a_msg.try_into().unwrap();
-    match &distri_msg.parts[0] {
-        Part::File(_) => {}
-        other => panic!("expected Part::File for unknown mime, got {:?}", other),
-    }
+    let msg = inbound(A2APart::raw(vec![0, 0, 0]));
+    assert!(matches!(&msg.parts[0], Part::File(_)));
 }
 
 #[test]
-fn distri_part_file_outbound_becomes_a2a_file() {
-    let distri_part = Part::File(FileType::Url {
+fn legacy_0x_file_part_inbound_still_reads() {
+    let part: A2APart = serde_json::from_value(json!({
+        "kind": "file",
+        "file": {"bytes": "JVBERi0xLjQK", "mimeType": "application/pdf", "name": "doc.pdf"}
+    }))
+    .unwrap();
+    assert!(matches!(
+        &inbound(part).parts[0],
+        Part::File(FileType::Bytes { .. })
+    ));
+}
+
+#[test]
+fn distri_part_file_outbound_becomes_a2a_url_part() {
+    let a2a: A2APart = Part::File(FileType::Url {
         url: "https://example.com/r.pdf".to_string(),
         mime_type: "application/pdf".to_string(),
         name: Some("r.pdf".to_string()),
-    });
+    })
+    .into();
+    assert_eq!(
+        a2a.content,
+        PartContent::Url("https://example.com/r.pdf".into())
+    );
+    assert_eq!(a2a.media_type.as_deref(), Some("application/pdf"));
+    assert_eq!(a2a.filename.as_deref(), Some("r.pdf"));
+}
 
-    let a2a_part: A2APart = distri_part.into();
-    match a2a_part {
-        A2APart::File(fp) => match fp.file {
-            A2AFileObject::WithUri {
-                uri,
-                mime_type,
-                name,
-            } => {
-                assert_eq!(uri, "https://example.com/r.pdf");
-                assert_eq!(mime_type.as_deref(), Some("application/pdf"));
-                assert_eq!(name.as_deref(), Some("r.pdf"));
-            }
-            _ => panic!("expected WithUri"),
-        },
-        _ => panic!("expected A2APart::File"),
-    }
+#[test]
+fn plain_data_part_is_accepted_as_data() {
+    let msg = inbound(A2APart::data(json!({"city": "Paris"})));
+    assert_eq!(msg.parts[0], Part::Data(json!({"city": "Paris"})));
+}
+
+#[test]
+fn distri_parts_ride_as_data_with_part_type_metadata() {
+    let call = Part::ToolCall(crate::ToolCall {
+        tool_call_id: "c1".into(),
+        tool_name: "search".into(),
+        input: json!({"q": "x"}),
+    });
+    let a2a: A2APart = call.clone().into();
+    let wire = serde_json::to_value(&a2a).unwrap();
+    assert_eq!(wire["metadata"]["distri/part_type"], "tool_call");
+    assert_eq!(wire["data"]["tool_call_id"], "c1");
+    assert!(wire["data"].get("part_type").is_none(), "no 0.x wrapper");
+    // And back.
+    assert_eq!(inbound(a2a).parts[0], call);
+}
+
+#[test]
+fn legacy_wrapped_distri_part_is_still_accepted() {
+    let msg = inbound(A2APart::data(json!({
+        "part_type": "tool_result",
+        "data": {"tool_call_id": "c1", "tool_name": "search", "parts": [{"part_type": "text", "data": "ok"}]}
+    })));
+    assert!(matches!(&msg.parts[0], Part::ToolResult(r) if r.tool_call_id == "c1"));
 }

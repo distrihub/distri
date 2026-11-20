@@ -185,8 +185,15 @@ pub struct ExecutorContext {
     /// Arbitrary caller-supplied tags. Recorded on the agent span and merged
     /// into the thread's attributes. Empty by default.
     pub tags: HashMap<String, String>,
+    /// A2A extensions the request activated (`A2A-Extensions` header or
+    /// `Message.extensions`; all of distri's for a 0.x caller). Inherited by
+    /// sub-agents.
+    pub a2a_extensions: distri_types::a2a_extensions::ActiveExtensions,
     /// Resolved agent version (provenance). Recorded on the agent span.
     pub agent_version: Option<String>,
+    /// The saved version this run is pinned to (`name@N`); `None` runs the
+    /// latest. Not inherited by sub-agents (they name their own reference).
+    pub agent_version_no: Option<u32>,
     /// Who sent the request that started this run. Inherited by sub-agents
     /// and copied onto every [`distri_types::LlmCallUsage`] for attribution.
     pub caller: Option<distri_types::RequestCaller>,
@@ -210,6 +217,10 @@ pub struct ExecutorContext {
     /// up-front by `preload_skills` so the run skips the `load_skill`
     /// round-trip. Empty by default.
     pub load_skills: Vec<String>,
+
+    /// The durable segment this context runs (root runs in durable mode).
+    /// Never inherited by child contexts.
+    pub durable: Option<Arc<crate::durable::DurableRun>>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -285,12 +296,15 @@ impl Default for ExecutorContext {
             is_sandbox: false,
             connections_used: Arc::new(RwLock::new(HashSet::new())),
             tags: HashMap::new(),
+            a2a_extensions: Default::default(),
             agent_version: None,
+            agent_version_no: None,
             caller: None,
             trace_context: None,
             span_name: None,
             summary_executor: Arc::new(RwLock::new(None)),
             load_skills: Vec::new(),
+            durable: None,
         }
     }
 }
@@ -1228,6 +1242,7 @@ impl ExecutorContext {
     /// This allows copying selective history and creating new execution strands
     pub async fn fork(&self, options: ForkOptions) -> Self {
         let mut forked_context = self.clone();
+        forked_context.durable = None;
 
         // Create new IDs based on fork type
         match options.fork_type {
@@ -1352,7 +1367,9 @@ impl ExecutorContext {
             is_sandbox: self.is_sandbox,
             connections_used: self.connections_used.clone(),
             tags: self.tags.clone(),
+            a2a_extensions: self.a2a_extensions.clone(),
             agent_version: self.agent_version.clone(),
+            agent_version_no: self.agent_version_no,
             caller: self.caller.clone(),
             trace_context: self.trace_context.clone(),
             span_name: self.span_name.clone(),
@@ -1360,6 +1377,7 @@ impl ExecutorContext {
             // A forked child already had its skills handled at dispatch time;
             // don't re-trigger metadata preload in the inner context.
             load_skills: Vec::new(),
+            durable: None,
         };
 
         (inner_context, inner_rx)

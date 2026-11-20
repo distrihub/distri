@@ -2,7 +2,7 @@
 name = "distri-a2a"
 version = "0.4.6"
 edition = "2021"
-description = "A2A protocol types for the Distri ecosystem"
+description = "A2A 1.0 protocol types for the Distri ecosystem"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/distrihub/distri"
@@ -15,4 +15,9 @@ categories = ["api-bindings", "data-structures"]
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
-uuid = "1.13.1"
+uuid = { version = "1.13.1", features = ["v4"] }
+chrono = { workspace = true }
+base64 = "0.22.1"
+
+[dev-dependencies]
+jsonschema = { workspace = true }
