@@ -24,6 +24,24 @@ use serde_json::{Value, json};
 /// `tool_result`, `artifact`, `resource_link`, …) carried as a `DataPart`.
 pub use distri_a2a::legacy::PART_TYPE_KEY;
 
+/// `Message.metadata` / `TaskArtifactUpdateEvent.metadata` key with the time
+/// the message was made (ISO-8601, ms, `Z`). A2A 1.0 messages carry no time
+/// of their own: distri adds it with `event-stream` active, and always on
+/// its own `GET /threads/{id}/messages`.
+pub const CREATED_AT_KEY: &str = "distri/created_at";
+
+/// A time as the wire writes it: ISO-8601 with milliseconds, UTC `Z`.
+pub fn iso_millis(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// Set [`CREATED_AT_KEY`] in `metadata` (creating it) to `at`.
+pub fn stamp_created_at(metadata: &mut Option<Metadata>, at: chrono::DateTime<chrono::Utc>) {
+    metadata
+        .get_or_insert_with(Metadata::new)
+        .insert(CREATED_AT_KEY.into(), Value::String(iso_millis(at)));
+}
+
 /// Prefix of every distri extension URI.
 pub const EXTENSION_URI_PREFIX: &str = "https://distri.dev/a2a/extensions/";
 

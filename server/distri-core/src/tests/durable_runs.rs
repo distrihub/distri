@@ -1657,3 +1657,468 @@ async fn send_message_return_immediately_does_not_wait() {
         "{resp}"
     );
 }
+
+// ── G1: distri/created_at ───────────────────────────────────────────────────
+
+const CREATED_AT: &str = "distri/created_at";
+
+fn has_created_at(v: &serde_json::Value) -> bool {
+    v.to_string().contains(CREATED_AT)
+}
+
+fn assert_iso_ms(v: &serde_json::Value) {
+    let at = v
+        .as_str()
+        .unwrap_or_else(|| panic!("created_at string: {v}"));
+    assert!(at.ends_with('Z'), "{at}");
+    assert_eq!(
+        at.len(),
+        "2026-11-20T12:00:00.000Z".len(),
+        "ms precision: {at}"
+    );
+    assert!(chrono::DateTime::parse_from_rfc3339(at).is_ok(), "{at}");
+}
+
+fn with_header(mut sr: ServiceRequest, uris: &[&str]) -> ServiceRequest {
+    sr.extensions = distri_a2a::parse_extensions_header([uris.join(", ").as_str()]);
+    sr
+}
+
+async fn rpc(h: &Harness, sr: ServiceRequest) -> serde_json::Value {
+    match h.service.handle(sr).await {
+        Either::Right(r) => serde_json::to_value(r).unwrap(),
+        Either::Left(_) => panic!("expected a JSON answer"),
+    }
+}
+
+fn plain_call(method: &str, params: serde_json::Value) -> JsonRpcRequest {
+    serde_json::from_value(json!({"jsonrpc":"2.0","id":"1","method":method,"params":params}))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn g1_created_at_only_with_event_stream_and_always_on_thread_messages() {
+    let h = harness(
+        ScriptedLlm::new(vec![final_answer("one"), final_answer("two")]),
+        Opts::default(),
+    )
+    .await;
+    // Standard mode: no stamp anywhere.
+    let req = request_v1(
+        "SendStreamingMessage",
+        &h.thread_id,
+        json!([{ "text": "go" }]),
+        &[],
+        json!({}),
+    );
+    let frames = stream_all(&h, service_request(&h, req)).await;
+    assert!(
+        !frames.iter().any(has_created_at),
+        "standard frames carry no created_at: {frames:#?}"
+    );
+    let task_id = frames.last().unwrap()["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Event-stream: the trailing message is stamped.
+    let req = request_v1(
+        "SendStreamingMessage",
+        &h.thread_id,
+        json!([{ "text": "again" }]),
+        &[],
+        json!({}),
+    );
+    let frames = stream_all(&h, with_header(service_request(&h, req), &[EVENT_STREAM])).await;
+    let trailing = frames.last().unwrap();
+    assert_eq!(one_key(trailing), "message");
+    assert_iso_ms(&trailing["message"]["metadata"][CREATED_AT]);
+
+    // GetTask history: stamped with event-stream, not without.
+    let params = json!({ "id": task_id, "historyLength": 10 });
+    let plain = rpc(
+        &h,
+        service_request(&h, plain_call("GetTask", params.clone())),
+    )
+    .await;
+    assert!(!plain["result"]["history"].as_array().unwrap().is_empty());
+    assert!(!has_created_at(&plain), "{plain}");
+    let stamped = rpc(
+        &h,
+        with_header(
+            service_request(&h, plain_call("GetTask", params)),
+            &[EVENT_STREAM],
+        ),
+    )
+    .await;
+    for m in stamped["result"]["history"].as_array().unwrap() {
+        assert_iso_ms(&m["metadata"][CREATED_AT]);
+    }
+    assert_iso_ms(&stamped["result"]["status"]["message"]["metadata"][CREATED_AT]);
+    // ListTasks under event-stream has no messages to stamp but still works.
+    let listed = rpc(
+        &h,
+        with_header(
+            service_request(
+                &h,
+                plain_call("ListTasks", json!({ "contextId": h.thread_id })),
+            ),
+            &[EVENT_STREAM],
+        ),
+    )
+    .await;
+    assert_eq!(listed["result"]["totalSize"], 2);
+
+    // distri's own thread history: always stamped.
+    let history = crate::a2a::messages::get_a2a_messages(
+        h.orch.stores.task_store.clone(),
+        &h.thread_id,
+        None,
+    )
+    .await
+    .unwrap();
+    let messages: Vec<_> = history.iter().filter_map(|f| f.get("message")).collect();
+    assert!(!messages.is_empty());
+    for m in messages {
+        assert_iso_ms(&m["metadata"][CREATED_AT]);
+    }
+}
+
+// ── G2: answering input-required with a message on the task ─────────────────
+
+/// Start a run with a blocking standard `SendMessage`; it returns
+/// input-required. Returns the task.
+async fn send_until_input_required(h: &Harness) -> serde_json::Value {
+    let req = request_v1(
+        "SendMessage",
+        &h.thread_id,
+        json!([{ "text": "pick" }]),
+        &[],
+        json!({}),
+    );
+    let resp = tokio::time::timeout(Duration::from_secs(10), rpc(h, service_request(h, req)))
+        .await
+        .expect("blocking SendMessage returns at the park");
+    let task = resp["result"]["task"].clone();
+    assert_eq!(
+        task["status"]["state"], "TASK_STATE_INPUT_REQUIRED",
+        "{resp}"
+    );
+    task
+}
+
+/// A message on `task_id` with `parts`.
+fn answer_req(
+    h: &Harness,
+    method: &str,
+    task_id: &str,
+    parts: serde_json::Value,
+) -> ServiceRequest {
+    let mut req = request_v1(method, &h.thread_id, parts, &[], json!({}));
+    req.params["message"]["taskId"] = json!(task_id);
+    service_request(h, req)
+}
+
+fn tool_call_parts(message: &serde_json::Value) -> Vec<serde_json::Value> {
+    message["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["metadata"]["distri/part_type"] == "tool_call")
+        .map(|p| p["data"].clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn g2_tagged_data_part_answers_durable() {
+    let h = harness(
+        ScriptedLlm::new(vec![
+            call("call_pick", "pick", json!({ "q": "colour" })),
+            final_answer("you picked teal"),
+        ]),
+        Opts::default(),
+    )
+    .await;
+    let task = send_until_input_required(&h).await;
+    let task_id = task["id"].as_str().unwrap();
+    let calls = tool_call_parts(&task["status"]["message"]);
+    assert_eq!(
+        calls,
+        vec![
+            json!({ "tool_call_id": "call_pick", "tool_name": "pick", "input": { "q": "colour" } })
+        ]
+    );
+    let resp = rpc(
+        &h,
+        answer_req(
+            &h,
+            "SendMessage",
+            task_id,
+            json!([{
+                "data": { "tool_call_id": "call_pick", "tool_name": "pick", "result": { "picked": "teal" } },
+                "metadata": { "distri/part_type": "tool_result" }
+            }]),
+        ),
+    )
+    .await;
+    let done = &resp["result"]["task"];
+    assert_eq!(done["status"]["state"], "TASK_STATE_COMPLETED", "{resp}");
+    assert_eq!(
+        done["status"]["message"]["parts"][0]["text"],
+        "you picked teal"
+    );
+    assert_eq!(h.llm.calls(), 2);
+    assert!(tool_result_text(&h.llm.seen(2), "call_pick").contains("teal"));
+}
+
+async fn plain_data_part_answers(durable: bool) {
+    let h = harness(
+        ScriptedLlm::new(vec![
+            call("call_pick", "pick", json!({})),
+            final_answer("blue it is"),
+        ]),
+        Opts {
+            durable,
+            ..Default::default()
+        },
+    )
+    .await;
+    let task = send_until_input_required(&h).await;
+    let task_id = task["id"].as_str().unwrap();
+    let resp = rpc(
+        &h,
+        answer_req(
+            &h,
+            "SendMessage",
+            task_id,
+            json!([{ "data": { "tool_call_id": "call_pick", "result": "blue" } }]),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp["result"]["task"]["status"]["state"], "TASK_STATE_COMPLETED",
+        "{resp}"
+    );
+    assert!(tool_result_text(&h.llm.seen(2), "call_pick").contains("blue"));
+}
+
+#[tokio::test]
+async fn g2_plain_data_part_answers_durable() {
+    plain_data_part_answers(true).await;
+}
+
+#[tokio::test]
+async fn g2_plain_data_part_answers_non_durable() {
+    plain_data_part_answers(false).await;
+}
+
+/// Text with one call pending answers it with `{"text": …}`; the streaming
+/// answer streams the rest of the task to completion.
+async fn text_answer_streams_to_completion(durable: bool) {
+    let h = harness(
+        ScriptedLlm::new(vec![
+            call("call_pick", "pick", json!({})),
+            final_answer("teal noted"),
+        ]),
+        Opts {
+            durable,
+            ..Default::default()
+        },
+    )
+    .await;
+    let task = send_until_input_required(&h).await;
+    let task_id = task["id"].as_str().unwrap();
+    let frames = stream_all(
+        &h,
+        answer_req(
+            &h,
+            "SendStreamingMessage",
+            task_id,
+            json!([{ "text": "teal" }]),
+        ),
+    )
+    .await;
+    let first = &frames.first().unwrap()["task"];
+    assert_eq!(first["id"], task_id);
+    assert_eq!(
+        first["status"]["state"], "TASK_STATE_WORKING",
+        "{frames:#?}"
+    );
+    let last = &frames.last().unwrap()["task"];
+    assert_eq!(
+        last["status"]["state"], "TASK_STATE_COMPLETED",
+        "{frames:#?}"
+    );
+    assert_eq!(last["status"]["message"]["parts"][0]["text"], "teal noted");
+    let seen = tool_result_text(&h.llm.seen(2), "call_pick");
+    assert!(seen.contains("\"text\"") && seen.contains("teal"), "{seen}");
+}
+
+#[tokio::test]
+async fn g2_text_answer_streams_to_completion_durable() {
+    text_answer_streams_to_completion(true).await;
+}
+
+#[tokio::test]
+async fn g2_text_answer_streams_to_completion_non_durable() {
+    text_answer_streams_to_completion(false).await;
+}
+
+async fn text_with_two_pending_is_refused(durable: bool) {
+    let h = harness(
+        ScriptedLlm::new(vec![
+            calls(&[("call_a", "pick"), ("call_b", "pick")]),
+            final_answer("both"),
+        ]),
+        Opts {
+            durable,
+            ..Default::default()
+        },
+    )
+    .await;
+    let task = send_until_input_required(&h).await;
+    let task_id = task["id"].as_str().unwrap();
+    // The input-required message lists every pending call.
+    let ids: Vec<_> = tool_call_parts(&task["status"]["message"])
+        .iter()
+        .map(|c| c["tool_call_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids, vec!["call_a", "call_b"]);
+    let resp = rpc(
+        &h,
+        answer_req(&h, "SendMessage", task_id, json!([{ "text": "teal" }])),
+    )
+    .await;
+    assert_eq!(resp["error"]["code"], -32602, "{resp}");
+    let pending = resp["error"]["data"]["pending"].as_array().unwrap();
+    assert_eq!(pending.len(), 2, "{resp}");
+    assert_eq!(pending[0]["tool_call_id"], "call_a");
+    assert_eq!(pending[0]["tool_name"], "pick");
+    // GetTask shows both calls too.
+    let got = rpc(
+        &h,
+        service_request(&h, plain_call("GetTask", json!({ "id": task_id }))),
+    )
+    .await;
+    assert_eq!(
+        tool_call_parts(&got["result"]["status"]["message"]).len(),
+        2
+    );
+    // Answering both with DataParts completes the run.
+    let resp = rpc(
+        &h,
+        answer_req(
+            &h,
+            "SendMessage",
+            task_id,
+            json!([
+                { "data": { "tool_call_id": "call_a", "result": "x" } },
+                { "data": { "tool_call_id": "call_b", "result": "y" } }
+            ]),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp["result"]["task"]["status"]["state"], "TASK_STATE_COMPLETED",
+        "{resp}"
+    );
+}
+
+#[tokio::test]
+async fn g2_text_with_two_pending_is_refused_durable() {
+    text_with_two_pending_is_refused(true).await;
+}
+
+#[tokio::test]
+async fn g2_text_with_two_pending_is_refused_non_durable() {
+    text_with_two_pending_is_refused(false).await;
+}
+
+#[tokio::test]
+async fn g2_duplicate_answer_is_ok() {
+    let h = harness(
+        ScriptedLlm::new(vec![
+            call("call_pick", "pick", json!({})),
+            final_answer("done"),
+        ]),
+        Opts::default(),
+    )
+    .await;
+    let task = send_until_input_required(&h).await;
+    let task_id = task["id"].as_str().unwrap();
+    let answer = json!([{ "data": { "tool_call_id": "call_pick", "result": "red" } }]);
+    let first = rpc(&h, answer_req(&h, "SendMessage", task_id, answer.clone())).await;
+    assert_eq!(
+        first["result"]["task"]["status"]["state"], "TASK_STATE_COMPLETED",
+        "{first}"
+    );
+    let again = tokio::time::timeout(
+        Duration::from_secs(5),
+        rpc(&h, answer_req(&h, "SendMessage", task_id, answer)),
+    )
+    .await
+    .expect("a duplicate to a finished task returns at once");
+    assert!(again.get("error").is_none(), "duplicate is ok: {again}");
+    assert_eq!(
+        again["result"]["task"]["status"]["state"],
+        "TASK_STATE_COMPLETED"
+    );
+    // A different answer now conflicts.
+    let conflict = rpc(
+        &h,
+        answer_req(
+            &h,
+            "SendMessage",
+            task_id,
+            json!([{ "data": { "tool_call_id": "call_pick", "result": "green" } }]),
+        ),
+    )
+    .await;
+    assert_eq!(conflict["error"]["code"], -32602, "{conflict}");
+    assert_eq!(
+        conflict["error"]["data"],
+        json!({ "tool_call_id": "call_pick", "status": "conflict" })
+    );
+    assert_eq!(h.llm.calls(), 2, "no extra turn");
+}
+
+#[tokio::test]
+async fn g2_expired_answer_is_refused() {
+    let h = harness(
+        ScriptedLlm::new(vec![
+            call("call_pick", "pick", json!({})),
+            final_answer("gave up"),
+        ]),
+        Opts {
+            timeout_secs: Some(1),
+            ..Default::default()
+        },
+    )
+    .await;
+    let (task_id, _frames) = start(&h, "pick").await;
+    wait_status(&h, &task_id, TaskStatus::InputRequired).await;
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    h.worker
+        .as_ref()
+        .unwrap()
+        .tick(chrono::Utc::now())
+        .await
+        .unwrap();
+    wait_status(&h, &task_id, TaskStatus::Completed).await;
+    let resp = rpc(
+        &h,
+        answer_req(
+            &h,
+            "SendMessage",
+            &task_id,
+            json!([{ "data": { "tool_call_id": "call_pick", "result": "late" } }]),
+        ),
+    )
+    .await;
+    assert_eq!(resp["error"]["code"], -32602, "{resp}");
+    assert_eq!(
+        resp["error"]["data"],
+        json!({ "tool_call_id": "call_pick", "status": "expired" })
+    );
+    assert_eq!(h.llm.calls(), 2, "the late answer started nothing");
+}

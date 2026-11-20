@@ -53,9 +53,12 @@ pub async fn get_a2a_messages(
         .flat_map(|(task, msgs)| {
             msgs.iter()
                 .map(|msg| match msg {
-                    TaskMessage::Message(msg) => serde_json::to_value(
-                        distri_a2a::StreamResponse::Message(crate::a2a::to_a2a_message(msg, task)),
-                    ),
+                    TaskMessage::Message(msg) => {
+                        // distri's own history API always carries the time (G1).
+                        let mut m = crate::a2a::to_a2a_message(msg, task);
+                        crate::a2a::stamp_message(&mut m, msg.created_at);
+                        serde_json::to_value(distri_a2a::StreamResponse::Message(m))
+                    }
                     TaskMessage::Event(evt) => {
                         serde_json::to_value(distri_a2a::StreamResponse::StatusUpdate(
                             crate::a2a::to_a2a_task_update(evt, task),

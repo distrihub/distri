@@ -121,6 +121,13 @@ pub struct StreamingSession {
     /// Pending-call store (durable runs), to tell a live park from a
     /// replayed one.
     pub pending_calls: Option<Arc<dyn distri_types::PendingCallStore>>,
+    /// To tell a non-durable step waiting on its client, and to name the
+    /// calls a park waits on.
+    pub orchestrator: Arc<AgentOrchestrator>,
+    /// The session follows a run already going (an answer to
+    /// `input-required`, G2): standard mode opens with the task as it
+    /// stands, working, instead of a new submitted task.
+    pub resumed: bool,
 }
 
 /// Prepared state for a resubscribe session.
@@ -223,16 +230,46 @@ impl A2AService {
             Either::Left(Box::pin(single_error_frame_stream(req_id.clone(), e)) as BoxedSseStream)
         };
 
+        // A message on a task waiting on client tool calls answers them (G2).
+        let answer = match method {
+            Method::SendStreamingMessage | Method::SendMessage => {
+                match self.answer_session(&input).await {
+                    Ok(s) => s,
+                    Err(e) if method == Method::SendStreamingMessage => return stream_err(e),
+                    Err(e) => return err(e),
+                }
+            }
+            _ => None,
+        };
+
         match method {
-            Method::SendStreamingMessage => match self.prepare_streaming_session(input).await {
-                Ok(session) => Either::Left(Self::run_streaming_session(session)),
-                Err(e) => stream_err(agent_error_to_jsonrpc(e)),
-            },
-            Method::SendMessage => match self.send_message(input).await {
-                Ok(task) => ok(encode(&SendMessageResponse::Task(task), legacy)),
-                Err(e) => err(agent_error_to_jsonrpc(e)),
-            },
-            Method::GetTask => match self.get_task(input.req.params).await {
+            Method::SendStreamingMessage => {
+                let session = match answer {
+                    Some(s) => Ok(s),
+                    None => self.initialize_task_inner(input, false).await,
+                };
+                match session {
+                    Ok(session) => Either::Left(Self::run_streaming_session(session)),
+                    Err(e) => stream_err(agent_error_to_jsonrpc(e)),
+                }
+            }
+            Method::SendMessage => {
+                let task = match answer {
+                    Some(s) => self.drain_session(s).await,
+                    None => self.send_message_inner(input, false).await,
+                };
+                match task {
+                    Ok(task) => ok(encode(&SendMessageResponse::Task(task), legacy)),
+                    Err(e) => err(agent_error_to_jsonrpc(e)),
+                }
+            }
+            Method::GetTask => match self
+                .get_task_with(
+                    input.req.params.clone(),
+                    &request_activation(&input.req, &input.extensions),
+                )
+                .await
+            {
                 Ok(task) => ok(encode(&task, legacy)),
                 Err(A2AError::ApiError(m)) => err(JsonRpcError::task_not_found(m)),
                 Err(A2AError::SerdeError(e)) => err(JsonRpcError::invalid_params(e.to_string())),
@@ -284,6 +321,14 @@ impl A2AService {
     /// `message/send` and `message/stream` are always behaviorally consistent.
     /// Awaits the terminal broadcaster event, then fetches the finalized Task.
     pub async fn send_message(&self, input: ServiceRequest) -> Result<Task, AgentError> {
+        self.send_message_inner(input, true).await
+    }
+
+    async fn send_message_inner(
+        &self,
+        input: ServiceRequest,
+        check_answer: bool,
+    ) -> Result<Task, AgentError> {
         // `returnImmediately: true` (or `blocking: false`): answer with the
         // task as soon as it exists; the run goes on in the background.
         let configuration = input.req.params.get("configuration");
@@ -294,7 +339,7 @@ impl A2AService {
         };
         let return_immediately =
             flag("returnImmediately") == Some(true) || flag("blocking") == Some(false);
-        let session = self.initialize_task(input).await?;
+        let session = self.initialize_task_inner(input, check_answer).await?;
         if return_immediately {
             let mut task: Task = match session.task_store.get_task(&session.task_id).await {
                 Ok(Some(t)) => t.into(),
@@ -309,6 +354,12 @@ impl A2AService {
             }
             return Ok(task);
         }
+        self.drain_session(session).await
+    }
+
+    /// Follow a session to the root run's end or its next live park, and
+    /// return the task as it then stands (blocking `SendMessage`).
+    pub async fn drain_session(&self, session: StreamingSession) -> Result<Task, AgentError> {
         let StreamingSession {
             task_id,
             thread_id,
@@ -317,30 +368,36 @@ impl A2AService {
             task_store: session_task_store,
             extensions,
             pending_calls,
+            orchestrator,
             ..
         } = session;
         let mut mapper = StreamMapper::new(&task_id, &thread_id, extensions.clone());
+        let dry_run = executor_context.dry_run;
 
         // Drain events to completion. Only the ROOT run's terminal event
         // ends this drain — sub-agent RunFinished/RunError frames are
         // intermediate (the parent is still going). Same root-only check
         // we apply on the SSE streaming path. A parked run returns
-        // input-required with its pending calls (B5).
+        // input-required with its pending calls (B5); a broadcaster that
+        // replays the task's log (Redis) shows the parks of earlier segments
+        // too, and only a live one ends this request (S26).
         futures_util::pin_mut!(event_stream);
         let mut parked: Option<Vec<String>> = None;
+        let mut observed = FinalAnswer::default();
         while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+            observed.observe(&task_id, &event);
             let _ = mapper.map(&event);
-            let is_root = event.parent_task_id.is_none() && event.task_id == task_id;
-            if let (true, AgentEventType::RunParked { pending, .. }) = (is_root, &event.event) {
-                // A broadcaster that replays the task's log (Redis) shows
-                // the parks of earlier segments too: only a park whose calls
-                // are still open ends this request (S26: a tool-result
-                // message to a parked task follows the run it resumed).
-                if park_is_current(pending_calls.as_ref(), pending).await {
-                    parked = Some(pending.clone());
-                    break;
-                }
-                continue;
+            if let Some(pending) = live_wait(
+                &orchestrator,
+                pending_calls.as_ref(),
+                &task_id,
+                &event,
+                dry_run,
+            )
+            .await
+            {
+                parked = Some(pending);
+                break;
             }
             if is_root_terminal(&event) {
                 break;
@@ -361,6 +418,8 @@ impl A2AService {
         // as the trailing SSE frame in `run_streaming_session` so both paths
         // deliver identical payload shape.
         if let Some(pending_ids) = parked {
+            remember_waiting_calls(&orchestrator, &mut mapper, &task_id, &pending_ids).await;
+            updated_task.status.state = distri_a2a::TaskState::InputRequired;
             updated_task.status.message = Some(mapper.input_required_message(&pending_ids));
             let durable_active = extensions.is_active(DistriExtension::DurableRuns);
             if let (true, Some(durable)) = (durable_active, &self.orchestrator.durable) {
@@ -374,14 +433,33 @@ impl A2AService {
                 updated_task.metadata = Some(meta);
             }
         } else {
-            updated_task.status.message =
-                final_message(&executor_context, session_task_store.as_ref()).await;
+            let answer = match final_message(&executor_context, session_task_store.as_ref()).await {
+                Some(m) => Some(m),
+                None => observed.into_message(&task_id, &thread_id),
+            };
+            updated_task.status.message = answer.map(|mut m| {
+                mapper.stamp(&mut m, chrono::Utc::now());
+                m
+            });
         }
 
         Ok(updated_task)
     }
 
     pub async fn get_task(&self, params: serde_json::Value) -> Result<Task, A2AError> {
+        self.get_task_with(params, &ActiveExtensions::default())
+            .await
+    }
+
+    /// `GetTask` with the request's extensions (`event-stream` stamps each
+    /// message with `distri/created_at`, G1). A task waiting on client tool
+    /// calls has the input-required message listing them (G2).
+    pub async fn get_task_with(
+        &self,
+        params: serde_json::Value,
+        active: &ActiveExtensions,
+    ) -> Result<Task, A2AError> {
+        let event_stream = active.is_active(DistriExtension::EventStream);
         let params: GetTaskRequest = serde_json::from_value(params)?;
 
         let task = match self
@@ -410,7 +488,10 @@ impl A2AService {
         for (row, msgs) in history.iter().filter(|(row, _)| row.id == task.id) {
             for m in msgs {
                 if let distri_types::TaskMessage::Message(m) = m {
-                    let a2a = crate::a2a::to_a2a_message(m, row);
+                    let mut a2a = crate::a2a::to_a2a_message(m, row);
+                    if event_stream {
+                        crate::a2a::stamp_message(&mut a2a, m.created_at);
+                    }
                     if m.id == final_id {
                         a2a_task.status.message = Some(a2a.clone());
                     }
@@ -421,6 +502,15 @@ impl A2AService {
         if let Some(n) = params.history_length.filter(|n| *n > 0) {
             let skip = messages.len().saturating_sub(n as usize);
             a2a_task.history = messages.into_iter().skip(skip).collect();
+        }
+        if a2a_task.status.state == distri_a2a::TaskState::InputRequired {
+            let waiting = self.orchestrator.waiting_calls(&task.id).await;
+            if !waiting.is_empty() {
+                let mut mapper = StreamMapper::new(&task.id, &task.thread_id, active.clone());
+                mapper.remember_calls(waiting.iter().map(|c| c.tool_call()));
+                let ids: Vec<String> = waiting.into_iter().map(|c| c.tool_call_id).collect();
+                a2a_task.status.message = Some(mapper.input_required_message(&ids));
+            }
         }
         Ok(a2a_task)
     }
@@ -567,6 +657,21 @@ impl A2AService {
         &self,
         input: ServiceRequest,
     ) -> Result<StreamingSession, AgentError> {
+        self.initialize_task_inner(input, true).await
+    }
+
+    async fn initialize_task_inner(
+        &self,
+        input: ServiceRequest,
+        check_answer: bool,
+    ) -> Result<StreamingSession, AgentError> {
+        if check_answer {
+            match self.answer_session(&input).await {
+                Ok(Some(session)) => return Ok(session),
+                Ok(None) => {}
+                Err(e) => return Err(AgentError::Validation(e.message)),
+            }
+        }
         let ServiceRequest {
             agent_id,
             user_id,
@@ -743,6 +848,8 @@ impl A2AService {
             task_store: self.orchestrator.stores.task_store.clone(),
             extensions,
             pending_calls,
+            orchestrator: self.orchestrator.clone(),
+            resumed: false,
         })
     }
 
@@ -817,6 +924,8 @@ impl A2AService {
                 task_store,
                 extensions,
                 pending_calls,
+                orchestrator: orch.clone(),
+                resumed: true,
             });
         }
 
@@ -891,6 +1000,8 @@ impl A2AService {
             task_store,
             extensions,
             pending_calls,
+            orchestrator: orch.clone(),
+            resumed: false,
         })
     }
 
@@ -916,9 +1027,12 @@ impl A2AService {
             task_store,
             extensions,
             pending_calls,
+            orchestrator,
+            resumed,
         } = session;
 
         let executor_context_for_final = executor_context.clone();
+        let dry_run = executor_context.dry_run;
         let stream_user_id = user_id.clone();
         let legacy = extensions.is_legacy();
         let mut mapper = StreamMapper::new(&task_id, &thread_id, extensions);
@@ -927,20 +1041,46 @@ impl A2AService {
         };
 
         let stream = async_stream::stream! {
-            // Standard mode opens with the task, as A2A clients expect.
+            // Standard mode opens with the task, as A2A clients expect: a new
+            // one submitted, or (an answer resuming it) the task, working.
             if !mapper.event_stream() {
-                let mut task = Task {
-                    id: task_id.clone(),
-                    context_id: thread_id.clone(),
-                    ..Default::default()
+                let task = if resumed {
+                    let mut t: Task = match task_store.get_task(&task_id).await {
+                        Ok(Some(t)) => t.into(),
+                        _ => Task { id: task_id.clone(), context_id: thread_id.clone(), ..Default::default() },
+                    };
+                    if !matches!(
+                        t.status.state,
+                        distri_a2a::TaskState::Completed
+                            | distri_a2a::TaskState::Failed
+                            | distri_a2a::TaskState::Canceled
+                    ) {
+                        t.status = distri_a2a::TaskStatus::new(distri_a2a::TaskState::Working);
+                    }
+                    t
+                } else {
+                    let mut t = Task {
+                        id: task_id.clone(),
+                        context_id: thread_id.clone(),
+                        ..Default::default()
+                    };
+                    t.status = distri_a2a::TaskStatus::new(distri_a2a::TaskState::Submitted);
+                    t
                 };
-                task.status = distri_a2a::TaskStatus::new(distri_a2a::TaskState::Submitted);
                 yield Ok::<_, std::convert::Infallible>(frame(&StreamResponse::Task(task)));
             }
             futures_util::pin_mut!(event_stream);
             let mut terminal: Option<AgentEvent> = None;
             let mut parked: Option<Vec<String>> = None;
+            let mut observed = FinalAnswer::default();
             while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+                observed.observe(&task_id, &event);
+                // A live park: a durable `RunParked` whose calls are open, or
+                // a non-durable step waiting on its client (G2).
+                let wait = live_wait(&orchestrator, pending_calls.as_ref(), &task_id, &event, dry_run).await;
+                if let Some(pending) = &wait {
+                    remember_waiting_calls(&orchestrator, &mut mapper, &task_id, pending).await;
+                }
                 // Only the ROOT run's terminal event closes this SSE
                 // stream. A sub-agent finishing (event.parent_task_id is
                 // Some) is intermediate — the parent run is still going
@@ -953,35 +1093,45 @@ impl A2AService {
                     terminal = Some(event);
                     break;
                 }
-                // Standard mode ends at an input-required park (the client
-                // answers with a new message); event-stream clients follow
-                // the run through it (client tools, durable runs).
-                if let (false, true, AgentEventType::RunParked { pending, .. }) =
-                    (mapper.event_stream(), event.parent_task_id.is_none(), &event.event)
-                {
-                    if park_is_current(pending_calls.as_ref(), pending).await {
-                        parked = Some(pending.clone());
+                if let Some(pending) = wait {
+                    if !mapper.event_stream() {
+                        // Standard mode ends at an input-required park (the
+                        // client answers with a new message on the task).
+                        parked = Some(pending);
                         break;
+                    }
+                    // Event-stream clients follow the run through it; one
+                    // whose envelope for the park was not sent (its
+                    // extension is not active) gets the standard state.
+                    if !mapper.envelope_active(&event) {
+                        let sr = mapper.input_required_status(&pending);
+                        yield Ok::<_, std::convert::Infallible>(frame(&sr));
                     }
                 }
             }
 
             // After the terminal event: the final answer.
             let answer = if terminal.is_some() {
-                final_message(&executor_context_for_final, task_store.as_ref()).await
+                match final_message(&executor_context_for_final, task_store.as_ref()).await {
+                    Some(m) => Some(m),
+                    None => observed.into_message(&task_id, &thread_id),
+                }
             } else {
                 None
             };
             if mapper.event_stream() {
                 // Event-stream: the trailing final-answer message, as before.
-                if let Some(final_msg) = answer {
+                if let Some(mut final_msg) = answer {
+                    mapper.stamp(&mut final_msg, chrono::Utc::now());
                     yield Ok::<_, std::convert::Infallible>(frame(&StreamResponse::Message(final_msg)));
                 }
             } else if terminal.is_some() || parked.is_some() {
-                // Standard: the terminal state with the answer as its status
-                // message, then the final Task.
+                // Standard: the terminal (or input-required) state with the
+                // answer (or the pending calls) as its status message, then
+                // the final Task.
                 let status = match (&terminal, &parked) {
                     (Some(ev), _) => mapper.terminal_status(ev, answer.clone()),
+                    (None, Some(pending)) => Some(mapper.input_required_status(pending)),
                     _ => None,
                 };
                 if let Some(sr) = &status {
@@ -993,9 +1143,6 @@ impl A2AService {
                 };
                 if let Some(StreamResponse::StatusUpdate(u)) = status {
                     task.status = u.status;
-                } else if let Some(pending) = &parked {
-                    task.status.state = distri_a2a::TaskState::InputRequired;
-                    task.status.message = Some(mapper.input_required_message(pending));
                 }
                 task.artifacts = mapper.artifacts.clone();
                 yield Ok::<_, std::convert::Infallible>(frame(&StreamResponse::Task(task)));
@@ -1112,7 +1259,11 @@ impl A2AService {
                         .rev()
                         .find(|f| matches!(f, StreamResponse::Message(m) if m.role == distri_a2a::Role::Agent))
                     {
-                        snapshot.status.message = Some(m.clone());
+                        let mut m = m.clone();
+                        if let Some(meta) = m.metadata.as_mut() {
+                            meta.remove(distri_types::a2a_extensions::CREATED_AT_KEY);
+                        }
+                        snapshot.status.message = Some(m);
                     }
                     yield Ok::<_, std::convert::Infallible>(frame(&StreamResponse::Task(snapshot)));
                     return;
@@ -1150,6 +1301,16 @@ impl A2AService {
                 for f in mapper.map(&event) {
                     yield Ok::<_, std::convert::Infallible>(frame(&f));
                 }
+                // A root park whose envelope was not sent: the standard
+                // input-required state.
+                if let (AgentEventType::RunParked { pending, .. }, true, false) = (
+                    &event.event,
+                    event.task_id == task_id && event.parent_task_id.is_none(),
+                    mapper.envelope_active(&event),
+                ) {
+                    let sr = mapper.input_required_status(pending);
+                    yield Ok::<_, std::convert::Infallible>(frame(&sr));
+                }
                 if is_root_terminal(&event) && event.task_id == task_id {
                     terminal = Some(event);
                     if !mapper.event_stream() {
@@ -1161,7 +1322,8 @@ impl A2AService {
             // with, so a follower sees the answer the way the starter did.
             let msg = answer.into_message(&task_id, &context_id);
             if mapper.event_stream() {
-                if let Some(msg) = msg {
+                if let Some(mut msg) = msg {
+                    mapper.stamp(&mut msg, chrono::Utc::now());
                     yield Ok::<_, std::convert::Infallible>(frame(&StreamResponse::Message(msg)));
                 }
             } else if let Some(ev) = terminal {
@@ -1383,6 +1545,197 @@ impl A2AService {
         tracing::debug!("Executor context in A2AService: {:?}", context);
 
         Ok(context)
+    }
+}
+
+/// The calls a root event leaves the run waiting on, when it is a live park:
+/// a durable `RunParked` whose calls are still open (a replayed park of an
+/// earlier segment is not), or a non-durable `ToolCalls` step whose client
+/// calls are registered and not yet answered (they are registered before
+/// the event is emitted, so this cannot miss them).
+pub async fn live_wait(
+    orchestrator: &AgentOrchestrator,
+    pending_calls: Option<&Arc<dyn distri_types::PendingCallStore>>,
+    task_id: &str,
+    event: &AgentEvent,
+    dry_run: bool,
+) -> Option<Vec<String>> {
+    if event.task_id != task_id || event.parent_task_id.is_some() {
+        return None;
+    }
+    match &event.event {
+        AgentEventType::RunParked { pending, .. } => park_is_current(pending_calls, pending)
+            .await
+            .then(|| pending.clone()),
+        AgentEventType::ToolCalls { tool_calls, .. } if !dry_run => {
+            let store = &orchestrator.stores.external_tool_calls_store;
+            let mut ids = Vec::new();
+            for c in tool_calls {
+                if let Ok(Some(t)) = store.pending_task_id(&c.tool_call_id).await {
+                    if t == task_id {
+                        ids.push(c.tool_call_id.clone());
+                    }
+                }
+            }
+            (!ids.is_empty()).then_some(ids)
+        }
+        _ => None,
+    }
+}
+
+/// Make sure the mapper knows every call a park waits on (calls of a step
+/// emitted before this request subscribed), so the input-required message
+/// lists each one.
+async fn remember_waiting_calls(
+    orchestrator: &AgentOrchestrator,
+    mapper: &mut StreamMapper,
+    task_id: &str,
+    pending: &[String],
+) {
+    let probe = mapper.input_required_message(pending);
+    let listed = probe
+        .parts
+        .iter()
+        .filter(|p| {
+            p.metadata_value(distri_types::a2a_extensions::PART_TYPE_KEY)
+                .and_then(|v| v.as_str())
+                == Some("tool_call")
+        })
+        .count();
+    if listed < pending.len() {
+        let calls = orchestrator.waiting_calls(task_id).await;
+        mapper.remember_calls(calls.iter().map(|c| c.tool_call()));
+    }
+}
+
+/// `-32602` for an answer that cannot be applied, with the contract's data.
+fn answer_error(message: impl Into<String>, data: serde_json::Value) -> JsonRpcError {
+    let mut e = JsonRpcError::invalid_params(message);
+    e.data = Some(data);
+    e
+}
+
+impl A2AService {
+    /// G2: a `SendMessage` / `SendStreamingMessage` whose `message.taskId`
+    /// names a task waiting on client tool calls answers them (see
+    /// [`crate::a2a::answer`]). `Ok(None)`: not an answer, start a turn as
+    /// usual. `Ok(Some)`: the calls are completed (first writer wins, the
+    /// same `complete_tool_call` as `POST /complete-tool`) and the session
+    /// follows the woken run. `Err`: `-32602` with
+    /// `data = {tool_call_id, status}` (expired, conflict, closed,
+    /// not_found) or `{pending: [...]}` (text with several calls pending).
+    pub async fn answer_session(
+        &self,
+        input: &ServiceRequest,
+    ) -> Result<Option<StreamingSession>, JsonRpcError> {
+        use crate::a2a::answer::{answer_parts, text_result, AnswerParts};
+        let Ok(params) = serde_json::from_value::<MessageSendParams>(input.req.params.clone())
+        else {
+            return Ok(None);
+        };
+        let Some(task_id) = params
+            .message
+            .task_id
+            .clone()
+            .filter(|t| !t.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+        let orch = self.orchestrator.clone();
+        let Ok(Some(task)) = orch.stores.task_store.get_task(&task_id).await else {
+            return Ok(None);
+        };
+        let answer = answer_parts(&params.message.parts);
+        let waiting = orch.waiting_calls(&task_id).await;
+        // A result for a call this task already had (durable: answered,
+        // expired, …) is an answer too, so a retry gets duplicate / expired.
+        let mut answered_before = false;
+        if let (AnswerParts::Results(results), Some(durable)) = (&answer, &orch.durable) {
+            for r in results {
+                if let Ok(Some(c)) = durable.pending_calls.get(&r.tool_call_id).await {
+                    answered_before |= c.task_id == task_id;
+                }
+            }
+        }
+        if waiting.is_empty() && !answered_before {
+            return Ok(None);
+        }
+        let results = match answer {
+            AnswerParts::Results(mut results) => {
+                for r in results.iter_mut().filter(|r| r.tool_name.is_empty()) {
+                    if let Some(c) = waiting.iter().find(|c| c.tool_call_id == r.tool_call_id) {
+                        r.tool_name = c.tool_name.clone();
+                    }
+                }
+                results
+            }
+            AnswerParts::Text(text) if waiting.len() == 1 => vec![text_result(&waiting[0], &text)],
+            AnswerParts::Text(_) => {
+                return Err(answer_error(
+                    format!(
+                        "task {task_id} waits on {} tool calls; answer each with a DataPart \
+                         {{tool_call_id, result}}",
+                        waiting.len()
+                    ),
+                    serde_json::json!({
+                        "pending": waiting.iter().map(|c| c.json()).collect::<Vec<_>>()
+                    }),
+                ))
+            }
+            AnswerParts::None => return Ok(None),
+        };
+
+        let extensions = request_activation(&input.req, &input.extensions);
+        // Subscribe before answering, so the woken run's first events are
+        // not missed.
+        let mut event_stream = orch
+            .broadcaster()
+            .subscribe(&task_id)
+            .await
+            .map_err(|e| JsonRpcError::internal(format!("Failed to subscribe: {e}")))?;
+        for result in results {
+            let id = result.tool_call_id.clone();
+            if let Err(e) = orch.clone().complete_tool_call(&id, result).await {
+                return Err(answer_error(
+                    e.to_string(),
+                    serde_json::json!({ "tool_call_id": id, "status": e.status() }),
+                ));
+            }
+        }
+        // A duplicate answer to a run that has since ended: nothing more
+        // will come.
+        if waiting.is_empty() {
+            if let Ok(Some(t)) = orch.stores.task_store.get_task(&task_id).await {
+                if t.status.is_terminal() {
+                    event_stream = Box::pin(futures_util::stream::empty());
+                }
+            }
+        }
+        let executor_context = ExecutorContext {
+            task_id: task_id.clone(),
+            thread_id: task.thread_id.clone(),
+            agent_id: input.agent_id.clone(),
+            user_id: input.user_id.clone(),
+            workspace_id: input.workspace_id.clone(),
+            ..Default::default()
+        };
+        Ok(Some(StreamingSession {
+            req_id: input.req.id.clone(),
+            user_id: input.user_id.clone(),
+            workspace_id: input
+                .workspace_id
+                .as_deref()
+                .and_then(|s| uuid::Uuid::parse_str(s).ok()),
+            task_id,
+            thread_id: task.thread_id.clone(),
+            executor_context: Arc::new(executor_context),
+            event_stream,
+            task_store: orch.stores.task_store.clone(),
+            extensions,
+            pending_calls: orch.durable.as_ref().map(|d| d.pending_calls.clone()),
+            orchestrator: orch.clone(),
+            resumed: true,
+        }))
     }
 }
 
@@ -1628,7 +1981,10 @@ async fn task_history_frames(
             }
             frames.push(match message {
                 distri_types::TaskMessage::Message(m) => {
-                    StreamResponse::Message(crate::a2a::to_a2a_message(m, row))
+                    // Replays are event-stream frames: stamped (G1).
+                    let mut msg = crate::a2a::to_a2a_message(m, row);
+                    crate::a2a::stamp_message(&mut msg, m.created_at);
+                    StreamResponse::Message(msg)
                 }
                 distri_types::TaskMessage::Event(e) => {
                     StreamResponse::StatusUpdate(crate::a2a::to_a2a_task_update(e, row))

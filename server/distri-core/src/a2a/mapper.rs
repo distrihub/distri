@@ -21,7 +21,9 @@ use distri_a2a::{
     Artifact, Message, Metadata, Part, Role, StreamResponse, TaskArtifactUpdateEvent, TaskState,
     TaskStatus, TaskStatusUpdateEvent,
 };
-use distri_types::a2a_extensions::{ActiveExtensions, DistriExtension, PART_TYPE_KEY};
+use distri_types::a2a_extensions::{
+    stamp_created_at, ActiveExtensions, DistriExtension, PART_TYPE_KEY,
+};
 use distri_types::{AgentEventEnvelope, ToolCall};
 use serde_json::Value;
 
@@ -167,14 +169,47 @@ impl StreamMapper {
     }
 
     fn agent_message(&self, parts: Vec<Part>) -> Message {
-        Message {
+        let mut message = Message {
             message_id: uuid::Uuid::new_v4().to_string(),
             context_id: Some(self.context_id.clone()),
             task_id: Some(self.task_id.clone()),
             role: Role::Agent,
             parts,
             ..Default::default()
+        };
+        self.stamp(&mut message, chrono::Utc::now());
+        message
+    }
+
+    /// With `event-stream` active, set `metadata["distri/created_at"]` on a
+    /// message (G1). Standard mode leaves the message as it is.
+    pub fn stamp(&self, message: &mut Message, at: chrono::DateTime<chrono::Utc>) {
+        if self.event_stream() {
+            stamp_created_at(&mut message.metadata, at);
         }
+    }
+
+    /// `TaskArtifactUpdateEvent.metadata`: the time, with `event-stream`.
+    fn artifact_metadata(&self, at: chrono::DateTime<chrono::Utc>) -> Option<Metadata> {
+        let mut meta = None;
+        if self.event_stream() {
+            stamp_created_at(&mut meta, at);
+        }
+        meta
+    }
+
+    /// Tool calls a later park may wait on that this mapper did not see as
+    /// `ToolCalls` events (they were emitted before the request subscribed).
+    pub fn remember_calls(&mut self, calls: impl IntoIterator<Item = ToolCall>) {
+        for c in calls {
+            self.tool_calls.entry(c.tool_call_id.clone()).or_insert(c);
+        }
+    }
+
+    /// Whether the event goes out as an envelope (else as standard frames).
+    pub fn envelope_active(&self, event: &AgentEvent) -> bool {
+        let ext = DistriExtension::for_event_type(event.event.wire_type());
+        self.event_stream() && ext.is_none_or(|e| self.active.is_active(e))
     }
 
     /// Frames for one event.
@@ -193,10 +228,7 @@ impl StreamMapper {
         }
 
         let mut frames = Vec::new();
-        let ext = DistriExtension::for_event_type(event.event.wire_type());
-        let envelope_active = self.event_stream() && ext.is_none_or(|e| self.active.is_active(e));
-
-        if envelope_active {
+        if self.envelope_active(event) {
             let step = self.steps.get(&event.task_id).cloned();
             let is_final = is_root_terminal(event);
             frames.push(StreamResponse::StatusUpdate(TaskStatusUpdateEvent {
@@ -239,7 +271,7 @@ impl StreamMapper {
                     },
                     append: Some(!first),
                     last_chunk: Some(false),
-                    metadata: None,
+                    metadata: self.artifact_metadata(event.timestamp),
                 })]
             }
             AgentEventType::TextMessageEnd { message_id, .. }
@@ -256,19 +288,25 @@ impl StreamMapper {
                     },
                     append: Some(true),
                     last_chunk: Some(true),
-                    metadata: None,
+                    metadata: self.artifact_metadata(event.timestamp),
                 })]
             }
-            AgentEventType::RunParked { pending, .. } => {
-                let message = self.input_required_message(pending);
-                vec![self.status(&task_id, TaskState::InputRequired, Some(message))]
-            }
+            // A park (durable `RunParked`, or a non-durable step waiting on
+            // its client) is the service's to report: only it can tell a
+            // live park from a replayed one (`input_required_status`).
             _ => Vec::new(),
         }
     }
 
+    /// The `input-required` status update for a park on `pending`.
+    pub fn input_required_status(&self, pending: &[String]) -> StreamResponse {
+        let message = self.input_required_message(pending);
+        self.status(&self.task_id, TaskState::InputRequired, Some(message))
+    }
+
     /// The status message of an `input-required` state: what the run waits
-    /// on, as text, and each pending tool call as a DataPart.
+    /// on, as text, and each pending tool call as a DataPart
+    /// `{tool_call_id, tool_name, input}` (`distri/part_type: tool_call`).
     pub fn input_required_message(&self, pending: &[String]) -> Message {
         let calls: Vec<&ToolCall> = pending
             .iter()
@@ -311,7 +349,7 @@ impl StreamMapper {
                     artifact,
                     append: Some(false),
                     last_chunk: Some(true),
-                    metadata: None,
+                    metadata: self.artifact_metadata(event.timestamp),
                 }));
             }
         }
@@ -439,6 +477,39 @@ mod tests {
                 .iter()
                 .all(|f| !matches!(f, StreamResponse::ArtifactUpdate(_))));
         }
+    }
+
+    /// G1: with `event-stream`, artifact updates and messages carry
+    /// `metadata["distri/created_at"]` (ISO-8601, ms, Z); standard mode
+    /// adds nothing.
+    #[test]
+    fn created_at_only_with_event_stream() {
+        let key = distri_types::a2a_extensions::CREATED_AT_KEY;
+        let mut std_m = StreamMapper::new("t", "c", ActiveExtensions::default());
+        let frames = std_m.map(&event(results_with_artifact()));
+        let StreamResponse::ArtifactUpdate(a) = &frames[0] else {
+            panic!("artifact")
+        };
+        assert!(a.metadata.is_none(), "standard: no metadata");
+        assert!(std_m.input_required_message(&[]).metadata.is_none());
+
+        let mut es = StreamMapper::new("t", "c", ActiveExtensions::all_legacy());
+        let frames = es.map(&event(results_with_artifact()));
+        let a = frames
+            .iter()
+            .find_map(|f| match f {
+                StreamResponse::ArtifactUpdate(a) => Some(a),
+                _ => None,
+            })
+            .expect("artifact update");
+        let at = a.metadata.as_ref().unwrap()[key].as_str().unwrap();
+        assert!(
+            at.ends_with('Z') && at.len() == "2026-11-20T12:00:00.000Z".len(),
+            "{at}"
+        );
+        assert!(chrono::DateTime::parse_from_rfc3339(at).is_ok());
+        let m = es.input_required_message(&[]);
+        assert!(m.metadata.as_ref().unwrap()[key].is_string());
     }
 
     #[test]

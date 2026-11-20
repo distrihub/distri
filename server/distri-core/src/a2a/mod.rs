@@ -1,3 +1,4 @@
+pub mod answer;
 mod handler;
 pub mod service;
 pub mod stream;
@@ -120,6 +121,14 @@ pub fn agent_error_to_jsonrpc(e: AgentError) -> distri_a2a::JsonRpcError {
         AgentError::NotFound(m) => distri_a2a::JsonRpcError::task_not_found(m),
         AgentError::NotImplemented(m) => distri_a2a::JsonRpcError::unsupported_operation(m),
         other => distri_a2a::JsonRpcError::internal(other.to_string()),
+    }
+}
+
+/// Set `metadata["distri/created_at"]` on a message from a stored time
+/// (ms since the epoch; G1).
+pub fn stamp_message(message: &mut Message, created_at_ms: i64) {
+    if let Some(at) = chrono::DateTime::from_timestamp_millis(created_at_ms) {
+        distri_types::a2a_extensions::stamp_created_at(&mut message.metadata, at);
     }
 }
 
