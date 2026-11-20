@@ -284,7 +284,31 @@ impl A2AService {
     /// `message/send` and `message/stream` are always behaviorally consistent.
     /// Awaits the terminal broadcaster event, then fetches the finalized Task.
     pub async fn send_message(&self, input: ServiceRequest) -> Result<Task, AgentError> {
+        // `returnImmediately: true` (or `blocking: false`): answer with the
+        // task as soon as it exists; the run goes on in the background.
+        let configuration = input.req.params.get("configuration");
+        let flag = |k: &str| {
+            configuration
+                .and_then(|c| c.get(k))
+                .and_then(|v| v.as_bool())
+        };
+        let return_immediately =
+            flag("returnImmediately") == Some(true) || flag("blocking") == Some(false);
         let session = self.initialize_task(input).await?;
+        if return_immediately {
+            let mut task: Task = match session.task_store.get_task(&session.task_id).await {
+                Ok(Some(t)) => t.into(),
+                _ => Task {
+                    id: session.task_id.clone(),
+                    context_id: session.thread_id.clone(),
+                    ..Default::default()
+                },
+            };
+            if task.status.timestamp.is_none() {
+                task.status.timestamp = Some(chrono::Utc::now());
+            }
+            return Ok(task);
+        }
         let StreamingSession {
             task_id,
             thread_id,

@@ -1622,3 +1622,38 @@ async fn legacy_method_names_get_0x_shapes() {
     assert_eq!(fin["metadata"]["type"], "run_finished");
     assert_eq!(frames.last().unwrap()["kind"], "message");
 }
+
+#[tokio::test]
+async fn send_message_return_immediately_does_not_wait() {
+    let h = harness(
+        ScriptedLlm::new(vec![call("c1", "hang", json!({}))]),
+        Opts::default(),
+    )
+    .await;
+    let mut req = request_v1(
+        "SendMessage",
+        &h.thread_id,
+        json!([{ "text": "go" }]),
+        &[],
+        json!({}),
+    );
+    req.params["configuration"] = json!({ "returnImmediately": true });
+    let resp = tokio::time::timeout(
+        Duration::from_secs(5),
+        h.service.handle(service_request(&h, req)),
+    )
+    .await
+    .expect("returns without waiting for the (hanging) run");
+    let resp = match resp {
+        Either::Right(r) => serde_json::to_value(r).unwrap(),
+        Either::Left(_) => panic!("JSON"),
+    };
+    let state = resp["result"]["task"]["status"]["state"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        state == "TASK_STATE_SUBMITTED" || state == "TASK_STATE_WORKING",
+        "{resp}"
+    );
+}
