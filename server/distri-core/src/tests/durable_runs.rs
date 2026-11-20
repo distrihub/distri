@@ -2122,3 +2122,75 @@ async fn g2_expired_answer_is_refused() {
     );
     assert_eq!(h.llm.calls(), 2, "the late answer started nothing");
 }
+
+/// The official-client case: a plain A2A client (no client-tools, no tools
+/// of its own) talks to an agent that declares the external tool `pick`.
+/// The call parks the task, listed in the input-required message, and a
+/// text message on the task answers it.
+async fn plain_client_answers_a_declared_client_tool(durable: bool) {
+    let h = harness(
+        ScriptedLlm::new(vec![
+            call("call_pick", "pick", json!({ "q": "colour" })),
+            final_answer("teal it is"),
+        ]),
+        Opts {
+            durable,
+            ..Default::default()
+        },
+    )
+    .await;
+    let md = "---\nname = \"plain_agent\"\ndescription = \"declares pick\"\nmax_iterations = 5\ntool_format = \"provider\"\n\
+              [model_settings]\nmodel = \"gpt-4.1-mini\"\n[tools]\nexternal = [\"pick\"]\n---\nAsk.\n";
+    let def = parse_agent_markdown_content(md).await.unwrap();
+    h.orch
+        .stores
+        .agent_store
+        .register(AgentConfig::StandardAgent(def))
+        .await
+        .unwrap();
+    let plain = |method: &str, task: Option<&str>, text: &str| {
+        let mut message = json!({
+            "messageId": uuid::Uuid::new_v4().to_string(),
+            "role": "ROLE_USER",
+            "parts": [{ "text": text }],
+        });
+        if let Some(t) = task {
+            message["taskId"] = json!(t);
+        }
+        let req: JsonRpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0", "id": "1", "method": method, "params": { "message": message }
+        }))
+        .unwrap();
+        let mut sr = service_request(&h, req);
+        sr.agent_id = "plain_agent".into();
+        sr
+    };
+    let resp = rpc(&h, plain("SendMessage", None, "pick a colour")).await;
+    let task = &resp["result"]["task"];
+    assert_eq!(
+        task["status"]["state"], "TASK_STATE_INPUT_REQUIRED",
+        "{resp}"
+    );
+    let calls = tool_call_parts(&task["status"]["message"]);
+    assert_eq!(calls[0]["tool_name"], "pick", "{resp}");
+    let task_id = task["id"].as_str().unwrap().to_string();
+    let resp = rpc(&h, plain("SendMessage", Some(&task_id), "teal")).await;
+    assert_eq!(
+        resp["result"]["task"]["status"]["state"], "TASK_STATE_COMPLETED",
+        "{resp}"
+    );
+    assert_eq!(
+        resp["result"]["task"]["status"]["message"]["parts"][0]["text"],
+        "teal it is"
+    );
+}
+
+#[tokio::test]
+async fn g2_plain_client_answers_a_declared_client_tool_durable() {
+    plain_client_answers_a_declared_client_tool(true).await;
+}
+
+#[tokio::test]
+async fn g2_plain_client_answers_a_declared_client_tool_non_durable() {
+    plain_client_answers_a_declared_client_tool(false).await;
+}

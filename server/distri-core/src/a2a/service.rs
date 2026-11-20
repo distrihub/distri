@@ -701,6 +701,9 @@ impl A2AService {
             }
         };
         executor_context.a2a_extensions = extensions.clone();
+        if !extensions.is_active(DistriExtension::ClientTools) {
+            self.add_declared_client_tools(&executor_context).await;
+        }
         // Step 1b: the agent's environment decides the runtime; the caller's
         // claim is only checked. Then let the host see (and maybe refuse) it.
         self.apply_agent_environment(&mut executor_context, caller.as_ref())
@@ -1343,6 +1346,51 @@ impl A2AService {
     }
 
     // ── helpers ────────────────────────────────────────────────────────
+
+    /// A plain A2A client (no `client-tools`, no tools of its own) still
+    /// meets the agent's named external tools: each is a client tool with an
+    /// open input. A call parks the task in `input-required`, listed in the
+    /// status message, and the client answers it with a message on the task
+    /// (G2). Clients that run tools (`client-tools`) ship their own.
+    async fn add_declared_client_tools(&self, executor_context: &ExecutorContext) {
+        let Some(tools) = &executor_context.dynamic_tools else {
+            return;
+        };
+        if !tools.read().await.is_empty() {
+            return;
+        }
+        let Some(distri_types::configuration::AgentConfig::StandardAgent(def)) = self
+            .orchestrator
+            .get_agent(&executor_context.agent_id)
+            .await
+        else {
+            return;
+        };
+        let names: Vec<String> = def
+            .tools
+            .as_ref()
+            .and_then(|t| t.external.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|n| n != "*" && !n.trim().is_empty())
+            .collect();
+        if names.is_empty() {
+            return;
+        }
+        let mut tools = tools.write().await;
+        for name in names {
+            tools.push(Arc::new(distri_types::ExternalTool {
+                description: format!(
+                    "`{name}`: a tool the client answers. The run waits (input-required) \
+                     until the client replies on this task."
+                ),
+                name,
+                parameters: serde_json::json!({ "type": "object" }),
+                is_final: false,
+                prompt: None,
+            }) as Arc<dyn crate::tools::Tool>);
+        }
+    }
 
     /// Resolve the request's runtime from the agent's environment and run
     /// the orchestrator's request observer, if any. Workflow agents have no
