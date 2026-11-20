@@ -1221,8 +1221,8 @@ async fn s29_loaded_deferred_tool_survives_the_park() {
     );
 }
 
-/// Durable off: the agent card says nothing; durable on: `durable_runs: true`
-/// at the top level.
+/// Durable off: the agent card says nothing; durable on: the card lists the
+/// durable-runs A2A extension in `capabilities.extensions` (no custom field).
 #[tokio::test]
 async fn agent_card_advertises_durable_runs() {
     let on = harness(ScriptedLlm::new(vec![]), Opts::default()).await;
@@ -1231,10 +1231,22 @@ async fn agent_card_advertises_durable_runs() {
         .agent_def_to_card(AGENT.into(), None)
         .await
         .unwrap();
+    assert!(distri_types::card_supports_durable_runs(&card));
+    let v = serde_json::to_value(&card).unwrap();
+    assert!(v.get("durable_runs").is_none());
+    let ext = v["capabilities"]["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["uri"] == json!(distri_types::DURABLE_RUNS_EXTENSION_URI))
+        .cloned()
+        .expect("durable-runs extension");
+    assert_eq!(ext["required"], json!(false));
     assert_eq!(
-        serde_json::to_value(&card).unwrap()["durable_runs"],
-        json!(true)
+        ext["params"]["pending_calls"],
+        json!("/v1/tasks/{task_id}/pending-calls")
     );
+    assert_eq!(ext["params"]["events"], json!(["run_parked"]));
     let off = harness(
         ScriptedLlm::new(vec![]),
         Opts {
@@ -1248,6 +1260,7 @@ async fn agent_card_advertises_durable_runs() {
         .agent_def_to_card(AGENT.into(), None)
         .await
         .unwrap();
+    assert!(!distri_types::card_supports_durable_runs(&card));
     assert!(serde_json::to_value(&card)
         .unwrap()
         .get("durable_runs")

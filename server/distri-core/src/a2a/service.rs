@@ -359,7 +359,10 @@ impl A2AService {
         // itself never exposes the prompt or execution config.
         let server_config = server_config.unwrap_or_default();
         let mut card = agent_config.to_card(&server_config);
-        card.durable_runs = self.orchestrator.durable_runs_for_caller().await;
+        distri_types::set_durable_runs_extension(
+            &mut card,
+            self.orchestrator.durable_runs_for_caller().await,
+        );
         Ok(card)
     }
 

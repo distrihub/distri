@@ -214,7 +214,6 @@ impl AgentConfig {
             skills,
             security_schemes: server_config.security_schemes.clone(),
             security: server_config.security.clone(),
-            durable_runs: false,
         }
     }
 }
