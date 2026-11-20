@@ -191,6 +191,9 @@ pub struct ExecutorContext {
     pub a2a_extensions: distri_types::a2a_extensions::ActiveExtensions,
     /// Resolved agent version (provenance). Recorded on the agent span.
     pub agent_version: Option<String>,
+    /// The saved version this run is pinned to (`name@N`); `None` runs the
+    /// latest. Not inherited by sub-agents (they name their own reference).
+    pub agent_version_no: Option<u32>,
     /// Who sent the request that started this run. Inherited by sub-agents
     /// and copied onto every [`distri_types::LlmCallUsage`] for attribution.
     pub caller: Option<distri_types::RequestCaller>,
@@ -295,6 +298,7 @@ impl Default for ExecutorContext {
             tags: HashMap::new(),
             a2a_extensions: Default::default(),
             agent_version: None,
+            agent_version_no: None,
             caller: None,
             trace_context: None,
             span_name: None,
@@ -1365,6 +1369,7 @@ impl ExecutorContext {
             tags: self.tags.clone(),
             a2a_extensions: self.a2a_extensions.clone(),
             agent_version: self.agent_version.clone(),
+            agent_version_no: self.agent_version_no,
             caller: self.caller.clone(),
             trace_context: self.trace_context.clone(),
             span_name: self.span_name.clone(),

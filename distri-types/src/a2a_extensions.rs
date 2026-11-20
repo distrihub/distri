@@ -635,7 +635,10 @@ mod tests {
             card.supported_interfaces[0].url,
             "https://api.example/v1/agents/pkg/helper@3"
         );
-        assert_eq!(AgentDescriptor::from_card(&card).unwrap().version_no, Some(3));
+        assert_eq!(
+            AgentDescriptor::from_card(&card).unwrap().version_no,
+            Some(3)
+        );
         // Pinning again replaces the pin.
         pin_card(&mut card, 4);
         assert_eq!(

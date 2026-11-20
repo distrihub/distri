@@ -195,6 +195,7 @@ impl AgentHooks for OtelHooks {
             });
         // Provenance: agent version.
         attrs.agent_version = context.agent_version.clone();
+        attrs.agent_version_no = context.agent_version_no;
         // Tags: serialize the map to a JSON object string (only when non-empty).
         if !context.tags.is_empty() {
             if let Ok(s) = serde_json::to_string(&context.tags) {

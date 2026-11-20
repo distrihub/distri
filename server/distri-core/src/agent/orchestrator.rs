@@ -1379,11 +1379,10 @@ impl AgentOrchestrator {
         context: Arc<ExecutorContext>,
         definition_overrides: Option<DefinitionOverrides>,
     ) -> Result<InvokeResult, AgentError> {
-        // Get agent definition and create agent instance
+        // Get agent definition (at the run's pinned version) and create agent instance
         let mut agent_config = self
-            .get_agent(agent_id)
-            .await
-            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
+            .resolve_agent(&Self::run_ref(agent_id, &context)?)
+            .await?;
 
         Self::apply_agent_overrides(
             &mut agent_config,
@@ -1426,11 +1425,10 @@ impl AgentOrchestrator {
         definition_overrides: Option<DefinitionOverrides>,
     ) -> Result<InvokeResult, AgentError> {
         tracing::debug!("call_agent_stream called with agent_id: {}", agent_id);
-        // Get agent config and create agent instance
+        // Get agent config (at the run's pinned version) and create agent instance
         let mut agent_config = self
-            .get_agent(agent_id)
-            .await
-            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
+            .resolve_agent(&Self::run_ref(agent_id, &context)?)
+            .await?;
 
         Self::apply_agent_overrides(
             &mut agent_config,
@@ -2164,8 +2162,112 @@ impl AgentOrchestrator {
         }
     }
 
-    /// Search for agent in DAP registry
+    /// The one place an agent is loaded for a run (spec agent-versions V2):
+    /// `name` (or `name@latest`) is the current definition, `name@N` the
+    /// saved version `N` from [`distri_types::stores::AgentStore::get_version`].
+    /// An unknown agent is `NotFound`; an unknown version (or any `@N` on a
+    /// host without history) is `AgentVersionNotFound`.
+    pub async fn resolve_agent(
+        &self,
+        agent: &distri_types::AgentRef,
+    ) -> Result<distri_types::configuration::AgentConfig, AgentError> {
+        let Some(version_no) = agent.version_no() else {
+            return self
+                .lookup_latest_agent(&agent.name)
+                .await
+                .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent.name)));
+        };
+        let store = &self.stores.agent_store;
+        if let Some(config) = store.get_version(&agent.name, version_no).await {
+            return Ok(config);
+        }
+        // An id or alias of the agent: its versions are kept under its name.
+        if let Some(latest) = self.lookup_latest_agent(&agent.name).await {
+            let name = latest.get_name();
+            if name != agent.name {
+                if let Some(config) = store.get_version(name, version_no).await {
+                    return Ok(config);
+                }
+            }
+        }
+        Err(AgentError::AgentVersionNotFound {
+            agent: agent.name.clone(),
+            version: version_no,
+        })
+    }
+
+    /// Parse a run's agent reference (`name` or `name@N`). A pinned version
+    /// must exist: `AgentVersionNotFound` otherwise, before anything runs.
+    pub async fn parse_run_ref(
+        &self,
+        agent_id: &str,
+    ) -> Result<distri_types::AgentRef, AgentError> {
+        let agent = distri_types::AgentRef::parse(agent_id)
+            .map_err(|e| AgentError::Validation(e.to_string()))?;
+        if agent.version_no().is_some() {
+            self.resolve_agent(&agent).await?;
+        }
+        Ok(agent)
+    }
+
+    /// The saved version a task's run is pinned to, from its stored run
+    /// inputs (durable runs); `None` when it runs the latest or has none.
+    pub async fn task_agent_version_no(&self, task_id: &str) -> Option<u32> {
+        let durable = self.durable.as_ref()?;
+        durable
+            .run_queue
+            .get_inputs(task_id)
+            .await
+            .ok()
+            .flatten()?
+            .agent_version_no
+    }
+
+    /// The agent a context runs: its `agent_id` at its pinned version.
+    pub async fn context_agent(
+        &self,
+        context: &ExecutorContext,
+    ) -> Option<distri_types::configuration::AgentConfig> {
+        self.resolve_agent(&distri_types::AgentRef::new(
+            context.agent_id.clone(),
+            context.agent_version_no,
+        ))
+        .await
+        .ok()
+    }
+
+    /// The reference a run of `agent_id` in `context` loads: `agent_id` as
+    /// written (`name` or `name@N`); a bare name that is the context's own
+    /// agent takes the context's pin.
+    pub(crate) fn run_ref(
+        agent_id: &str,
+        context: &ExecutorContext,
+    ) -> Result<distri_types::AgentRef, AgentError> {
+        let agent = distri_types::AgentRef::parse(agent_id)
+            .map_err(|e| AgentError::Validation(e.to_string()))?;
+        if agent.version_no().is_none() && agent.name == context.agent_id {
+            return Ok(distri_types::AgentRef::new(
+                agent.name,
+                context.agent_version_no,
+            ));
+        }
+        Ok(agent)
+    }
+
+    /// An agent by name, id or reference (`name@N` loads that saved
+    /// version; see [`Self::resolve_agent`]).
     pub async fn get_agent(&self, name: &str) -> Option<distri_types::configuration::AgentConfig> {
+        match distri_types::AgentRef::parse(name) {
+            Ok(agent) => self.resolve_agent(&agent).await.ok(),
+            Err(_) => self.lookup_latest_agent(name).await,
+        }
+    }
+
+    /// The current definition of an agent, by exact name or id.
+    async fn lookup_latest_agent(
+        &self,
+        name: &str,
+    ) -> Option<distri_types::configuration::AgentConfig> {
         // Then try exact match in store (includes full package/agent names)
         if let Some(agent) = self.stores.agent_store.get(name).await {
             // Note: todos support is now handled via TodosDelegateTool in get_agent_tools

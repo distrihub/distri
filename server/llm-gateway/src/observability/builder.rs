@@ -134,6 +134,7 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
         // Declared empty so OtelHooks::before_execute can record them later
         // (provenance + tags + remote-parent propagation debug attrs).
         "distri.agent.version" = tracing::field::Empty,
+        "distri.agent.version_no" = tracing::field::Empty,
         "distri.tags" = tracing::field::Empty,
         "distri.parent_trace_id" = tracing::field::Empty,
         "distri.parent_span_id" = tracing::field::Empty,
@@ -145,6 +146,9 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
     }
     if let Some(v) = &attrs.agent_version {
         span.record("distri.agent.version", v.as_str());
+    }
+    if let Some(v) = attrs.agent_version_no {
+        span.record("distri.agent.version_no", v as i64);
     }
     if let Some(v) = &attrs.tags_json {
         span.record("distri.tags", v.as_str());

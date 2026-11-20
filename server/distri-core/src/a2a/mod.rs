@@ -119,6 +119,13 @@ pub fn agent_error_to_jsonrpc(e: AgentError) -> distri_a2a::JsonRpcError {
     match e {
         AgentError::Validation(m) => distri_a2a::JsonRpcError::invalid_params(m),
         AgentError::NotFound(m) => distri_a2a::JsonRpcError::task_not_found(m),
+        // `name@N` with no such version (spec agent-versions V1): -32001
+        // with the agent and version the caller named.
+        AgentError::AgentVersionNotFound { agent, version } => {
+            let mut e = distri_a2a::JsonRpcError::task_not_found("agent version not found");
+            e.data = Some(serde_json::json!({ "agent": agent, "version": version }));
+            e
+        }
         AgentError::NotImplemented(m) => distri_a2a::JsonRpcError::unsupported_operation(m),
         other => distri_a2a::JsonRpcError::internal(other.to_string()),
     }

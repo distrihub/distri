@@ -144,7 +144,10 @@ mod tests {
     #[test]
     fn rejects_malformed_references() {
         for input in ["a@", "a@x", "a@0", "@3", "", "a@-1", "a@+2", "a@1@2"] {
-            assert!(AgentRef::parse(input).is_err(), "{input} should be rejected");
+            assert!(
+                AgentRef::parse(input).is_err(),
+                "{input} should be rejected"
+            );
         }
     }
 

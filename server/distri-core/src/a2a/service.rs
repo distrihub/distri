@@ -442,6 +442,11 @@ impl A2AService {
                 m
             });
         }
+        let version_no = match executor_context.agent_version_no {
+            Some(n) => Some(n),
+            None => orchestrator.task_agent_version_no(&task_id).await,
+        };
+        stamp_agent_version_no(&mut updated_task, version_no);
 
         Ok(updated_task)
     }
@@ -503,6 +508,10 @@ impl A2AService {
             let skip = messages.len().saturating_sub(n as usize);
             a2a_task.history = messages.into_iter().skip(skip).collect();
         }
+        stamp_agent_version_no(
+            &mut a2a_task,
+            self.orchestrator.task_agent_version_no(&task.id).await,
+        );
         if a2a_task.status.state == distri_a2a::TaskState::InputRequired {
             let waiting = self.orchestrator.waiting_calls(&task.id).await;
             if !waiting.is_empty() {
@@ -613,27 +622,32 @@ impl A2AService {
         Ok(task.into())
     }
 
+    /// The card of `agent_id` — `name` or `name@N` (spec agent-versions V1:
+    /// a pinned card's endpoint is `…/agents/name@N` and its `agent`
+    /// extension reports `version_no = N`).
     pub async fn agent_def_to_card(
         &self,
         agent_id: String,
         server_config: Option<distri_types::configuration::ServerConfig>,
     ) -> Result<AgentCard, A2AError> {
-        let agent_config = self
-            .orchestrator
-            .stores
-            .agent_store
-            .get(&agent_id)
-            .await
-            .ok_or(AgentError::NotFound(format!(
-                "Agent not found: {}",
-                agent_id
-            )))?;
+        let agent = distri_types::AgentRef::parse(&agent_id)
+            .map_err(|e| AgentError::Validation(e.to_string()))?;
+        let agent_config = match self.orchestrator.resolve_agent(&agent).await {
+            Ok(config) => config,
+            Err(AgentError::NotFound(_)) => {
+                return Err(AgentError::NotFound(format!("Agent not found: {}", agent.name)).into())
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         // Card-only projection — see `AgentConfig::to_card`. The full definition
         // is loaded here only because the store has no card-only read; the card
         // itself never exposes the prompt or execution config.
         let server_config = server_config.unwrap_or_default();
         let mut card = agent_config.to_card(&server_config);
+        if let Some(version_no) = agent.version_no() {
+            distri_types::a2a_extensions::pin_card(&mut card, version_no);
+        }
         distri_types::a2a_extensions::set_card_extensions(
             &mut card,
             self.orchestrator.durable_runs_for_caller().await,
@@ -692,11 +706,23 @@ impl A2AService {
             .as_ref()
             .map(|d| d.pending_calls.clone());
 
+        // Step 0: `name@N` runs saved version N (an unknown one is refused
+        // here, before anything is stored). The task keeps the bare name;
+        // the pin rides on the context (and from there RunInputs and the
+        // agent span).
+        let agent = self.orchestrator.parse_run_ref(&agent_id).await?;
+        let agent_id = agent.name.clone();
+
         // Step 1: Build or accept executor context, then apply model settings.
         let mut executor_context = match executor_context {
-            Some(ctx) => ctx,
+            Some(mut ctx) => {
+                if agent.version_no().is_some() {
+                    ctx.agent_version_no = agent.version_no();
+                }
+                ctx
+            }
             None => {
-                self.build_executor_context(&req, agent_id.clone(), user_id, workspace_id, verbose)
+                self.build_executor_context(&req, agent.to_string(), user_id, workspace_id, verbose)
                     .await?
             }
         };
@@ -737,7 +763,7 @@ impl A2AService {
         // Step 2b: the model policy sees the agent's final model (its own pin
         // merged over the workspace default) before secrets are checked, so a
         // disallowed model is refused as such rather than as a missing key.
-        if let Some(mut agent_config) = self.orchestrator.get_agent(&agent_id).await {
+        if let Some(mut agent_config) = self.orchestrator.context_agent(&executor_context).await {
             crate::agent::AgentOrchestrator::apply_agent_overrides(
                 &mut agent_config,
                 None,
@@ -751,7 +777,12 @@ impl A2AService {
         // Step 3: Validate provider secrets BEFORE anything else so errors
         // run in the caller's task-local context (user/workspace — needed
         // for TenantSecretStore).
-        validate_provider_secrets(&self.orchestrator, &agent_id).await?;
+        validate_provider_secrets(
+            &self.orchestrator,
+            &distri_types::AgentRef::new(agent_id.clone(), executor_context.agent_version_no)
+                .to_string(),
+        )
+        .await?;
 
         // Step 4: Init thread + build the core Message.
         let (thread_id, message) = init_thread_get_message(
@@ -1070,6 +1101,8 @@ impl A2AService {
                     t.status = distri_a2a::TaskStatus::new(distri_a2a::TaskState::Submitted);
                     t
                 };
+                let mut task = task;
+                stamp_agent_version_no(&mut task, executor_context.agent_version_no);
                 yield Ok::<_, std::convert::Infallible>(frame(&StreamResponse::Task(task)));
             }
             futures_util::pin_mut!(event_stream);
@@ -1359,10 +1392,8 @@ impl A2AService {
         if !tools.read().await.is_empty() {
             return;
         }
-        let Some(distri_types::configuration::AgentConfig::StandardAgent(def)) = self
-            .orchestrator
-            .get_agent(&executor_context.agent_id)
-            .await
+        let Some(distri_types::configuration::AgentConfig::StandardAgent(def)) =
+            self.orchestrator.context_agent(executor_context).await
         else {
             return;
         };
@@ -1401,10 +1432,8 @@ impl A2AService {
         caller: Option<&distri_types::RequestCaller>,
     ) -> Result<(), AgentError> {
         executor_context.caller = caller.cloned();
-        let Some(distri_types::configuration::AgentConfig::StandardAgent(def)) = self
-            .orchestrator
-            .get_agent(&executor_context.agent_id)
-            .await
+        let Some(distri_types::configuration::AgentConfig::StandardAgent(def)) =
+            self.orchestrator.context_agent(executor_context).await
         else {
             return Ok(());
         };
@@ -1544,18 +1573,24 @@ impl A2AService {
             Arc::new(RwLock::new(state))
         };
 
+        // `agent_id` may be a reference (`name@N`): the context names the
+        // bare agent and carries the pin.
+        let agent = self.orchestrator.parse_run_ref(&agent_id).await?;
+        let agent_version_no = agent.version_no();
         // Resolve agent_id (may be UUID from cloud) to canonical agent name.
         // This ensures threads, events, and tool lookups all use the agent name.
-        let agent_id = self.orchestrator.resolve_agent_name(&agent_id).await;
+        let agent_id = self.orchestrator.resolve_agent_name(&agent.name).await;
 
         // Provenance: resolve the agent version from the agent config (falls
         // back to default_agent_version()). Recorded on the agent span.
         let agent_version = self
             .orchestrator
-            .stores
-            .agent_store
-            .get(&agent_id)
+            .resolve_agent(&distri_types::AgentRef::new(
+                agent_id.clone(),
+                agent_version_no,
+            ))
             .await
+            .ok()
             .and_then(|cfg| cfg.version())
             .or_else(distri_types::default_agent_version);
 
@@ -1585,6 +1620,7 @@ impl A2AService {
             is_sandbox: metadata.is_sandbox,
             tags,
             agent_version,
+            agent_version_no,
             trace_context,
             load_skills: metadata.load_skills.unwrap_or_default(),
             ..Default::default()
@@ -1653,6 +1689,17 @@ async fn remember_waiting_calls(
     if listed < pending.len() {
         let calls = orchestrator.waiting_calls(task_id).await;
         mapper.remember_calls(calls.iter().map(|c| c.tool_call()));
+    }
+}
+
+/// A pinned run's task names its version in `metadata["distri/agent_version_no"]`
+/// (spec agent-versions V3). A run of the latest has no such key.
+pub fn stamp_agent_version_no(task: &mut Task, version_no: Option<u32>) {
+    if let Some(n) = version_no {
+        task.metadata.get_or_insert_with(Default::default).insert(
+            distri_types::a2a_extensions::AGENT_VERSION_NO_KEY.into(),
+            serde_json::json!(n),
+        );
     }
 }
 
@@ -1759,10 +1806,16 @@ impl A2AService {
                 }
             }
         }
+        // The answer resumes the task at its own pinned version, whatever
+        // reference the answer arrived on (V3).
+        let agent_id = distri_types::AgentRef::parse(&input.agent_id)
+            .map(|r| r.name)
+            .unwrap_or_else(|_| input.agent_id.clone());
         let executor_context = ExecutorContext {
             task_id: task_id.clone(),
             thread_id: task.thread_id.clone(),
-            agent_id: input.agent_id.clone(),
+            agent_id,
+            agent_version_no: orch.task_agent_version_no(&task_id).await,
             user_id: input.user_id.clone(),
             workspace_id: input.workspace_id.clone(),
             ..Default::default()

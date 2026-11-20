@@ -126,7 +126,8 @@ pub async fn init_thread_get_message(
 /// Prepare ExecutorContext with metadata, browser session, definition overrides, etc.
 /// Returns `(ExecutorContext, definition_overrides)` or an error.
 pub async fn prepare_execution(
-    agent_id: &str,
+    // The agent comes from the context (its name at its pinned version).
+    _agent_id: &str,
     params: &MessageSendParams,
     executor: &Arc<AgentOrchestrator>,
     executor_context: &Arc<ExecutorContext>,
@@ -184,7 +185,7 @@ pub async fn prepare_execution(
     }
 
     // Determine if browser should be used
-    let mut should_stream_browser = match executor.get_agent(agent_id).await {
+    let mut should_stream_browser = match executor.context_agent(&exec_ctx).await {
         Some(AgentConfig::StandardAgent(def)) => def.should_use_browser(),
         _ => false,
     };

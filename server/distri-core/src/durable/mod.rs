@@ -410,6 +410,7 @@ pub async fn run_inputs_from_context(
         runtime_mode: ctx.runtime_mode.clone(),
         model_settings: ctx.default_model_settings.clone(),
         agent_version: ctx.agent_version.clone(),
+        agent_version_no: ctx.agent_version_no,
         reply_to: ctx
             .channel_id
             .clone()
@@ -477,6 +478,7 @@ pub fn context_from_inputs(
         is_sandbox: inputs.is_sandbox,
         tags: inputs.tags.clone(),
         agent_version: inputs.agent_version.clone(),
+        agent_version_no: inputs.agent_version_no,
         caller: p.caller.clone(),
         trace_context: inputs.trace_context.clone(),
         ..Default::default()
