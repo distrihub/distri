@@ -1,6 +1,6 @@
 use crate::{Distri, DistriConfig, LlmExecuteResponse, ProviderType, TtsSpeechRequest};
 use actix_web::{App, HttpResponse, HttpServer, dev::ServerHandle, web};
-use distri_a2a::{EventKind, Message as A2aMessage, MessageKind, Part as A2aPart, TextPart};
+use distri_a2a::{Message as A2aMessage, Part as A2aPart, SendMessageResponse, StreamResponse};
 use distri_types::{
     LLmContext, LlmDefinition, Message, MessageRole, ModelSettings, Part, ToolCall,
 };
@@ -246,10 +246,9 @@ async fn agent_handler(body: web::Bytes) -> HttpResponse {
 
     // Build a minimal A2A reply message.
     let reply = A2aMessage {
-        kind: EventKind::Message,
         message_id: "mid".into(),
         role: distri_a2a::Role::Agent,
-        parts: vec![A2aPart::Text(TextPart { text: "hi".into() })],
+        parts: vec![A2aPart::text("hi")],
         context_id: None,
         task_id: None,
         reference_task_ids: vec![],
@@ -257,11 +256,11 @@ async fn agent_handler(body: web::Bytes) -> HttpResponse {
         metadata: None,
     };
 
-    if method == "message/stream" {
-        // Streaming frames are single `MessageKind` values.
+    if method == distri_a2a::methods::SEND_STREAMING_MESSAGE {
+        // Streaming frames are single `StreamResponse` values.
         let rpc = serde_json::json!({
             "jsonrpc": "2.0",
-            "result": MessageKind::Message(reply),
+            "result": StreamResponse::Message(reply),
             "id": "1"
         });
         let body = format!("data: {}\n\n", serde_json::to_string(&rpc).unwrap());
@@ -273,7 +272,6 @@ async fn agent_handler(body: web::Bytes) -> HttpResponse {
     // Blocking `message/send` returns a `Task` envelope; the agent's reply
     // rides on `status.message` — the exact shape `A2AService` emits.
     let task = distri_a2a::Task {
-        kind: EventKind::Task,
         id: "task-1".into(),
         context_id: "thread-1".into(),
         status: distri_a2a::TaskStatus {
@@ -285,7 +283,7 @@ async fn agent_handler(body: web::Bytes) -> HttpResponse {
     };
     let rpc = serde_json::json!({
         "jsonrpc": "2.0",
-        "result": task,
+        "result": SendMessageResponse::Task(task),
         "id": "1"
     });
     HttpResponse::Ok().json(rpc)

@@ -1,13 +1,18 @@
-//! Typed A2A JSON-RPC calls on [`Distri`]: the agent card, `message/send`,
-//! `message/stream`, `tasks/get|cancel|resubscribe`,
-//! `tasks/pushNotificationConfig/*`, and the durable-runs extension's
-//! pending calls. Used by `distri a2a …` in distri-cli.
+//! Typed A2A 1.0 JSON-RPC calls on [`Distri`]: the agent card,
+//! `SendMessage`, `SendStreamingMessage`, `GetTask` / `ListTasks` /
+//! `CancelTask` / `SubscribeToTask`, the push-config methods, and the
+//! durable-runs extension's pending calls. Used by `distri a2a …`.
+//!
+//! Every call may activate A2A extensions (`A2A-Extensions` request header);
+//! the server echoes the ones it activated in the same response header,
+//! returned alongside the result.
 //!
 //! Streaming calls hand the caller each raw JSON-RPC frame (a
 //! `serde_json::Value`) so a CLI can print the wire as-is or summarise it.
 
 use distri_a2a::{
-    AgentCard, JsonRpcRequest, MessageSendParams, PushNotificationConfig, SendMessageResult, Task,
+    AgentCard, JsonRpcRequest, ListTasksResponse, PushNotificationConfig, SendMessageRequest,
+    SendMessageResponse, Task, methods,
 };
 use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
@@ -29,21 +34,25 @@ impl std::fmt::Display for A2aRpcError {
     }
 }
 
-/// A push notification config bound to a task
-/// (`TaskPushNotificationConfig` in the A2A spec).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A push notification config bound to a task (`TaskPushNotificationConfig`).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskPushNotificationConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default)]
     pub task_id: String,
+    #[serde(default)]
     pub push_notification_config: PushConfig,
 }
 
-/// `PushNotificationConfig` with `Clone` (the distri-a2a one is not).
+/// `PushNotificationConfig` (url, id, token).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PushConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(default)]
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
@@ -56,6 +65,25 @@ impl From<PushNotificationConfig> for PushConfig {
             url: c.url,
             token: c.token,
         }
+    }
+}
+
+/// The extensions the server activated (`A2A-Extensions` response header).
+pub fn activated_extensions(headers: &reqwest::header::HeaderMap) -> Vec<String> {
+    distri_a2a::parse_extensions_header(
+        headers
+            .get_all(distri_a2a::EXTENSIONS_HEADER)
+            .iter()
+            .filter_map(|v| v.to_str().ok()),
+    )
+}
+
+fn with_extensions(req: reqwest::RequestBuilder, extensions: &[String]) -> reqwest::RequestBuilder {
+    let req = req.header(distri_a2a::VERSION_HEADER, distri_a2a::A2A_VERSION);
+    if extensions.is_empty() {
+        req
+    } else {
+        req.header(distri_a2a::EXTENSIONS_HEADER, extensions.join(", "))
     }
 }
 
@@ -90,10 +118,10 @@ impl Distri {
         format!("{}/agents/{}", self.base_url.trim_end_matches('/'), agent)
     }
 
-    /// The agent card as served (`GET /agents/{agent}/.well-known/agent.json`),
+    /// The agent card as served (`GET /agents/{agent}/.well-known/agent-card.json`),
     /// unparsed. `None` on 404.
     pub async fn get_agent_card_json(&self, agent: &str) -> Result<Option<Value>, ClientError> {
-        let url = format!("{}/.well-known/agent.json", self.agent_url(agent));
+        let url = format!("{}/.well-known/agent-card.json", self.agent_url(agent));
         let resp = self.http.get(url).send().await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -123,19 +151,32 @@ impl Distri {
         method: &str,
         params: Value,
     ) -> Result<Value, ClientError> {
+        self.a2a_call_json_ext(agent, method, params, &[])
+            .await
+            .map(|(v, _)| v)
+    }
+
+    /// One A2A JSON-RPC call activating `extensions`; returns the raw
+    /// `result` and the extensions the server activated.
+    pub async fn a2a_call_json_ext(
+        &self,
+        agent: &str,
+        method: &str,
+        params: Value,
+        extensions: &[String],
+    ) -> Result<(Value, Vec<String>), ClientError> {
         let rpc = a2a_request(method, params);
-        let resp = self
-            .http
-            .post(self.agent_url(agent))
+        let resp = with_extensions(self.http.post(self.agent_url(agent)), extensions)
             .json(&rpc)
             .send()
             .await?;
         let status = resp.status();
+        let activated = activated_extensions(resp.headers());
         let text = resp.text().await.unwrap_or_default();
         let frame: Value = serde_json::from_str(&text).map_err(|_| {
             ClientError::InvalidResponse(format!("{method} failed (status {status}): {text}"))
         })?;
-        rpc_result(&frame)
+        Ok((rpc_result(&frame)?, activated))
     }
 
     /// One A2A JSON-RPC call (non-streaming), decoding `result` into `T`.
@@ -149,22 +190,39 @@ impl Distri {
         Ok(serde_json::from_value(v)?)
     }
 
-    /// One streaming A2A JSON-RPC call (`message/stream`, `tasks/resubscribe`):
-    /// `on_frame` gets every SSE `data:` frame as JSON, error frames included.
+    /// One streaming A2A JSON-RPC call (`SendStreamingMessage`,
+    /// `SubscribeToTask`): `on_frame` gets every SSE `data:` frame as JSON,
+    /// error frames included.
     pub async fn a2a_stream_json<F>(
         &self,
         agent: &str,
         method: &str,
         params: Value,
-        mut on_frame: F,
+        on_frame: F,
     ) -> Result<(), ClientError>
     where
         F: FnMut(Value),
     {
+        self.a2a_stream_json_ext(agent, method, params, &[], on_frame)
+            .await
+            .map(|_| ())
+    }
+
+    /// [`Self::a2a_stream_json`] activating `extensions`; returns the
+    /// extensions the server activated.
+    pub async fn a2a_stream_json_ext<F>(
+        &self,
+        agent: &str,
+        method: &str,
+        params: Value,
+        extensions: &[String],
+        mut on_frame: F,
+    ) -> Result<Vec<String>, ClientError>
+    where
+        F: FnMut(Value),
+    {
         let rpc = a2a_request(method, params);
-        let resp = self
-            .http
-            .post(self.agent_url(agent))
+        let resp = with_extensions(self.http.post(self.agent_url(agent)), extensions)
             .header("Accept", "text/event-stream")
             .json(&rpc)
             .send()
@@ -176,6 +234,7 @@ impl Distri {
                 "{method} failed (status {status}): {text}"
             )));
         }
+        let activated = activated_extensions(resp.headers());
         let mut stream = resp.bytes_stream();
         let mut buf = String::new();
         while let Some(chunk) = stream.next().await {
@@ -190,26 +249,26 @@ impl Distri {
         if let Some(frame) = sse_block_json(&buf) {
             on_frame(frame);
         }
-        Ok(())
+        Ok(activated)
     }
 
-    /// `agent/authenticatedExtendedCard`.
+    /// `GetExtendedAgentCard`.
     pub async fn get_authenticated_extended_card(&self, agent: &str) -> Result<Value, ClientError> {
-        self.a2a_call_json(agent, "agent/authenticatedExtendedCard", json!({}))
+        self.a2a_call_json(agent, methods::GET_EXTENDED_AGENT_CARD, json!({}))
             .await
     }
 
-    /// `message/send` (blocking unless `configuration.blocking` is false).
+    /// `SendMessage` (blocking unless `configuration.blocking` is false).
     pub async fn send_message(
         &self,
         agent: &str,
-        params: &MessageSendParams,
-    ) -> Result<SendMessageResult, ClientError> {
-        self.a2a_call(agent, "message/send", serde_json::to_value(params)?)
+        params: &SendMessageRequest,
+    ) -> Result<SendMessageResponse, ClientError> {
+        self.a2a_call(agent, methods::SEND_MESSAGE, serde_json::to_value(params)?)
             .await
     }
 
-    /// `tasks/get`, with an optional `historyLength`.
+    /// `GetTask`, with an optional `historyLength`.
     pub async fn get_task(
         &self,
         agent: &str,
@@ -218,61 +277,71 @@ impl Distri {
     ) -> Result<Task, ClientError> {
         self.a2a_call(
             agent,
-            "tasks/get",
+            methods::GET_TASK,
             task_query_params(task_id, history_length),
         )
         .await
     }
 
-    /// `tasks/pushNotificationConfig/set`.
+    /// `ListTasks`.
+    pub async fn list_tasks_a2a(
+        &self,
+        agent: &str,
+        params: &distri_a2a::ListTasksRequest,
+    ) -> Result<ListTasksResponse, ClientError> {
+        self.a2a_call(agent, methods::LIST_TASKS, serde_json::to_value(params)?)
+            .await
+    }
+
+    /// `CreateTaskPushNotificationConfig`.
     pub async fn set_task_push_config(
         &self,
         agent: &str,
         task_id: &str,
         config: PushConfig,
     ) -> Result<TaskPushNotificationConfig, ClientError> {
-        let params = TaskPushNotificationConfig {
-            task_id: task_id.to_string(),
-            push_notification_config: config,
-        };
-        self.a2a_call(
-            agent,
-            "tasks/pushNotificationConfig/set",
-            serde_json::to_value(params)?,
-        )
-        .await
+        let params = json!({
+            "taskId": task_id,
+            "configId": config.id,
+            "config": config,
+        });
+        self.a2a_call(agent, methods::CREATE_PUSH_CONFIG, params)
+            .await
     }
 
-    /// `tasks/pushNotificationConfig/get`.
+    /// `GetTaskPushNotificationConfig`.
     pub async fn get_task_push_config(
         &self,
         agent: &str,
         task_id: &str,
         config_id: Option<&str>,
     ) -> Result<TaskPushNotificationConfig, ClientError> {
-        let mut params = json!({ "id": task_id });
-        if let Some(c) = config_id {
-            params["pushNotificationConfigId"] = json!(c);
-        }
-        self.a2a_call(agent, "tasks/pushNotificationConfig/get", params)
-            .await
+        let params = json!({ "taskId": task_id, "id": config_id.unwrap_or_default() });
+        self.a2a_call(agent, methods::GET_PUSH_CONFIG, params).await
     }
 
-    /// `tasks/pushNotificationConfig/list`.
+    /// `ListTaskPushNotificationConfigs`.
     pub async fn list_task_push_configs(
         &self,
         agent: &str,
         task_id: &str,
     ) -> Result<Vec<TaskPushNotificationConfig>, ClientError> {
-        self.a2a_call(
-            agent,
-            "tasks/pushNotificationConfig/list",
-            json!({ "id": task_id }),
-        )
-        .await
+        #[derive(Deserialize)]
+        struct Configs {
+            #[serde(default)]
+            configs: Vec<TaskPushNotificationConfig>,
+        }
+        let r: Configs = self
+            .a2a_call(
+                agent,
+                methods::LIST_PUSH_CONFIGS,
+                json!({ "taskId": task_id }),
+            )
+            .await?;
+        Ok(r.configs)
     }
 
-    /// `tasks/pushNotificationConfig/delete`.
+    /// `DeleteTaskPushNotificationConfig`.
     pub async fn delete_task_push_config(
         &self,
         agent: &str,
@@ -281,8 +350,8 @@ impl Distri {
     ) -> Result<(), ClientError> {
         self.a2a_call_json(
             agent,
-            "tasks/pushNotificationConfig/delete",
-            json!({ "id": task_id, "pushNotificationConfigId": config_id }),
+            methods::DELETE_PUSH_CONFIG,
+            json!({ "taskId": task_id, "id": config_id }),
         )
         .await
         .map(|_| ())
@@ -309,8 +378,7 @@ impl Distri {
             .map(Some)
     }
 
-    /// Tasks via the REST list (`GET /tasks?thread_id&status&limit`); A2A has
-    /// no `tasks/list` on this server. `status` is distri's task status
+    /// Tasks via the REST list (`GET /tasks?thread_id&status&limit`). `status` is distri's task status
     /// (`pending`, `running`, `input_required`, `completed`, `failed`,
     /// `canceled`).
     pub async fn list_tasks_filtered(
@@ -349,7 +417,7 @@ impl Distri {
     }
 }
 
-/// `{ "id": task_id, "historyLength": n }` for `tasks/get` / `tasks/resubscribe`.
+/// `{ "id": task_id, "historyLength": n }` for `GetTask`.
 pub fn task_query_params(task_id: &str, history_length: Option<u32>) -> Value {
     let mut v = json!({ "id": task_id });
     if let Some(n) = history_length {

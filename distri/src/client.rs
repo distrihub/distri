@@ -2,8 +2,8 @@ use crate::client_stream::StreamItem;
 use crate::config::{BuildHttpClient, DistriConfig};
 use crate::{AgentStreamClient, ClientError, StreamError};
 use distri_a2a::{
-    EventKind, JsonRpcRequest, JsonRpcResponseFor, Message as A2aMessage, MessageKind,
-    MessageSendConfiguration, MessageSendParams, Role, SendMessageResult,
+    JsonRpcRequest, JsonRpcResponseFor, Message as A2aMessage, MessageSendConfiguration,
+    MessageSendParams, Role, SendMessageResponse, methods,
 };
 use distri_types::api::notes::{CreateNoteRequest, NoteRecord, UpdateNoteRequest};
 use distri_types::{
@@ -884,7 +884,7 @@ impl Distri {
         let rpc = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(uuid::Uuid::new_v4().to_string())),
-            method: "message/send".to_string(),
+            method: methods::SEND_MESSAGE.to_string(),
             params: serde_json::to_value(params)?,
         };
 
@@ -892,12 +892,17 @@ impl Distri {
         let resp = self
             .http
             .post(url)
+            .header(distri_a2a::VERSION_HEADER, distri_a2a::A2A_VERSION)
+            .header(
+                distri_a2a::EXTENSIONS_HEADER,
+                crate::client_stream::client_extensions_header(),
+            )
             .json(&rpc)
             .send()
             .await?
             .error_for_status()?;
 
-        let response: JsonRpcResponseFor<SendMessageResult> = resp.json().await?;
+        let response: JsonRpcResponseFor<SendMessageResponse> = resp.json().await?;
         parse_send_message_response(response)
     }
 
@@ -928,7 +933,7 @@ impl Distri {
         let rpc = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(uuid::Uuid::new_v4().to_string())),
-            method: "message/send".to_string(),
+            method: methods::SEND_MESSAGE.to_string(),
             params: serde_json::to_value(params)?,
         };
 
@@ -936,12 +941,17 @@ impl Distri {
         let resp = self
             .http
             .post(url)
+            .header(distri_a2a::VERSION_HEADER, distri_a2a::A2A_VERSION)
+            .header(
+                distri_a2a::EXTENSIONS_HEADER,
+                crate::client_stream::client_extensions_header(),
+            )
             .json(&rpc)
             .send()
             .await?
             .error_for_status()?;
 
-        let response: JsonRpcResponseFor<SendMessageResult> = resp.json().await?;
+        let response: JsonRpcResponseFor<SendMessageResponse> = resp.json().await?;
         parse_send_message_response(response)
     }
 
@@ -1512,7 +1522,6 @@ fn build_params(
         .collect::<Vec<_>>();
 
     let a2a_message = A2aMessage {
-        kind: EventKind::Message,
         message_id: last.id.clone(),
         role: to_a2a_role(&last.role),
         parts,
@@ -1520,15 +1529,20 @@ fn build_params(
         task_id: None,
         reference_task_ids: vec![],
         extensions: vec![],
-        metadata: serde_json::to_value(MessageMetadata::from(last.clone())).ok(),
+        metadata: match serde_json::to_value(MessageMetadata::from(last.clone())) {
+            Ok(serde_json::Value::Object(m)) => Some(m),
+            Ok(other) => Some(serde_json::Map::from_iter([(
+                "message_type".to_string(),
+                other,
+            )])),
+            Err(_) => None,
+        },
     };
 
     let configuration = if blocking {
         Some(MessageSendConfiguration {
-            accepted_output_modes: vec![],
-            blocking: true,
-            history_length: None,
-            push_notification_config: None,
+            blocking: Some(true),
+            ..Default::default()
         })
     } else {
         None
@@ -1553,17 +1567,14 @@ fn build_params(
             meta.insert("dynamic_values".to_string(), val);
         }
 
-        if meta.is_empty() {
-            None
-        } else {
-            Some(serde_json::Value::Object(meta))
-        }
+        if meta.is_empty() { None } else { Some(meta) }
     });
 
     Ok(MessageSendParams {
         message: a2a_message,
         configuration,
         metadata,
+        tenant: None,
     })
 }
 
@@ -1574,13 +1585,8 @@ fn to_a2a_role(role: &MessageRole) -> Role {
     }
 }
 
-fn convert_kind(kind: MessageKind) -> Result<Option<Message>, ClientError> {
-    match kind {
-        MessageKind::Message(msg) => distri_types::Message::try_from(msg)
-            .map(Some)
-            .map_err(|e| ClientError::InvalidResponse(e.to_string())),
-        _ => Ok(None),
-    }
+fn convert_message(msg: A2aMessage) -> Result<Message, ClientError> {
+    distri_types::Message::try_from(msg).map_err(|e| ClientError::InvalidResponse(e.to_string()))
 }
 
 /// Parse the typed `result` of a `message/send` RPC into Distri `Message`s.
@@ -1596,7 +1602,7 @@ fn convert_kind(kind: MessageKind) -> Result<Option<Message>, ClientError> {
 /// `result` (spec violation, never emitted by our servers) yields an empty
 /// list rather than an error.
 fn parse_send_message_response(
-    response: JsonRpcResponseFor<SendMessageResult>,
+    response: JsonRpcResponseFor<SendMessageResponse>,
 ) -> Result<Vec<Message>, ClientError> {
     if let Some(err) = response.error {
         return Err(ClientError::InvalidResponse(err.message));
@@ -1607,15 +1613,13 @@ fn parse_send_message_response(
     }
 }
 
-fn parse_invoke_result(result: SendMessageResult) -> Result<Vec<Message>, ClientError> {
+fn parse_invoke_result(result: SendMessageResponse) -> Result<Vec<Message>, ClientError> {
     let a2a_msg = match result {
-        SendMessageResult::Message(msg) => Some(msg),
-        SendMessageResult::Task(task) => task.status.message,
+        SendMessageResponse::Message(msg) => Some(msg),
+        SendMessageResponse::Task(task) => task.status.message,
     };
     match a2a_msg {
-        Some(msg) => Ok(convert_kind(MessageKind::Message(msg))?
-            .into_iter()
-            .collect()),
+        Some(msg) => Ok(vec![convert_message(msg)?]),
         None => Ok(Vec::new()),
     }
 }
@@ -2889,7 +2893,7 @@ impl Distri {
     /// Fetch thread history as distri `TaskMessage`s (messages + events).
     ///
     /// The server returns A2A-format entries. This method converts them to
-    /// distri types via the `TryFrom<MessageKind> for TaskMessage` converter.
+    /// distri types via the `TryFrom<StreamResponse> for TaskMessage` converter.
     pub async fn get_thread_messages(
         &self,
         thread_id: &str,
@@ -2912,8 +2916,8 @@ impl Distri {
         let items = raw
             .into_iter()
             .filter_map(|v| {
-                let mk: distri_a2a::MessageKind = serde_json::from_value(v).ok()?;
-                distri_types::TaskMessage::try_from(mk).ok()
+                let frame: distri_a2a::StreamResponse = serde_json::from_value(v).ok()?;
+                distri_types::TaskMessage::try_from(frame).ok()
             })
             .collect();
 
@@ -3293,13 +3297,12 @@ pub struct TtsModelsResponse {
 #[cfg(test)]
 mod parse_invoke_result_tests {
     use super::*;
-    use distri_a2a::{EventKind, JsonRpcResponseFor, SendMessageResult, TaskState, TextPart};
+    use distri_a2a::{JsonRpcResponseFor, SendMessageResponse, TaskState};
 
     /// Build the exact wire shape the servers emit for `message/send`: a
     /// JSON-RPC envelope whose `result` is a serialized A2A `Task`.
     fn task_envelope(message: Option<A2aMessage>) -> serde_json::Value {
         let task = distri_a2a::Task {
-            kind: EventKind::Task,
             id: "task-1".to_string(),
             context_id: "thread-1".to_string(),
             status: distri_a2a::TaskStatus {
@@ -3312,18 +3315,15 @@ mod parse_invoke_result_tests {
         serde_json::json!({
             "jsonrpc": "2.0",
             "id": "req-1",
-            "result": serde_json::to_value(task).unwrap(),
+            "result": serde_json::to_value(SendMessageResponse::Task(task)).unwrap(),
         })
     }
 
     fn agent_reply(text: &str) -> A2aMessage {
         A2aMessage {
-            kind: EventKind::Message,
             message_id: "msg-1".to_string(),
             role: Role::Agent,
-            parts: vec![distri_a2a::Part::Text(TextPart {
-                text: text.to_string(),
-            })],
+            parts: vec![distri_a2a::Part::text(text)],
             context_id: Some("thread-1".to_string()),
             task_id: Some("task-1".to_string()),
             ..Default::default()
@@ -3333,7 +3333,8 @@ mod parse_invoke_result_tests {
     #[test]
     fn task_envelope_with_reply_yields_one_message() {
         let body = task_envelope(Some(agent_reply("hello from agent")));
-        let response: JsonRpcResponseFor<SendMessageResult> = serde_json::from_value(body).unwrap();
+        let response: JsonRpcResponseFor<SendMessageResponse> =
+            serde_json::from_value(body).unwrap();
         let msgs = parse_send_message_response(response).unwrap();
         assert_eq!(msgs.len(), 1);
     }
@@ -3343,20 +3344,22 @@ mod parse_invoke_result_tests {
         // Workflow agent that answered over a channel, or a blocking send that
         // returned while still working — no `status.message`.
         let body = task_envelope(None);
-        let response: JsonRpcResponseFor<SendMessageResult> = serde_json::from_value(body).unwrap();
+        let response: JsonRpcResponseFor<SendMessageResponse> =
+            serde_json::from_value(body).unwrap();
         let msgs = parse_send_message_response(response).unwrap();
         assert!(msgs.is_empty());
     }
 
     #[test]
     fn bare_message_result_yields_one_message() {
-        // Spec allows `result` to be a bare Message (Task | Message union).
+        // Spec allows `result` to be a Message (Task | Message union).
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "id": "req-1",
-            "result": serde_json::to_value(agent_reply("direct reply")).unwrap(),
+            "result": serde_json::to_value(SendMessageResponse::Message(agent_reply("direct reply"))).unwrap(),
         });
-        let response: JsonRpcResponseFor<SendMessageResult> = serde_json::from_value(body).unwrap();
+        let response: JsonRpcResponseFor<SendMessageResponse> =
+            serde_json::from_value(body).unwrap();
         let msgs = parse_send_message_response(response).unwrap();
         assert_eq!(msgs.len(), 1);
     }
@@ -3368,7 +3371,8 @@ mod parse_invoke_result_tests {
             "id": "req-1",
             "error": { "code": -32603, "message": "boom" },
         });
-        let response: JsonRpcResponseFor<SendMessageResult> = serde_json::from_value(body).unwrap();
+        let response: JsonRpcResponseFor<SendMessageResponse> =
+            serde_json::from_value(body).unwrap();
         let err = parse_send_message_response(response).unwrap_err();
         assert!(matches!(err, ClientError::InvalidResponse(m) if m == "boom"));
     }

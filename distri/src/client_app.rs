@@ -172,8 +172,11 @@ impl DistriClientApp {
                 tool
             })
             .collect();
-        let meta = params.metadata.get_or_insert_with(|| serde_json::json!({}));
-        meta["external_tools"] = serde_json::Value::Array(external_tools);
+        let meta = params.metadata.get_or_insert_with(Default::default);
+        meta.insert(
+            "external_tools".to_string(),
+            serde_json::Value::Array(external_tools),
+        );
         Ok(())
     }
 

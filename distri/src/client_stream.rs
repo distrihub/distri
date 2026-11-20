@@ -1,6 +1,6 @@
 use chrono::Utc;
 use distri_a2a::{
-    JsonRpcRequest, JsonRpcResponseFor, MessageKind, MessageSendParams, TaskIdParams,
+    JsonRpcRequest, JsonRpcResponseFor, MessageSendParams, StreamResponse, TaskIdParams, methods,
 };
 use distri_types::dynamic_tool::DynamicToolFactory;
 use distri_types::http_request::HttpFactoryConfig;
@@ -114,7 +114,7 @@ impl AgentStreamClient {
 
         use distri_types::configuration::DefinitionOverrides;
 
-        let meta = params.metadata.get_or_insert_with(|| serde_json::json!({}));
+        let meta = params.metadata.get_or_insert_with(Default::default);
         let mut overrides: DefinitionOverrides = meta
             .get("definition_overrides")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -127,7 +127,7 @@ impl AgentStreamClient {
             }
         }
 
-        meta.as_object_mut().unwrap().insert(
+        meta.insert(
             "definition_overrides".to_string(),
             serde_json::to_value(&overrides).unwrap(),
         );
@@ -166,7 +166,7 @@ impl AgentStreamClient {
         let rpc = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::Value::String(Uuid::new_v4().to_string())),
-            method: "message/stream".to_string(),
+            method: methods::SEND_STREAMING_MESSAGE.to_string(),
             params: serde_json::to_value(params)?,
         };
 
@@ -174,6 +174,8 @@ impl AgentStreamClient {
             .http
             .post(url)
             .header("Accept", "text/event-stream")
+            .header(distri_a2a::VERSION_HEADER, distri_a2a::A2A_VERSION)
+            .header(distri_a2a::EXTENSIONS_HEADER, client_extensions_header())
             .json(&rpc)
             .send()
             .await
@@ -276,9 +278,10 @@ impl AgentStreamClient {
         let rpc = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::Value::String(Uuid::new_v4().to_string())),
-            method: "tasks/resubscribe".to_string(),
+            method: methods::SUBSCRIBE_TO_TASK.to_string(),
             params: serde_json::to_value(TaskIdParams {
                 id: task_id.to_string(),
+                ..Default::default()
             })?,
         };
 
@@ -295,9 +298,10 @@ impl AgentStreamClient {
         let rpc = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::Value::String(Uuid::new_v4().to_string())),
-            method: "tasks/cancel".to_string(),
+            method: methods::CANCEL_TASK.to_string(),
             params: serde_json::to_value(TaskIdParams {
                 id: task_id.to_string(),
+                ..Default::default()
             })?,
         };
 
@@ -356,6 +360,8 @@ impl AgentStreamClient {
             .http
             .post(url)
             .header("Accept", "text/event-stream")
+            .header(distri_a2a::VERSION_HEADER, distri_a2a::A2A_VERSION)
+            .header(distri_a2a::EXTENSIONS_HEADER, client_extensions_header())
             .json(rpc)
             .send()
             .await
@@ -585,49 +591,68 @@ struct CompleteToolRequest {
     tool_response: ToolResponse,
 }
 
-fn convert_kind(kind: &MessageKind) -> Result<Option<Message>, StreamError> {
-    match kind {
-        MessageKind::Message(msg) => distri_types::Message::try_from(msg.clone())
-            .map(Some)
-            .map_err(|e| StreamError::InvalidResponse(e.to_string())),
-        _ => Ok(None),
-    }
+/// The extensions this client activates: it renders the full distri event
+/// stream, runs client tools (durably when the server supports it), answers
+/// hooks and sends run config — so all of distri's.
+pub fn client_extensions() -> Vec<String> {
+    distri_types::a2a_extensions::DistriExtension::ALL
+        .iter()
+        .map(|e| e.uri().to_string())
+        .collect()
+}
+
+/// `A2A-Extensions` header value for [`client_extensions`].
+pub fn client_extensions_header() -> String {
+    client_extensions().join(", ")
 }
 
 /// Parse a raw SSE data string (JSON-RPC response) into a `StreamItem`.
+/// With `event-stream` active every status update carries the distri event
+/// envelope in its metadata; a standard update (no envelope), an artifact
+/// update or a task snapshot yields an item with neither.
 pub fn parse_sse_data(agent_id: &str, data: &str) -> Result<Option<StreamItem>, StreamError> {
     if data.trim().is_empty() {
         return Ok(None);
     }
 
-    let rpc: JsonRpcResponseFor<MessageKind> = serde_json::from_str(data)?;
+    let rpc: JsonRpcResponseFor<StreamResponse> = serde_json::from_str(data)?;
     if let Some(err) = rpc.error {
         return Err(StreamError::Server(err.message));
     }
-    let Some(message_kind) = rpc.result else {
+    let Some(frame) = rpc.result else {
         return Ok(None);
     };
 
-    // Extract metadata to build AgentEvent with correct agent_id
-    let (metadata, context_id, task_id) = match &message_kind {
-        MessageKind::Message(msg) => (
+    let (metadata, context_id, task_id) = match &frame {
+        StreamResponse::Message(msg) => (
             msg.metadata.clone(),
             msg.context_id.clone(),
             msg.task_id.clone(),
         ),
-        MessageKind::TaskStatusUpdate(update) => (
+        StreamResponse::StatusUpdate(update) => (
             update.metadata.clone(),
             Some(update.context_id.clone()),
             Some(update.task_id.clone()),
         ),
-        MessageKind::Artifact(_) => (None, None, None),
+        StreamResponse::ArtifactUpdate(_) | StreamResponse::Task(_) => (None, None, None),
     };
 
-    let agent_event = metadata
-        .as_ref()
-        .and_then(|meta| build_agent_event(agent_id, meta, context_id, task_id));
+    let agent_event = metadata.and_then(|meta| {
+        build_agent_event(
+            agent_id,
+            &serde_json::Value::Object(meta),
+            context_id,
+            task_id,
+        )
+    });
 
-    let distri_message = convert_kind(&message_kind)?;
+    let distri_message = match frame {
+        StreamResponse::Message(msg) => Some(
+            distri_types::Message::try_from(msg)
+                .map_err(|e| StreamError::InvalidResponse(e.to_string()))?,
+        ),
+        _ => None,
+    };
 
     Ok(Some(StreamItem {
         message: distri_message,
