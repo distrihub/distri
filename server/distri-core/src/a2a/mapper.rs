@@ -379,6 +379,28 @@ impl StreamMapper {
     }
 }
 
+/// `GET /tasks/{id}/events` is `event-stream`'s own method: calling it
+/// activates `event-stream`, plus what the request's `A2A-Extensions`
+/// header names (G3).
+pub fn task_events_activation<'a>(
+    header_values: impl IntoIterator<Item = &'a str>,
+) -> ActiveExtensions {
+    ActiveExtensions::from_request(header_values, &[]).with(DistriExtension::EventStream)
+}
+
+/// Whether `GET /tasks/{id}/events` sends an event: the envelopes of
+/// `client-tools` (`tool_calls`, `tool_results`, `tool_execution_*`) and
+/// `durable-runs` (`run_parked`) only when the request activated them, the
+/// same as on a stream (G3). Every other event goes out as before.
+pub fn task_events_include(active: &ActiveExtensions, event: &AgentEvent) -> bool {
+    match DistriExtension::for_event_type(event.event.wire_type()) {
+        Some(e @ (DistriExtension::ClientTools | DistriExtension::DurableRuns)) => {
+            active.is_active(e)
+        }
+        _ => true,
+    }
+}
+
 /// A status update for a stored event (thread history, replay): the
 /// envelope in metadata, ISO timestamp.
 pub fn status_update_for_stored(
@@ -510,6 +532,40 @@ mod tests {
         assert!(chrono::DateTime::parse_from_rfc3339(at).is_ok());
         let m = es.input_required_message(&[]);
         assert!(m.metadata.as_ref().unwrap()[key].is_string());
+    }
+
+    /// G3: the replay activates event-stream; client-tools and durable-runs
+    /// envelopes follow the request's header.
+    #[test]
+    fn task_events_follow_the_header() {
+        let tool_calls = event(AgentEventType::ToolCalls {
+            step_id: "s".into(),
+            parent_message_id: None,
+            tool_calls: vec![],
+        });
+        let parked = event(AgentEventType::RunParked {
+            task_id: "t".into(),
+            pending: vec![],
+            deadline: None,
+            attempt: 0,
+        });
+        let started = event(AgentEventType::RunStarted {});
+
+        let none = task_events_activation(std::iter::empty());
+        assert!(none.is_active(DistriExtension::EventStream));
+        assert!(task_events_include(&none, &started));
+        assert!(!task_events_include(&none, &tool_calls));
+        assert!(!task_events_include(&none, &parked));
+
+        let header = format!(
+            "{}, {}",
+            DistriExtension::ClientTools.uri(),
+            DistriExtension::DurableRuns.uri()
+        );
+        let both = task_events_activation([header.as_str()]);
+        assert!(task_events_include(&both, &tool_calls));
+        assert!(task_events_include(&both, &parked));
+        assert!(task_events_include(&both, &started));
     }
 
     #[test]

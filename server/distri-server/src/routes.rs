@@ -1690,11 +1690,30 @@ async fn get_task_handler(
 async fn task_events_handler(
     path: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
+    http_request: HttpRequest,
 ) -> Either<
-    Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
+    actix_web::CustomizeResponder<
+        Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
+    >,
     HttpResponse,
 > {
+    use actix_web::Responder as _;
     let task_id = path.into_inner();
+    // This is `event-stream`'s own method, so it activates `event-stream`;
+    // envelopes of `client-tools` / `durable-runs` follow the request's
+    // `A2A-Extensions` header, as on a stream (G3).
+    let active = distri_core::a2a::mapper::task_events_activation(
+        http_request
+            .headers()
+            .get_all(distri_a2a::EXTENSIONS_HEADER)
+            .filter_map(|v| v.to_str().ok()),
+    );
+    let echo = active.echo(
+        &distri_types::a2a_extensions::card_extensions(executor.durable_runs_for_caller().await)
+            .iter()
+            .map(|e| e.uri.clone())
+            .collect::<Vec<_>>(),
+    );
     // The broadcaster is keyed by task id alone; the task store decides who
     // may read a task (a multi-tenant host scopes it to the caller), so a task
     // it does not return is not found and its events are never streamed.
@@ -1715,10 +1734,24 @@ async fn task_events_handler(
     // hold connections open after a child finishes. Cloud's Redis broadcaster
     // replays buffered events first; the in-process one is live-only.
     match executor.broadcaster().follow_stream(&task_id).await {
-        Ok(stream) => actix_web::Either::Left(Sse::from_stream(stream.map(|event| {
-            let payload = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
-            Ok(sse::Event::Data(sse::Data::new(payload)))
-        }))),
+        Ok(stream) => {
+            let stream = stream
+                .filter(move |event| {
+                    futures_util::future::ready(distri_core::a2a::mapper::task_events_include(
+                        &active, event,
+                    ))
+                })
+                .map(|event| {
+                    let payload =
+                        serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
+                    Ok(sse::Event::Data(sse::Data::new(payload)))
+                });
+            let mut sse = Sse::from_stream(stream).customize();
+            if !echo.is_empty() {
+                sse = sse.insert_header((distri_a2a::EXTENSIONS_HEADER, echo.join(", ")));
+            }
+            actix_web::Either::Left(sse)
+        }
         Err(e) => actix_web::Either::Right(HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to subscribe to task events: {}", e)
         }))),
@@ -2276,9 +2309,9 @@ async fn task_pending_calls_handler(
         Ok(Some(calls)) => {
             HttpResponse::Ok().json(distri_core::a2a::service::pending_calls_json(&calls))
         }
-        Ok(None) => {
-            HttpResponse::NotFound().json(json!({ "error": format!("task '{task_id}' not found") }))
-        }
+        // A task that does not exist (yet) or that the caller cannot read:
+        // an empty list, so the answer reveals nothing either way (G4).
+        Ok(None) => HttpResponse::Ok().json(json!([])),
         Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
     }
 }
@@ -2294,8 +2327,8 @@ async fn thread_pending_calls_handler(
         Ok(Some(calls)) => {
             HttpResponse::Ok().json(distri_core::a2a::service::pending_calls_json(&calls))
         }
-        Ok(None) => HttpResponse::NotFound()
-            .json(json!({ "error": format!("thread '{thread_id}' not found") })),
+        // Unknown or not the caller's: empty, as for a thread with no calls (G4).
+        Ok(None) => HttpResponse::Ok().json(json!([])),
         Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
     }
 }
@@ -2519,5 +2552,184 @@ mod tests {
 
         let stored = executor.stores.agent_store.get("test_agent_store").await;
         assert!(stored.is_some(), "agent config should be persisted");
+    }
+
+    fn memory_store_config() -> StoreConfig {
+        let mut store_config = StoreConfig::default();
+        store_config.metadata.db_config = Some(DbConnectionConfig {
+            database_url: format!("file:{}?mode=memory&cache=shared", uuid::Uuid::new_v4()),
+            max_connections: 1,
+        });
+        store_config
+    }
+
+    async fn durable_executor(store: distri_core::InMemoryDurableStore) -> Arc<AgentOrchestrator> {
+        let runtime = distri_core::durable::DurableRuntime::new(
+            Arc::new(store.clone()),
+            Arc::new(store),
+            Arc::new(distri_core::InProcessWakeNotifier::new()),
+            Arc::new(distri_core::durable::NoopResumeHook),
+        );
+        Arc::new(
+            AgentOrchestratorBuilder::default()
+                .with_store_config(memory_store_config())
+                .with_durable_runtime(runtime)
+                .build()
+                .await
+                .unwrap(),
+        )
+    }
+
+    async fn body_json(resp: HttpResponse) -> serde_json::Value {
+        let bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    fn pending_call(id: &str, task_id: &str, thread_id: &str) -> distri_types::NewPendingCall {
+        distri_types::NewPendingCall {
+            id: id.into(),
+            workspace_id: None,
+            task_id: task_id.into(),
+            thread_id: thread_id.into(),
+            kind: distri_types::PendingCallKind::ClientTool,
+            tool_name: Some("pick".into()),
+            request: json!({ "tool_call_id": id, "tool_name": "pick", "input": {} }),
+            deadline: None,
+        }
+    }
+
+    /// G4: a thread or task that does not exist (yet), or one the caller's
+    /// stores do not return (another user's), lists no pending calls with
+    /// 200 — never a 404 that tells the two apart, never the other's calls.
+    #[actix_rt::test]
+    async fn pending_calls_of_unknown_or_unreadable_threads_are_empty() {
+        use distri_types::PendingCallStore as _;
+        let store = distri_core::InMemoryDurableStore::default();
+        let executor = durable_executor(store.clone()).await;
+        // Someone else's run: its rows are not in this caller's stores.
+        store
+            .create(pending_call("call_theirs", "task-theirs", "thread-theirs"))
+            .await
+            .unwrap();
+        // The caller's own task, as a control.
+        executor
+            .stores
+            .task_store
+            .get_or_create_task("thread-mine", "task-mine")
+            .await
+            .unwrap();
+        store
+            .create(pending_call("call_mine", "task-mine", "thread-mine"))
+            .await
+            .unwrap();
+
+        for (path, want) in [("thread-unknown", json!([])), ("thread-theirs", json!([]))] {
+            let resp = thread_pending_calls_handler(
+                web::Path::from(path.to_string()),
+                web::Data::new(executor.clone()),
+            )
+            .await;
+            assert_eq!(resp.status(), actix_web::http::StatusCode::OK, "{path}");
+            assert_eq!(body_json(resp).await, want, "{path}");
+        }
+        for (path, len) in [("task-unknown", 0), ("task-theirs", 0), ("task-mine", 1)] {
+            let resp = task_pending_calls_handler(
+                web::Path::from(path.to_string()),
+                web::Data::new(executor.clone()),
+            )
+            .await;
+            assert_eq!(resp.status(), actix_web::http::StatusCode::OK, "{path}");
+            let body = body_json(resp).await;
+            assert_eq!(body.as_array().unwrap().len(), len, "{path}: {body}");
+            assert!(!body.to_string().contains("call_theirs"));
+        }
+    }
+
+    /// G3: `GET /tasks/{id}/events` sends `client-tools` envelopes only when
+    /// the request's `A2A-Extensions` header activates the extension.
+    #[actix_rt::test]
+    async fn task_events_follow_the_extensions_header() {
+        use actix_web::Responder as _;
+        use distri_types::{AgentEvent, AgentEventType};
+        let temp_dir = tempdir().unwrap();
+        let executor = build_executor(temp_dir.path()).await;
+
+        for header in [
+            None,
+            Some(distri_types::a2a_extensions::DistriExtension::ClientTools.uri()),
+        ] {
+            let task_id = uuid::Uuid::new_v4().to_string();
+            executor
+                .stores
+                .task_store
+                .get_or_create_task("thread-events", &task_id)
+                .await
+                .unwrap();
+            let mut req = TestRequest::get();
+            if let Some(h) = header {
+                req = req.insert_header((distri_a2a::EXTENSIONS_HEADER, h));
+            }
+            let http_request = req.to_http_request();
+            let resp = match task_events_handler(
+                web::Path::from(task_id.clone()),
+                web::Data::new(executor.clone()),
+                http_request.clone(),
+            )
+            .await
+            {
+                Either::Left(sse) => sse.respond_to(&http_request).map_into_boxed_body(),
+                Either::Right(r) => panic!("expected a stream, got {}", r.status()),
+            };
+            let echoed = resp
+                .headers()
+                .get(distri_a2a::EXTENSIONS_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            assert!(
+                echoed.contains("event-stream"),
+                "event-stream echoed: {echoed}"
+            );
+            let orch = executor.clone();
+            let tid = task_id.clone();
+            tokio::spawn(async move {
+                let broadcaster = orch.broadcaster();
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                for e in [
+                    AgentEventType::RunStarted {},
+                    AgentEventType::ToolCalls {
+                        step_id: "s".into(),
+                        parent_message_id: None,
+                        tool_calls: vec![],
+                    },
+                    AgentEventType::RunFinished {
+                        success: true,
+                        total_steps: 1,
+                        failed_steps: 0,
+                        usage: None,
+                        context_budget: None,
+                    },
+                ] {
+                    let mut ev = AgentEvent::new(e);
+                    ev.task_id = tid.clone();
+                    broadcaster.publish(&tid, ev).await.unwrap();
+                }
+            });
+            let body = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                actix_web::body::to_bytes(resp.into_body()),
+            )
+            .await
+            .expect("stream ends on the task's end")
+            .unwrap();
+            let body = String::from_utf8_lossy(&body);
+            assert!(body.contains("run_started"), "{body}");
+            assert!(body.contains("run_finished"), "{body}");
+            assert_eq!(
+                body.contains("tool_calls"),
+                header.is_some(),
+                "header {header:?}: {body}"
+            );
+        }
     }
 }
