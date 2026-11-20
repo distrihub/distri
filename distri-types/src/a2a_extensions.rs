@@ -281,15 +281,99 @@ pub fn card_extensions(durable_runs: bool) -> Vec<AgentExtension> {
         .collect()
 }
 
-/// Put distri's extensions on a card (replacing any distri entries; other
-/// extensions are kept).
+/// Put distri's extensions on a card (replacing any distri protocol
+/// extension entries; the `agent` descriptor and others are kept).
 pub fn set_card_extensions(card: &mut AgentCard, durable_runs: bool) {
     card.capabilities
         .extensions
-        .retain(|e| !e.uri.starts_with(EXTENSION_URI_PREFIX));
+        .retain(|e| DistriExtension::parse(&e.uri).is_none());
     card.capabilities
         .extensions
         .extend(card_extensions(durable_runs));
+}
+
+/// The `agent` extension: a declarative descriptor of how to use the agent
+/// (not activated by clients). The card is the public descriptor; the
+/// definition (instructions, tools, model, MCP, connections) is a developer
+/// API and never on the card.
+pub const AGENT_EXTENSION_URI: &str = "https://distri.dev/a2a/extensions/agent/v1";
+
+/// `params` of the `agent` extension.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub struct AgentDescriptor {
+    /// `standard_agent` or `workflow_agent`.
+    pub agent_type: String,
+    /// External (client) tool names the agent expects (`"*"` excluded).
+    pub external_tools: Vec<String>,
+    /// The agent accepts any client tool (`tools.external = ["*"]`).
+    pub any_tool: bool,
+    /// `web`, `server` or `cli`; absent when the definition sets none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
+    /// The agent streams a browser session.
+    pub browser_streaming: bool,
+    /// The saved version number (hosts that version agents set it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_no: Option<i32>,
+}
+
+impl AgentDescriptor {
+    /// From an agent config (same contract logic as version checks).
+    pub fn of(config: &crate::configuration::AgentConfig, version_no: Option<i32>) -> Self {
+        let value = serde_json::to_value(config).unwrap_or_default();
+        let contract = crate::agent_contract::contract_of(&value);
+        let (agent_type, browser_streaming) = match config {
+            crate::configuration::AgentConfig::StandardAgent(def) => {
+                ("standard_agent", def.should_use_browser())
+            }
+            crate::configuration::AgentConfig::WorkflowAgent(_) => ("workflow_agent", false),
+        };
+        AgentDescriptor {
+            agent_type: agent_type.to_string(),
+            external_tools: contract.external_tools.into_iter().collect(),
+            any_tool: crate::agent_contract::accepts_any_tool(&value),
+            runtime: contract.runtime,
+            browser_streaming,
+            version_no,
+        }
+    }
+
+    /// The card entry.
+    pub fn agent_extension(&self) -> AgentExtension {
+        AgentExtension {
+            uri: AGENT_EXTENSION_URI.to_string(),
+            description: Some(
+                "Agent descriptor: what a client needs to use this agent (type, the client \
+                 tools it expects, its environment)."
+                    .to_string(),
+            ),
+            required: Some(false),
+            params: match serde_json::to_value(self) {
+                Ok(Value::Object(m)) => Some(m),
+                _ => None,
+            },
+        }
+    }
+
+    /// Read it back from a card.
+    pub fn from_card(card: &AgentCard) -> Option<Self> {
+        let ext = card
+            .capabilities
+            .extensions
+            .iter()
+            .find(|e| e.uri == AGENT_EXTENSION_URI)?;
+        serde_json::from_value(Value::Object(ext.params.clone()?)).ok()
+    }
+}
+
+/// Put (or replace) the `agent` descriptor on a card.
+pub fn set_agent_extension(card: &mut AgentCard, descriptor: &AgentDescriptor) {
+    card.capabilities
+        .extensions
+        .retain(|e| e.uri != AGENT_EXTENSION_URI);
+    card.capabilities
+        .extensions
+        .push(descriptor.agent_extension());
 }
 
 /// How a request came to have its extensions.
