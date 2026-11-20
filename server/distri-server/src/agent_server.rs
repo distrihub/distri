@@ -140,6 +140,8 @@ impl DistriAgentServer {
                         .allow_any_origin()
                         .allow_any_method()
                         .allow_any_header()
+                        // Browsers can only read the A2A activation echo if it is exposed.
+                        .expose_headers(["A2A-Extensions"])
                         .max_age(3600),
                 )
                 .route(
