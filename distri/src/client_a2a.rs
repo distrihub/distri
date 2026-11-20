@@ -1,7 +1,8 @@
 //! Typed A2A 1.0 JSON-RPC calls on [`Distri`]: the agent card,
 //! `SendMessage`, `SendStreamingMessage`, `GetTask` / `ListTasks` /
 //! `CancelTask` / `SubscribeToTask`, the push-config methods, and the
-//! durable-runs extension's pending calls. Used by `distri a2a …`.
+//! durable-runs extension's pending calls. Used by `distri tasks …`,
+//! `distri agents card` and `distri run --json`.
 //!
 //! Every call may activate A2A extensions (`A2A-Extensions` request header);
 //! the server echoes the ones it activated in the same response header,

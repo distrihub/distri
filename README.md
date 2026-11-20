@@ -133,7 +133,9 @@ Full guide: [in-product tools](https://distri.dev/docs/guides/agent/in-product-t
 
 ## Call an agent
 
-Every agent is an [A2A](https://google.github.io/a2a/) JSON-RPC endpoint.
+Every agent is an [A2A 1.0](https://a2a-protocol.org/) JSON-RPC endpoint. Any A2A client
+(e.g. a2a-rs's `a2acli`) works unchanged; distri's additions are opt-in
+[A2A extensions](docs/a2a-extensions/README.md) a client activates with the `A2A-Extensions` header.
 
 **Send a message**
 
@@ -144,24 +146,26 @@ curl -X POST https://api.distri.dev/v1/agents/shop_assistant \
   -d '{
     "jsonrpc": "2.0",
     "id": "1",
-    "method": "message/send",
+    "method": "SendMessage",
     "params": {
       "message": {
-        "kind": "message",
-        "role": "user",
-        "parts": [{ "kind": "text", "text": "What is in my cart?" }]
+        "messageId": "m-1",
+        "role": "ROLE_USER",
+        "parts": [{ "text": "What is in my cart?" }]
       }
     }
   }'
 ```
 
-**Stream the reply** over SSE: use `"method": "message/stream"` and `curl -N`.
+**Stream the reply** over SSE: use `"method": "SendStreamingMessage"` and `curl -N`. Add
+`-H "A2A-Extensions: https://distri.dev/a2a/extensions/event-stream/v1"` for distri's full event
+stream. (The A2A 0.x method names, `message/send` …, still work for one release.)
 
 **Self-hosted:** the same calls work against `http://localhost:7777/v1/agents/shop_assistant`.
 
 ```bash
 curl http://localhost:7777/agents                                          # list agents
-curl http://localhost:7777/agents/shop_assistant/.well-known/agent.json    # A2A agent card
+curl http://localhost:7777/agents/shop_assistant/.well-known/agent-card.json  # A2A agent card
 ```
 
 **From the CLI**
@@ -174,22 +178,27 @@ distri traces list                                               # inspect runs
 distri serve                                                     # run the server and UI locally
 ```
 
-**Over A2A from the CLI** (`distri a2a`, modelled on a2a-rs's `a2acli`; `--agent` defaults to
-`$DISTRI_AGENT`, else `distri`; `--json` prints the protocol JSON, one frame per line when streaming)
+**A2A from the CLI**, by domain (`--agent` defaults to `$DISTRI_AGENT`, else `distri`; `--json`
+prints the protocol JSON, one frame per line when streaming; `--extensions` activates A2A
+extensions by name or URI, and the ones the server activated are reported on stderr)
 
 ```bash
-distri a2a card get --agent shop_assistant [--extended]          # agent card: capabilities, extensions, skills
-distri a2a send "What is in my cart?" --agent shop_assistant     # message/send (waits for the task)
-distri a2a send "…" --stream                                     # message/stream: one line per event
-distri a2a send "…" --async                                      # print the task id and return
-distri a2a send "…" --context <thread> --task <id> --data-part '{"k":1}' --metadata @meta.json
-distri a2a task get <task_id> [--history 5]                      # tasks/get
-distri a2a task list [--context <thread>] [--state input-required] [--limit 20]
-distri a2a task cancel <task_id>                                 # tasks/cancel
-distri a2a task subscribe <task_id>                              # tasks/resubscribe: follow events
-distri a2a task push-config list|get|set|delete <task_id> …      # tasks/pushNotificationConfig/* (set --url [--token])
-distri a2a task pending <task_id>                                # pending calls (durable-runs extension)
+distri agents card shop_assistant [--extended] [--json]          # the public A2A card
+distri run --agent shop_assistant --task "…" --json              # SendMessage (waits for the task)
+distri run --task "…" --stream [--extensions event-stream]       # SendStreamingMessage: one line per frame
+distri run --task "…" --async                                    # print the task id and return
+distri run --task "…" --context-id <thread> --task-id <id> --data-part '{"k":1}' --metadata @meta.json
+distri tasks get <task_id> [--history 5]                         # GetTask
+distri tasks list [--context <thread>] [--state input-required] [--limit 20]   # ListTasks
+distri tasks cancel <task_id>                                    # CancelTask
+distri tasks subscribe <task_id>                                 # SubscribeToTask (event-stream)
+distri tasks push-config list|get|set|delete <task_id> …         # push configs (set --url [--token])
+distri tasks pending <task_id>                                   # pending calls (durable-runs extension)
 ```
+
+`distri run` without those flags is the interactive runner (local tools, terminal rendering); any
+of `--json`, `--stream`, `--async`, `--metadata`, `--data-part`, `--extensions` makes it a plain,
+non-interactive A2A send.
 
 With durable runs on (`DISTRI_DURABLE_RUNS=1`), the agent card lists the A2A extension
 `https://distri.dev/a2a/extensions/durable-runs/v1` in `capabilities.extensions`; its `params`
@@ -262,7 +271,8 @@ distri push --dry-run                    # preview what would upload
 distri agents list
 distri skills list
 distri traces list                       # inspect runs
-distri a2a card get --agent my_agent     # A2A: card, send, task get/list/cancel/subscribe/pending
+distri agents card my_agent              # the agent's public A2A card
+distri tasks list                        # A2A tasks: list/get/cancel/subscribe/pending
 distri secrets list
 distri connections list
 

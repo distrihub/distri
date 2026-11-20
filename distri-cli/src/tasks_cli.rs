@@ -1,10 +1,16 @@
-//! `distri a2a …` — talk to an agent over the A2A protocol, modelled on
-//! a2a-rs's `a2acli`: `card get`, `send`, `task get|list|cancel|subscribe`,
-//! `task push-config list|get|set|delete`, plus `task pending` for distri's
-//! durable-runs A2A extension.
+//! The A2A surface of the CLI, by domain:
+//!
+//! - `distri tasks list|get|cancel|subscribe|pending|push-config …` — A2A
+//!   `ListTasks`, `GetTask`, `CancelTask`, `SubscribeToTask`, the push-config
+//!   methods, and the durable-runs extension's pending calls.
+//! - `distri agents card <agent>` — the public A2A agent card.
+//! - `distri run --json|--stream|--async|…` — a raw `SendMessage` /
+//!   `SendStreamingMessage` (see [`RawSend`]).
 //!
 //! Every command prints a readable summary by default and the protocol JSON
-//! with `--json` (streams: one raw JSON-RPC frame per line).
+//! with `--json` (streams: one raw JSON-RPC frame per line). Requests name the
+//! extensions they activate in `A2A-Extensions`; the ones the server
+//! activated are reported on stderr.
 
 use std::io::Read;
 use std::path::Path;
@@ -13,117 +19,71 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use distri::{Distri, PushConfig};
 use distri_a2a::{
-    AgentCard, EventKind, Message, MessageSendConfiguration, MessageSendParams, Part, Role,
-    SendMessageResult, Task,
+    methods, AgentCard, ListTasksRequest, Message, MessageSendConfiguration, MessageSendParams,
+    Part, PartContent, Role, SendMessageResponse, Task, TaskState,
 };
+use distri_types::a2a_extensions::DistriExtension;
 use serde_json::{json, Value};
 
 /// Agent used when `--agent` and `DISTRI_AGENT` are both unset.
 pub const DEFAULT_A2A_AGENT: &str = "distri";
 
 #[derive(Args, Debug, Clone, PartialEq)]
-pub struct A2aArgs {
-    /// Agent to talk to (default: $DISTRI_AGENT, else "distri").
+pub struct TasksArgs {
+    /// Agent whose A2A endpoint serves the call (default: $DISTRI_AGENT, else "distri").
     #[clap(long, global = true)]
     pub agent: Option<String>,
     /// Print the protocol JSON instead of a summary (streams: one frame per line).
     #[clap(long, global = true)]
     pub json: bool,
+    /// Extensions to activate (`A2A-Extensions`): names (`event-stream`) or
+    /// URIs, comma-separated or repeated.
+    #[clap(long, global = true, value_delimiter = ',')]
+    pub extensions: Vec<String>,
     #[clap(subcommand)]
-    pub command: A2aCommand,
+    pub command: TasksCommand,
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
-pub enum A2aCommand {
-    /// Agent card commands
-    Card {
-        #[clap(subcommand)]
-        command: CardCommand,
-    },
-    /// Send a message (`message/send`, or `message/stream` with --stream)
-    Send(SendArgs),
-    /// Task commands (`tasks/*`)
-    Task {
-        #[clap(subcommand)]
-        command: TaskCommand,
-    },
-}
-
-#[derive(Subcommand, Debug, Clone, PartialEq)]
-pub enum CardCommand {
-    /// Fetch the agent card (`.well-known/agent.json`)
-    Get {
-        /// Fetch the authenticated extended card (`agent/authenticatedExtendedCard`)
+pub enum TasksCommand {
+    /// List tasks (`ListTasks`)
+    List {
+        /// Only tasks of this context (thread)
         #[clap(long)]
-        extended: bool,
+        context: Option<String>,
+        /// Only tasks in this state (submitted, working, input-required,
+        /// auth-required, completed, failed, canceled, rejected)
+        #[clap(long)]
+        state: Option<String>,
+        #[clap(long, default_value_t = 20)]
+        limit: u32,
     },
-}
-
-#[derive(Args, Debug, Clone, PartialEq)]
-pub struct SendArgs {
-    /// Message text (a text part)
-    pub text: Option<String>,
-    /// Stream the run (`message/stream`) and print each event as it arrives
-    #[clap(long)]
-    pub stream: bool,
-    /// Context (thread) id to continue; a new one when omitted
-    #[clap(long)]
-    pub context: Option<String>,
-    /// Task id for the message; a new one when omitted
-    #[clap(long)]
-    pub task: Option<String>,
-    /// A data part: inline JSON, `@file`, a file path, or `-` for stdin. Repeatable.
-    #[clap(long = "data-part", value_name = "JSON|FILE|-")]
-    pub data_parts: Vec<String>,
-    /// Request metadata (`MessageSendParams.metadata`): inline JSON, `@file`,
-    /// a file path, or `-`. Distri reads `ExecutorContextMetadata` here, e.g.
-    /// `{"external_tools": [...]}` to declare client tools.
-    #[clap(long, value_name = "JSON|FILE|-")]
-    pub metadata: Option<String>,
-    /// Return as soon as the task is created (prints its id); the run goes on
-    #[clap(long = "async")]
-    pub async_: bool,
-}
-
-#[derive(Subcommand, Debug, Clone, PartialEq)]
-pub enum TaskCommand {
-    /// Get a task (`tasks/get`)
+    /// Get a task (`GetTask`)
     Get {
         task_id: String,
         /// Number of most recent history messages to show
         #[clap(long)]
         history: Option<u32>,
     },
-    /// List tasks (REST `GET /tasks`; this server has no A2A `tasks/list`)
-    List {
-        /// Only tasks of this context (thread)
-        #[clap(long)]
-        context: Option<String>,
-        /// Only tasks in this state (A2A: submitted, working, input-required,
-        /// completed, failed, canceled; distri names work too)
-        #[clap(long)]
-        state: Option<String>,
-        #[clap(long, default_value_t = 20)]
-        limit: u32,
-    },
-    /// Cancel a task (`tasks/cancel`)
+    /// Cancel a task (`CancelTask`)
     Cancel { task_id: String },
-    /// Follow a task's events until it ends (`tasks/resubscribe`)
+    /// Follow a task until it ends (`SubscribeToTask`). Activates
+    /// `event-stream` unless --extensions says otherwise.
     Subscribe { task_id: String },
-    /// Push notification configs of a task (`tasks/pushNotificationConfig/*`)
+    /// Pending calls the task waits on (durable-runs extension)
+    Pending { task_id: String },
+    /// Push notification configs of a task
     PushConfig {
         #[clap(subcommand)]
         command: PushConfigCommand,
     },
-    /// Pending calls the task waits on (durable-runs extension)
-    Pending { task_id: String },
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
 pub enum PushConfigCommand {
     /// List the task's push configs
     List { task_id: String },
-    /// Get one push config (the task's only one when no id is given)
+    /// Get one push config
     Get {
         task_id: String,
         config_id: Option<String>,
@@ -160,44 +120,84 @@ fn pick_agent(flag: Option<&str>, env: Option<&str>) -> String {
         .to_string()
 }
 
-pub async fn run(args: A2aArgs, client: &Distri) -> Result<()> {
-    let agent = resolve_agent(args.agent.as_deref());
-    let json_out = args.json;
-    match args.command {
-        A2aCommand::Card {
-            command: CardCommand::Get { extended },
-        } => {
-            let card = if extended {
-                client.get_authenticated_extended_card(&agent).await?
-            } else {
-                client
-                    .get_agent_card_json(&agent)
-                    .await?
-                    .with_context(|| format!("agent '{agent}' not found"))?
-            };
-            if json_out {
-                print_json(&card);
-            } else {
-                let card: AgentCard =
-                    serde_json::from_value(card).context("the agent card is not valid A2A")?;
-                print!("{}", format_card(&card));
-            }
+/// `--extensions` values → URIs: a distri extension name (`event-stream`)
+/// becomes its URI; anything else is taken as a URI.
+pub fn extension_uris(values: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for v in values.iter().flat_map(|v| v.split(',')).map(str::trim) {
+        if v.is_empty() {
+            continue;
         }
-        A2aCommand::Send(send) => run_send(client, &agent, send, json_out).await?,
-        A2aCommand::Task { command } => run_task(client, &agent, command, json_out).await?,
+        let uri = DistriExtension::parse(v)
+            .map(|e| e.uri().to_string())
+            .unwrap_or_else(|| v.to_string());
+        if !out.contains(&uri) {
+            out.push(uri);
+        }
+    }
+    out
+}
+
+fn report_activated(activated: &[String]) {
+    if !activated.is_empty() {
+        eprintln!("A2A-Extensions activated: {}", activated.join(", "));
+    }
+}
+
+/// `distri agents card <agent> [--extended] [--json]`.
+pub async fn print_card(
+    client: &Distri,
+    agent: &str,
+    extended: bool,
+    json_out: bool,
+) -> Result<()> {
+    let card = if extended {
+        client.get_authenticated_extended_card(agent).await?
+    } else {
+        client
+            .get_agent_card_json(agent)
+            .await?
+            .with_context(|| format!("agent '{agent}' not found"))?
+    };
+    if json_out {
+        print_json(&card);
+    } else {
+        let card: AgentCard =
+            serde_json::from_value(card).context("the agent card is not valid A2A")?;
+        print!("{}", format_card(&card));
     }
     Ok(())
 }
 
-async fn run_send(client: &Distri, agent: &str, send: SendArgs, json_out: bool) -> Result<()> {
+/// A raw A2A send from `distri run` (non-interactive: no local tools, no TUI).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RawSend {
+    pub agent: String,
+    pub text: Option<String>,
+    pub data_parts: Vec<String>,
+    pub metadata: Option<String>,
+    pub context_id: Option<String>,
+    pub task_id: Option<String>,
+    /// `SendStreamingMessage`, printing each frame.
+    pub stream: bool,
+    /// Return once the server names the task; the run goes on.
+    pub async_: bool,
+    pub json: bool,
+    /// URIs (see [`extension_uris`]).
+    pub extensions: Vec<String>,
+}
+
+pub async fn run_raw_send(client: &Distri, send: RawSend) -> Result<()> {
+    let agent = send.agent.as_str();
+    let json_out = send.json;
     let parts = message_parts(send.text.as_deref(), &send.data_parts)?;
-    let mut params = build_send_params(parts, send.context.as_deref(), send.task.as_deref());
+    let mut params = build_send_params(parts, send.context_id.as_deref(), send.task_id.as_deref());
+    params.message.extensions = Vec::new();
     if let Some(raw) = &send.metadata {
-        let meta = load_data_part(raw)?;
-        if !meta.is_object() {
-            bail!("--metadata must be a JSON object");
+        match load_data_part(raw)? {
+            Value::Object(m) => params.metadata = Some(m),
+            _ => bail!("--metadata must be a JSON object"),
         }
-        params.metadata = Some(meta);
     }
     let params_json = serde_json::to_value(&params)?;
 
@@ -207,29 +207,37 @@ async fn run_send(client: &Distri, agent: &str, send: SendArgs, json_out: bool) 
         // `--async` returns once the server names the task; the run goes on
         // server-side (durable runs keep it across a dropped stream).
         let result = client
-            .a2a_stream_json(agent, "message/stream", params_json, |frame| {
-                if stop {
-                    return;
-                }
-                if task_id.is_none() {
-                    task_id = frame_task_id(&frame);
-                }
-                if send.async_ && !send.stream {
-                    if task_id.is_some() {
-                        stop = true;
-                    } else if let Some(line) = frame_error(&frame) {
-                        eprintln!("{line}");
+            .a2a_stream_json_ext(
+                agent,
+                methods::SEND_STREAMING_MESSAGE,
+                params_json,
+                &send.extensions,
+                |frame| {
+                    if stop {
+                        return;
                     }
-                    return;
-                }
-                print_frame(&frame, json_out);
-                if send.async_ && task_id.is_some() {
-                    stop = true;
-                }
-            })
+                    if task_id.is_none() {
+                        task_id = frame_task_id(&frame);
+                    }
+                    if send.async_ && !send.stream {
+                        if task_id.is_some() {
+                            stop = true;
+                        } else if let Some(line) = frame_error(&frame) {
+                            eprintln!("{line}");
+                        }
+                        return;
+                    }
+                    print_frame(&frame, json_out);
+                    if send.async_ && task_id.is_some() {
+                        stop = true;
+                    }
+                },
+            )
             .await;
-        if !stop {
-            result?;
+        match result {
+            Ok(activated) => report_activated(&activated),
+            Err(e) if !stop => return Err(e.into()),
+            Err(_) => {}
         }
         if send.async_ {
             let id = task_id.context("the server did not name a task")?;
@@ -246,31 +254,46 @@ async fn run_send(client: &Distri, agent: &str, send: SendArgs, json_out: bool) 
     }
 
     params.configuration = Some(MessageSendConfiguration {
-        accepted_output_modes: vec!["text".into()],
-        blocking: true,
+        accepted_output_modes: vec!["text/plain".into()],
+        blocking: Some(true),
         ..Default::default()
     });
-    let result = client.send_message(agent, &params).await?;
+    let (result, activated) = client
+        .a2a_call_json_ext(
+            agent,
+            methods::SEND_MESSAGE,
+            serde_json::to_value(&params)?,
+            &send.extensions,
+        )
+        .await?;
+    report_activated(&activated);
     if json_out {
-        print_json(&serde_json::to_value(&result)?);
+        print_json(&result);
         return Ok(());
     }
-    match result {
-        SendMessageResult::Task(task) => print!("{}", format_task(&task, Some(0))),
-        SendMessageResult::Message(msg) => println!("{}", format_message_line(&msg)),
+    match serde_json::from_value::<SendMessageResponse>(result)? {
+        SendMessageResponse::Task(task) => print!("{}", format_task(&task, Some(0))),
+        SendMessageResponse::Message(msg) => println!("{}", format_message_line(&msg)),
     }
     Ok(())
 }
 
-async fn run_task(
-    client: &Distri,
-    agent: &str,
-    command: TaskCommand,
-    json_out: bool,
-) -> Result<()> {
-    match command {
-        TaskCommand::Get { task_id, history } => {
-            let mut task = client.get_task(agent, &task_id, history).await?;
+pub async fn run(args: TasksArgs, client: &Distri) -> Result<()> {
+    let agent = resolve_agent(args.agent.as_deref());
+    let json_out = args.json;
+    let extensions = extension_uris(&args.extensions);
+    match args.command {
+        TasksCommand::Get { task_id, history } => {
+            let (v, activated) = client
+                .a2a_call_json_ext(
+                    &agent,
+                    methods::GET_TASK,
+                    distri::task_query_params(&task_id, history),
+                    &extensions,
+                )
+                .await?;
+            report_activated(&activated);
+            let mut task: Task = serde_json::from_value(v)?;
             if let Some(n) = history {
                 trim_history(&mut task, n as usize);
             }
@@ -280,45 +303,74 @@ async fn run_task(
                 print!("{}", format_task(&task, history));
             }
         }
-        TaskCommand::List {
+        TasksCommand::List {
             context,
             state,
             limit,
         } => {
-            let status = state.as_deref().map(distri_status_for_state).transpose()?;
-            let tasks = client
-                .list_tasks_filtered(context.as_deref(), status, Some(limit))
+            let status = state.as_deref().map(parse_state).transpose()?;
+            let req = ListTasksRequest {
+                context_id: context,
+                status,
+                page_size: Some(limit as i32),
+                ..Default::default()
+            };
+            let (v, activated) = client
+                .a2a_call_json_ext(
+                    &agent,
+                    methods::LIST_TASKS,
+                    serde_json::to_value(&req)?,
+                    &extensions,
+                )
                 .await?;
+            report_activated(&activated);
             if json_out {
-                print_json(&serde_json::to_value(&tasks)?);
+                print_json(&v);
             } else {
-                print!("{}", format_task_list(&tasks));
+                let list: distri_a2a::ListTasksResponse = serde_json::from_value(v)?;
+                print!("{}", format_task_list(&list.tasks));
             }
         }
-        TaskCommand::Cancel { task_id } => {
-            let task = client.cancel_task(agent, &task_id).await?;
+        TasksCommand::Cancel { task_id } => {
+            let (v, activated) = client
+                .a2a_call_json_ext(
+                    &agent,
+                    methods::CANCEL_TASK,
+                    json!({ "id": task_id }),
+                    &extensions,
+                )
+                .await?;
+            report_activated(&activated);
+            let task: Task = serde_json::from_value(v)?;
             if json_out {
                 print_json(&serde_json::to_value(&task)?);
             } else {
                 println!("task {} {}", task.id, task_state_name(&task));
             }
         }
-        TaskCommand::Subscribe { task_id } => {
-            client
-                .a2a_stream_json(
-                    agent,
-                    "tasks/resubscribe",
-                    distri::task_query_params(&task_id, None),
+        TasksCommand::Subscribe { task_id } => {
+            let extensions = if extensions.is_empty() {
+                vec![DistriExtension::EventStream.uri().to_string()]
+            } else {
+                extensions
+            };
+            let activated = client
+                .a2a_stream_json_ext(
+                    &agent,
+                    methods::SUBSCRIBE_TO_TASK,
+                    json!({ "id": task_id }),
+                    &extensions,
                     |frame| print_frame(&frame, json_out),
                 )
                 .await?;
+            report_activated(&activated);
         }
-        TaskCommand::PushConfig { command } => {
-            run_push_config(client, agent, command, json_out).await?
+        TasksCommand::PushConfig { command } => {
+            run_push_config(client, &agent, command, json_out).await?
         }
-        TaskCommand::Pending { task_id } => {
+        TasksCommand::Pending { task_id } => {
             let card = client
-                .get_agent_card(agent)
+                .get_agent_card(&agent)
                 .await?
                 .with_context(|| format!("agent '{agent}' not found"))?;
             if !distri_types::card_supports_durable_runs(&card) {
@@ -421,14 +473,10 @@ async fn run_push_config(
 pub fn message_parts(text: Option<&str>, data_parts: &[String]) -> Result<Vec<Part>> {
     let mut parts = Vec::new();
     if let Some(t) = text {
-        parts.push(Part::Text(distri_a2a::TextPart {
-            text: t.to_string(),
-        }));
+        parts.push(Part::text(t));
     }
     for raw in data_parts {
-        parts.push(Part::Data(distri_a2a::DataPart {
-            data: load_data_part(raw)?,
-        }));
+        parts.push(Part::data(load_data_part(raw)?));
     }
     if parts.is_empty() {
         bail!("nothing to send: give the message text and/or --data-part");
@@ -458,7 +506,7 @@ pub fn load_data_part(raw: &str) -> Result<Value> {
     serde_json::from_str(&text).with_context(|| format!("{source} is not valid JSON"))
 }
 
-/// A user message for `message/send|stream`. New context and task ids when
+/// A user message for `SendMessage` / `SendStreamingMessage`. New context and task ids when
 /// none are given, as `distri run` does.
 pub fn build_send_params(
     parts: Vec<Part>,
@@ -468,7 +516,6 @@ pub fn build_send_params(
     let new_id = || uuid::Uuid::new_v4().to_string();
     MessageSendParams {
         message: Message {
-            kind: EventKind::Message,
             message_id: new_id(),
             role: Role::User,
             parts,
@@ -478,20 +525,30 @@ pub fn build_send_params(
         },
         configuration: None,
         metadata: None,
+        tenant: None,
     }
 }
 
-/// A2A task state (or a distri status) → the status `GET /tasks` filters on.
-pub fn distri_status_for_state(state: &str) -> Result<&'static str> {
-    Ok(match state.trim().to_ascii_lowercase().replace('_', "-").as_str() {
-        "submitted" | "pending" => "pending",
-        "working" | "running" => "running",
-        "input-required" => "input_required",
-        "completed" => "completed",
-        "failed" => "failed",
-        "canceled" | "cancelled" => "canceled",
+/// A task state as typed on the command line (`input-required`,
+/// `INPUT_REQUIRED`, `TASK_STATE_INPUT_REQUIRED`, distri's `running`, …).
+pub fn parse_state(state: &str) -> Result<TaskState> {
+    let norm = state.trim().to_ascii_lowercase().replace('_', "-");
+    let norm = norm
+        .strip_prefix("task-state-")
+        .unwrap_or(&norm)
+        .to_string();
+    Ok(match norm.as_str() {
+        "submitted" | "pending" => TaskState::Submitted,
+        "working" | "running" => TaskState::Working,
+        "input-required" => TaskState::InputRequired,
+        "auth-required" => TaskState::AuthRequired,
+        "completed" => TaskState::Completed,
+        "failed" => TaskState::Failed,
+        "canceled" | "cancelled" => TaskState::Canceled,
+        "rejected" => TaskState::Rejected,
         other => bail!(
-            "unknown state '{other}' (submitted, working, input-required, completed, failed, canceled)"
+            "unknown state '{other}' (submitted, working, input-required, auth-required, \
+             completed, failed, canceled, rejected)"
         ),
     })
 }
@@ -521,7 +578,8 @@ fn yes_no(b: bool) -> &'static str {
     }
 }
 
-/// A readable agent card: identity, capabilities with extensions, skills.
+/// A readable agent card: identity, interfaces, capabilities with
+/// extensions, skills.
 pub fn format_card(card: &AgentCard) -> String {
     let mut out = String::new();
     let mut line = |k: &str, v: &str| out.push_str(&format!("{k:<14}{v}\n"));
@@ -529,22 +587,28 @@ pub fn format_card(card: &AgentCard) -> String {
     if !card.description.is_empty() {
         line("Description:", &card.description);
     }
-    line("URL:", &card.url);
     line("Version:", &card.version);
-    if let Some(t) = &card.preferred_transport {
-        line("Transport:", t);
+    for i in &card.supported_interfaces {
+        line(
+            "Interface:",
+            &format!(
+                "{} {} (A2A {})",
+                i.protocol_binding, i.url, i.protocol_version
+            ),
+        );
     }
     if let Some(p) = &card.provider {
         line("Provider:", &p.organization);
     }
     let caps = &card.capabilities;
+    let flag = |b: Option<bool>| yes_no(b.unwrap_or(false));
     line(
         "Capabilities:",
         &format!(
-            "streaming={} pushNotifications={} stateTransitionHistory={}",
-            yes_no(caps.streaming),
-            yes_no(caps.push_notifications),
-            yes_no(caps.state_transition_history)
+            "streaming={} pushNotifications={} extendedAgentCard={}",
+            flag(caps.streaming),
+            flag(caps.push_notifications),
+            flag(caps.extended_agent_card)
         ),
     );
     if !card.default_input_modes.is_empty() {
@@ -561,12 +625,16 @@ pub fn format_card(card: &AgentCard) -> String {
             out.push_str(&format!(
                 "  - {}{}\n",
                 e.uri,
-                if e.required { " (required)" } else { "" }
+                if e.required == Some(true) {
+                    " (required)"
+                } else {
+                    ""
+                }
             ));
             if let Some(d) = &e.description {
                 out.push_str(&format!("      {d}\n"));
             }
-            if let Some(Value::Object(params)) = &e.params {
+            if let Some(params) = &e.params {
                 for (k, v) in params {
                     let v = v
                         .as_str()
@@ -586,42 +654,32 @@ pub fn format_card(card: &AgentCard) -> String {
     out
 }
 
-/// The task's state as the A2A spec spells it (`input-required`, `auth-required`).
+/// The task's state as the A2A spec spells it (`input-required`).
 fn task_state_name(task: &Task) -> String {
-    let raw = serde_json::to_value(&task.status.state)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_else(|| "unknown".into());
-    kebab_state(&raw)
+    state_name(&task.status.state)
 }
 
-/// `inputRequired` → `input-required`.
-fn kebab_state(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.chars() {
-        if c.is_ascii_uppercase() {
-            out.push('-');
-            out.push(c.to_ascii_lowercase());
-        } else {
-            out.push(c);
-        }
-    }
-    out
+/// `TASK_STATE_INPUT_REQUIRED` → `input-required`.
+fn state_name(state: &TaskState) -> String {
+    state
+        .as_str()
+        .trim_start_matches("TASK_STATE_")
+        .to_ascii_lowercase()
+        .replace('_', "-")
 }
 
 fn parts_text(parts: &[Part]) -> String {
     parts
         .iter()
-        .map(|p| match p {
-            Part::Text(t) => t.text.clone(),
-            Part::Data(d) => d.data.to_string(),
-            Part::File(f) => match &f.file {
-                distri_a2a::FileObject::WithUri { uri, .. } => format!("[file {uri}]"),
-                distri_a2a::FileObject::WithBytes { name, .. } => {
-                    format!("[file {}]", name.as_deref().unwrap_or("bytes"))
-                }
-            },
+        .map(|p| match &p.content {
+            PartContent::Text(t) => t.clone(),
+            PartContent::Data(d) => d.to_string(),
+            PartContent::Url(u) => format!("[file {u}]"),
+            PartContent::Raw(_) => {
+                format!("[file {}]", p.filename.as_deref().unwrap_or("bytes"))
+            }
         })
+        .filter(|t| !t.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -639,7 +697,7 @@ fn one_line(s: &str, max: usize) -> String {
 pub fn format_message_line(msg: &Message) -> String {
     let role = match msg.role {
         Role::User => "user",
-        Role::Agent => "agent",
+        _ => "agent",
     };
     format!("{role}: {}", one_line(&parts_text(&msg.parts), 200))
 }
@@ -689,8 +747,8 @@ pub fn format_task(task: &Task, history: Option<u32>) -> String {
     out
 }
 
-/// One row per task: id, thread, status, last update.
-pub fn format_task_list(tasks: &[distri_types::Task]) -> String {
+/// One row per task: id, context, state, last update.
+pub fn format_task_list(tasks: &[Task]) -> String {
     if tasks.is_empty() {
         return "no tasks\n".into();
     }
@@ -699,16 +757,17 @@ pub fn format_task_list(tasks: &[distri_types::Task]) -> String {
         "TASK", "CONTEXT", "STATE", "UPDATED (UTC)"
     );
     for t in tasks {
-        let status = serde_json::to_value(&t.status)
-            .ok()
-            .and_then(|v| v.as_str().map(str::to_string))
-            .unwrap_or_default();
-        let updated = chrono::DateTime::from_timestamp_millis(t.updated_at)
+        let updated = t
+            .status
+            .timestamp
             .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
-            .unwrap_or_else(|| t.updated_at.to_string());
+            .unwrap_or_else(|| "-".into());
         out.push_str(&format!(
             "{:<38} {:<38} {:<15} {}\n",
-            t.id, t.thread_id, status, updated
+            t.id,
+            t.context_id,
+            task_state_name(t),
+            updated
         ));
     }
     out
@@ -744,11 +803,35 @@ pub fn format_pending_calls(task_id: &str, calls: &[Value]) -> String {
     out
 }
 
+/// A frame's `result` as (kind, object): 1.0 field-presence
+/// (`statusUpdate`, `artifactUpdate`, `task`, `message`) or 0.x `kind`.
+fn frame_body(frame: &Value) -> Option<(&'static str, &Value)> {
+    let r = frame.get("result")?;
+    for (key, kind) in [
+        ("statusUpdate", "status-update"),
+        ("artifactUpdate", "artifact-update"),
+        ("task", "task"),
+        ("message", "message"),
+    ] {
+        if let Some(v) = r.get(key) {
+            return Some((kind, v));
+        }
+    }
+    let kind = match r.get("kind").and_then(Value::as_str)? {
+        "status-update" => "status-update",
+        "artifact-update" => "artifact-update",
+        "task" => "task",
+        "message" => "message",
+        _ => return None,
+    };
+    Some((kind, r))
+}
+
 /// The task id a stream frame names, if any.
 pub fn frame_task_id(frame: &Value) -> Option<String> {
-    let r = frame.get("result")?;
-    let id = match r.get("kind").and_then(Value::as_str) {
-        Some("task") => r.get("id"),
+    let (kind, r) = frame_body(frame)?;
+    let id = match kind {
+        "task" => r.get("id"),
         _ => r.get("taskId"),
     };
     id.and_then(Value::as_str).map(str::to_string)
@@ -765,14 +848,19 @@ fn frame_error(frame: &Value) -> Option<String> {
     ))
 }
 
-/// A compact one-line summary of one `message/stream` / `tasks/resubscribe`
-/// frame. `None` for frames with nothing to show.
+fn state_label(raw: &str) -> String {
+    TaskState::parse(raw)
+        .map(|s| state_name(&s))
+        .unwrap_or_else(|| raw.to_string())
+}
+
+/// A compact one-line summary of one `SendStreamingMessage` /
+/// `SubscribeToTask` frame. `None` for frames with nothing to show.
 pub fn format_stream_frame(frame: &Value) -> Option<String> {
     if let Some(e) = frame_error(frame) {
         return Some(e);
     }
-    let r = frame.get("result")?;
-    let kind = r.get("kind").and_then(Value::as_str).unwrap_or("?");
+    let (kind, r) = frame_body(frame)?;
     let meta = r.get("metadata").filter(|m| !m.is_null());
     let event = meta
         .and_then(|m| m.get("type"))
@@ -797,7 +885,7 @@ pub fn format_stream_frame(frame: &Value) -> Option<String> {
                 .pointer("/status/state")
                 .and_then(Value::as_str)
                 .unwrap_or("?");
-            let mut s = with_event(format!("[status] {}", kebab_state(state)));
+            let mut s = with_event(format!("[status] {}", state_label(state)));
             if let Some(m) = r.pointer("/status/message/parts") {
                 if let Ok(parts) = serde_json::from_value::<Vec<Part>>(m.clone()) {
                     let t = parts_text(&parts);
@@ -806,7 +894,9 @@ pub fn format_stream_frame(frame: &Value) -> Option<String> {
                     }
                 }
             }
-            if r.get("final").and_then(Value::as_bool) == Some(true) {
+            let fin = r.get("final").and_then(Value::as_bool) == Some(true)
+                || meta.and_then(|m| m.get("final")).and_then(Value::as_bool) == Some(true);
+            if fin {
                 s.push_str(" (final)");
             }
             Some(s)
@@ -838,16 +928,29 @@ pub fn format_stream_frame(frame: &Value) -> Option<String> {
                 .or_else(|| r.pointer("/artifact/artifactId"))
                 .and_then(Value::as_str)
                 .unwrap_or("artifact");
-            Some(format!("[artifact] {name}"))
+            let text = r
+                .pointer("/artifact/parts")
+                .and_then(|p| serde_json::from_value::<Vec<Part>>(p.clone()).ok())
+                .map(|p| parts_text(&p))
+                .unwrap_or_default();
+            let mut s = format!("[artifact] {name}");
+            if !text.is_empty() {
+                s.push_str(&format!(" — {}", one_line(&text, 160)));
+            }
+            if r.get("lastChunk").and_then(Value::as_bool) == Some(true) {
+                s.push_str(" (last)");
+            }
+            Some(s)
         }
-        "task" => Some(format!(
+        _ => Some(format!(
             "[task] {} {}",
             r.get("id").and_then(Value::as_str).unwrap_or("?"),
-            r.pointer("/status/state")
-                .and_then(Value::as_str)
-                .unwrap_or("?")
+            state_label(
+                r.pointer("/status/state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("?")
+            )
         )),
-        other => Some(format!("[{other}]")),
     }
 }
 
@@ -918,75 +1021,29 @@ mod tests {
     }
     #[derive(clap::Subcommand, Debug)]
     enum TestCmd {
-        A2a(A2aArgs),
+        Tasks(TasksArgs),
     }
 
-    fn parse(args: &[&str]) -> A2aArgs {
-        let mut full = vec!["distri", "a2a"];
+    fn parse(args: &[&str]) -> TasksArgs {
+        let mut full = vec!["distri", "tasks"];
         full.extend_from_slice(args);
-        let TestCmd::A2a(a) = TestCli::try_parse_from(full).unwrap().cmd;
+        let TestCmd::Tasks(a) = TestCli::try_parse_from(full).unwrap().cmd;
         a
     }
 
     #[test]
-    fn parses_card_get_with_shared_flags_anywhere() {
-        let a = parse(&["card", "get", "--agent", "coder", "--extended", "--json"]);
+    fn parses_task_commands() {
+        let a = parse(&["get", "t1", "--history", "3", "--agent", "coder", "--json"]);
         assert_eq!(a.agent.as_deref(), Some("coder"));
         assert!(a.json);
         assert_eq!(
             a.command,
-            A2aCommand::Card {
-                command: CardCommand::Get { extended: true }
-            }
-        );
-        let a = parse(&["--agent", "x", "card", "get"]);
-        assert_eq!(a.agent.as_deref(), Some("x"));
-    }
-
-    #[test]
-    fn parses_send() {
-        let a = parse(&[
-            "send",
-            "hello",
-            "--stream",
-            "--context",
-            "c1",
-            "--task",
-            "t1",
-            "--data-part",
-            "{\"a\":1}",
-            "--data-part",
-            "-",
-            "--async",
-            "--metadata",
-            "{}",
-        ]);
-        let A2aCommand::Send(s) = a.command else {
-            panic!("send")
-        };
-        assert_eq!(s.text.as_deref(), Some("hello"));
-        assert!(s.stream && s.async_);
-        assert_eq!(s.metadata.as_deref(), Some("{}"));
-        assert_eq!(s.metadata.as_deref(), Some("{}"));
-        assert_eq!(s.context.as_deref(), Some("c1"));
-        assert_eq!(s.task.as_deref(), Some("t1"));
-        assert_eq!(s.data_parts, vec!["{\"a\":1}".to_string(), "-".to_string()]);
-    }
-
-    #[test]
-    fn parses_task_commands() {
-        let a = parse(&["task", "get", "t1", "--history", "3"]);
-        assert_eq!(
-            a.command,
-            A2aCommand::Task {
-                command: TaskCommand::Get {
-                    task_id: "t1".into(),
-                    history: Some(3)
-                }
+            TasksCommand::Get {
+                task_id: "t1".into(),
+                history: Some(3)
             }
         );
         let a = parse(&[
-            "task",
             "list",
             "--context",
             "th",
@@ -997,16 +1054,13 @@ mod tests {
         ]);
         assert_eq!(
             a.command,
-            A2aCommand::Task {
-                command: TaskCommand::List {
-                    context: Some("th".into()),
-                    state: Some("completed".into()),
-                    limit: 5
-                }
+            TasksCommand::List {
+                context: Some("th".into()),
+                state: Some("completed".into()),
+                limit: 5
             }
         );
         let a = parse(&[
-            "task",
             "push-config",
             "set",
             "t1",
@@ -1017,33 +1071,37 @@ mod tests {
         ]);
         assert_eq!(
             a.command,
-            A2aCommand::Task {
-                command: TaskCommand::PushConfig {
-                    command: PushConfigCommand::Set {
-                        task_id: "t1".into(),
-                        url: "https://h/x".into(),
-                        token: Some("k".into()),
-                        config_id: None
-                    }
+            TasksCommand::PushConfig {
+                command: PushConfigCommand::Set {
+                    task_id: "t1".into(),
+                    url: "https://h/x".into(),
+                    token: Some("k".into()),
+                    config_id: None
                 }
             }
         );
-        let a = parse(&["task", "push-config", "delete", "t1", "c1"]);
-        assert!(matches!(
-            a.command,
-            A2aCommand::Task {
-                command: TaskCommand::PushConfig {
-                    command: PushConfigCommand::Delete { .. }
-                }
-            }
-        ));
         for sub in ["cancel", "subscribe", "pending"] {
-            let a = parse(&["task", sub, "t9"]);
-            assert!(matches!(a.command, A2aCommand::Task { .. }), "{sub}");
+            let a = parse(&[sub, "t9"]);
+            assert!(!matches!(a.command, TasksCommand::List { .. }), "{sub}");
         }
-        // push-config set requires --url
-        assert!(
-            TestCli::try_parse_from(["distri", "a2a", "task", "push-config", "set", "t1"]).is_err()
+        let a = parse(&[
+            "subscribe",
+            "t9",
+            "--extensions",
+            "event-stream,client-tools",
+        ]);
+        assert_eq!(a.extensions.len(), 2);
+        assert!(TestCli::try_parse_from(["distri", "tasks", "push-config", "set", "t1"]).is_err());
+    }
+
+    #[test]
+    fn extension_names_become_uris() {
+        assert_eq!(
+            extension_uris(&["event-stream, urn:x".into(), "event-stream".into()]),
+            vec![
+                "https://distri.dev/a2a/extensions/event-stream/v1".to_string(),
+                "urn:x".to_string()
+            ]
         );
     }
 
@@ -1069,58 +1127,64 @@ mod tests {
         assert!(load_data_part("{not json").is_err());
         assert!(message_parts(None, &[]).is_err());
         let parts = message_parts(Some("hi"), &["{\"k\":true}".into()]).unwrap();
-        assert!(matches!(parts[0], Part::Text(_)));
-        assert!(matches!(parts[1], Part::Data(_)));
+        assert_eq!(parts[0].as_text(), Some("hi"));
+        assert!(parts[1].as_data().is_some());
     }
 
     #[test]
-    fn send_params_are_a_user_message_with_ids() {
+    fn send_params_are_a_1_0_user_message_with_ids() {
         let p = build_send_params(message_parts(Some("hi"), &[]).unwrap(), Some("ctx"), None);
         assert_eq!(p.message.role, Role::User);
         assert_eq!(p.message.context_id.as_deref(), Some("ctx"));
         assert!(p.message.task_id.is_some());
-        assert!(p.metadata.is_none());
         let v = serde_json::to_value(&p).unwrap();
-        assert_eq!(v["message"]["parts"][0], json!({"kind":"text","text":"hi"}));
+        assert_eq!(v["message"]["parts"][0], json!({"text":"hi"}));
+        assert_eq!(v["message"]["role"], "ROLE_USER");
     }
 
     #[test]
-    fn states_map_to_distri_status() {
-        assert_eq!(distri_status_for_state("working").unwrap(), "running");
+    fn states_parse_every_spelling() {
+        assert_eq!(parse_state("working").unwrap(), TaskState::Working);
+        assert_eq!(parse_state("running").unwrap(), TaskState::Working);
         assert_eq!(
-            distri_status_for_state("input-required").unwrap(),
-            "input_required"
+            parse_state("input-required").unwrap(),
+            TaskState::InputRequired
         );
         assert_eq!(
-            distri_status_for_state("INPUT_REQUIRED").unwrap(),
-            "input_required"
+            parse_state("INPUT_REQUIRED").unwrap(),
+            TaskState::InputRequired
         );
-        assert_eq!(distri_status_for_state("submitted").unwrap(), "pending");
-        assert_eq!(distri_status_for_state("completed").unwrap(), "completed");
-        assert!(distri_status_for_state("bogus").is_err());
+        assert_eq!(
+            parse_state("TASK_STATE_AUTH_REQUIRED").unwrap(),
+            TaskState::AuthRequired
+        );
+        assert!(parse_state("bogus").is_err());
     }
 
     fn card_json(extensions: Value) -> AgentCard {
         serde_json::from_value(json!({
             "version": "0.4.6", "name": "distri", "description": "The assistant",
-            "url": "http://localhost:8081/v1/agents/distri",
-            "preferredTransport": "JSONRPC",
-            "capabilities": {"streaming": true, "pushNotifications": false,
-                              "stateTransitionHistory": true, "extensions": extensions},
-            "defaultInputModes": ["text"], "defaultOutputModes": ["text"],
+            "supportedInterfaces": [{"url": "http://localhost:8081/v1/agents/distri",
+                                      "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}],
+            "capabilities": {"streaming": true, "pushNotifications": false, "extensions": extensions},
+            "defaultInputModes": ["text/plain"], "defaultOutputModes": ["text/plain"],
             "skills": [{"id":"s1","name":"Search","description":"d","tags":[]}]
         }))
         .unwrap()
     }
 
     #[test]
-    fn card_summary_lists_the_durable_runs_extension() {
+    fn card_summary_lists_extensions() {
         let card = card_json(json!([serde_json::to_value(
             distri_types::durable_runs_extension()
         )
         .unwrap()]));
         let out = format_card(&card);
         assert!(out.contains("Name:         distri"), "{out}");
+        assert!(
+            out.contains("JSONRPC http://localhost:8081/v1/agents/distri (A2A 1.0)"),
+            "{out}"
+        );
         assert!(out.contains("streaming=yes pushNotifications=no"), "{out}");
         assert!(
             out.contains("https://distri.dev/a2a/extensions/durable-runs/v1"),
@@ -1137,33 +1201,48 @@ mod tests {
 
     #[test]
     fn stream_frames_are_one_line_each() {
-        let status = json!({"jsonrpc":"2.0","id":"1","result":{
-            "kind":"status-update","taskId":"t1","contextId":"c1",
-            "status":{"state":"working"},"final":false,
+        let status = json!({"jsonrpc":"2.0","id":"1","result":{"statusUpdate":{
+            "taskId":"t1","contextId":"c1","status":{"state":"TASK_STATE_WORKING"},
             "metadata":{"type":"tool_calls","agent_id":"distri",
-                        "tool_calls":[{"tool_call_id":"a","tool_name":"search","input":{}}]}}});
+                        "tool_calls":[{"tool_call_id":"a","tool_name":"search","input":{}}]}}}});
         assert_eq!(
             format_stream_frame(&status).unwrap(),
             "[status] working tool_calls: search"
         );
         assert_eq!(frame_task_id(&status).as_deref(), Some("t1"));
-        let parked = json!({"result":{"kind":"status-update","taskId":"t1","contextId":"c1",
-            "status":{"state":"inputRequired"},"final":false,
-            "metadata":{"type":"run_parked","agent_id":"distri","task_id":"t1","pending":["call_1"]}}});
+        let parked = json!({"result":{"statusUpdate":{"taskId":"t1","contextId":"c1",
+            "status":{"state":"TASK_STATE_INPUT_REQUIRED"},
+            "metadata":{"type":"run_parked","agent_id":"distri","task_id":"t1","pending":["call_1"]}}}});
         assert_eq!(
             format_stream_frame(&parked).unwrap(),
             "[status] input-required run_parked: waiting on call_1"
         );
-        let msg = json!({"result":{"kind":"message","messageId":"m","role":"agent",
-            "parts":[{"kind":"text","text":"Hello\nthere"}],"taskId":"t1","contextId":"c1"}});
+        let msg = json!({"result":{"message":{"messageId":"m","role":"ROLE_AGENT",
+            "parts":[{"text":"Hello\nthere"}],"taskId":"t1","contextId":"c1"}}});
         assert_eq!(
             format_stream_frame(&msg).unwrap(),
             "[message] agent — Hello there"
         );
-        let done = json!({"result":{"kind":"status-update","taskId":"t1","contextId":"c1",
-            "status":{"state":"completed"},"final":true}});
+        let done = json!({"result":{"statusUpdate":{"taskId":"t1","contextId":"c1",
+            "status":{"state":"TASK_STATE_COMPLETED"},"metadata":{"type":"run_finished","final":true,"success":true}}}});
         assert_eq!(
             format_stream_frame(&done).unwrap(),
+            "[status] completed run_finished: success=true (final)"
+        );
+        let art = json!({"result":{"artifactUpdate":{"taskId":"t1","contextId":"c1",
+            "artifact":{"artifactId":"m1","name":"response","parts":[{"text":"Hel"}]},"append":false,"lastChunk":false}}});
+        assert_eq!(
+            format_stream_frame(&art).unwrap(),
+            "[artifact] response — Hel"
+        );
+        let task = json!({"result":{"task":{"id":"t1","contextId":"c1","status":{"state":"TASK_STATE_SUBMITTED"}}}});
+        assert_eq!(format_stream_frame(&task).unwrap(), "[task] t1 submitted");
+        assert_eq!(frame_task_id(&task).as_deref(), Some("t1"));
+        // 0.x frames still read.
+        let old = json!({"result":{"kind":"status-update","taskId":"t1","contextId":"c1",
+            "status":{"state":"completed"},"final":true}});
+        assert_eq!(
+            format_stream_frame(&old).unwrap(),
             "[status] completed (final)"
         );
         let err = json!({"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"nope"}});
@@ -1174,13 +1253,13 @@ mod tests {
     #[test]
     fn task_output_and_history_trim() {
         let mut task: Task = serde_json::from_value(json!({
-            "kind":"task","id":"t1","contextId":"c1",
-            "status":{"state":"completed","timestamp":"2026-11-20T10:00:00Z",
-                      "message":{"kind":"message","messageId":"m0","role":"agent","parts":[{"kind":"text","text":"done"}]}},
+            "id":"t1","contextId":"c1",
+            "status":{"state":"TASK_STATE_COMPLETED","timestamp":"2026-11-20T10:00:00Z",
+                      "message":{"messageId":"m0","role":"ROLE_AGENT","parts":[{"text":"done"}]}},
             "history":[
-                {"kind":"message","messageId":"m1","role":"user","parts":[{"kind":"text","text":"one"}]},
-                {"kind":"message","messageId":"m2","role":"agent","parts":[{"kind":"text","text":"two"}]},
-                {"kind":"message","messageId":"m3","role":"user","parts":[{"kind":"data","data":{"x":1}}]}
+                {"messageId":"m1","role":"ROLE_USER","parts":[{"text":"one"}]},
+                {"messageId":"m2","role":"ROLE_AGENT","parts":[{"text":"two"}]},
+                {"messageId":"m3","role":"ROLE_USER","parts":[{"data":{"x":1}}]}
             ]
         }))
         .unwrap();
@@ -1188,9 +1267,8 @@ mod tests {
         assert_eq!(task.history.len(), 2);
         let out = format_task(&task, Some(2));
         assert!(out.contains("State:    completed"), "{out}");
-        task.status.state = distri_a2a::TaskState::InputRequired;
+        task.status.state = TaskState::InputRequired;
         assert!(format_task(&task, Some(0)).contains("State:    input-required"));
-        task.status.state = distri_a2a::TaskState::Completed;
         assert!(out.contains("Message:  done"), "{out}");
         assert!(out.contains("History:  2 message(s)"), "{out}");
         assert!(
@@ -1203,14 +1281,14 @@ mod tests {
     #[test]
     fn task_list_and_pending_calls_tables() {
         assert_eq!(format_task_list(&[]), "no tasks\n");
-        let t: distri_types::Task = serde_json::from_value(json!({
-            "id":"t1","thread_id":"th1","parent_task_id":null,"status":"input_required",
-            "created_at":0,"updated_at":1_763_632_800_000i64}))
+        let t: Task = serde_json::from_value(json!({
+            "id":"t1","contextId":"th1",
+            "status":{"state":"TASK_STATE_INPUT_REQUIRED","timestamp":"2025-11-20T10:00:00Z"}}))
         .unwrap();
         let out = format_task_list(&[t]);
         assert!(out.starts_with("TASK"), "{out}");
         assert!(
-            out.contains("t1") && out.contains("th1") && out.contains("input_required"),
+            out.contains("t1") && out.contains("th1") && out.contains("input-required"),
             "{out}"
         );
 
