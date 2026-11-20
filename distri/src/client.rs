@@ -442,6 +442,33 @@ impl Distri {
         Ok(resp.json().await?)
     }
 
+    /// `GET /agents/{name}/versions`: the agent's saved versions, newest
+    /// first (developer). `None` when the server keeps no history (the OSS
+    /// server has no such route: 404).
+    pub async fn list_agent_versions(
+        &self,
+        name: &str,
+    ) -> Result<Option<Vec<AgentVersionSummary>>, ClientError> {
+        let url = format!("{}/agents/{}/versions", self.base_url, name);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "failed to list versions of {name} (status {status}): {text}"
+            )));
+        }
+        // A server without the route may answer another resource here.
+        let value: serde_json::Value = resp.json().await?;
+        if !value.is_array() {
+            return Ok(None);
+        }
+        Ok(Some(serde_json::from_value(value)?))
+    }
+
     /// The run rooted at `task_id` (a child id gives that child's subtree).
     /// `GET /v1/runs/{task_id}`; `None` on 404.
     pub async fn get_run(
@@ -3376,4 +3403,18 @@ mod parse_invoke_result_tests {
         let err = parse_send_message_response(response).unwrap_err();
         assert!(matches!(err, ClientError::InvalidResponse(m) if m == "boom"));
     }
+}
+
+/// One saved version of an agent (`GET /agents/{name}/versions`).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct AgentVersionSummary {
+    pub version_no: i32,
+    #[serde(default)]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub breaking: bool,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub contract_hash: Option<String>,
 }

@@ -76,7 +76,10 @@ enum Commands {
 
     /// Run a single task against an agent
     Run {
-        #[clap(long, help = "Agent name (defaults to 'distri_runner')")]
+        #[clap(
+            long,
+            help = "Agent name, or name@N to run a saved version (defaults to 'distri_runner')"
+        )]
         agent: Option<String>,
         #[clap(long, help = "Task text to send", required = true)]
         task: String,
@@ -358,12 +361,21 @@ enum AgentsCommands {
     List,
     /// The agent's public A2A card (what any A2A client sees)
     Card {
-        #[clap(help = "Agent name")]
+        #[clap(help = "Agent name, or name@N for a saved version")]
         agent: String,
         /// The authenticated extended card (`GetExtendedAgentCard`)
         #[clap(long)]
         extended: bool,
         /// Print the card JSON
+        #[clap(long)]
+        json: bool,
+    },
+    /// The agent's saved versions (number, date, breaking, note); run one
+    /// with `distri run --agent name@N`
+    Versions {
+        #[clap(help = "Agent name")]
+        agent: String,
+        /// Print the versions as JSON
         #[clap(long)]
         json: bool,
     },
@@ -915,13 +927,19 @@ async fn main() -> Result<()> {
 
             // Verify the agent exists before registering anything. Only existence
             // matters here, so the cheap card fetch is enough.
+            // `name@N` runs saved version N: the card is the pinned one.
             if app.fetch_agent_card(&agent_name).await?.is_none() {
                 return Err(anyhow::anyhow!(
-                    "Agent '{}' not found on {}",
-                    agent_name,
+                    "{} on {}",
+                    distri_cli::tasks_cli::not_found_message(&agent_name),
                     base_url
                 ));
             }
+            // The server names the bare agent on its events, so local tools
+            // are keyed by the bare name (`name@N` → `name`).
+            let tool_agent = distri_types::AgentRef::parse(&agent_name)
+                .map(|r| r.name)
+                .unwrap_or_else(|_| agent_name.clone());
             // Register local CLI tool handlers + ship their schemas to the
             // server. The CLI is always the execution environment for any
             // external tool calls the server delegates back — there is no
@@ -931,7 +949,7 @@ async fn main() -> Result<()> {
                 PermissionEngine::load(&workspace, cli.config.as_deref(), cli.permission_mode)?;
             let mut tool_defs = register_all(
                 &app.registry(),
-                &agent_name,
+                &tool_agent,
                 &workspace,
                 permissions,
                 std::sync::Arc::new(distri_cli::interact::TerminalBroker),
@@ -1019,6 +1037,9 @@ async fn main() -> Result<()> {
                 json,
             } => {
                 distri_cli::tasks_cli::print_card(&client, &agent, extended, json).await?;
+            }
+            AgentsCommands::Versions { agent, json } => {
+                distri_cli::tasks_cli::print_versions(&client, &agent, json).await?;
             }
             AgentsCommands::List => {
                 for agent in app.list_agents().await? {

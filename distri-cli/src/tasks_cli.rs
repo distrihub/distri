@@ -169,7 +169,7 @@ pub async fn print_card(
         client
             .get_agent_card_json(agent)
             .await?
-            .with_context(|| format!("agent '{agent}' not found"))?
+            .with_context(|| not_found_message(agent))?
     };
     if json_out {
         print_json(&card);
@@ -179,6 +179,67 @@ pub async fn print_card(
         print!("{}", format_card(&card));
     }
     Ok(())
+}
+
+/// What to say when `agent` (`name` or `name@N`) is not on the server.
+pub fn not_found_message(agent: &str) -> String {
+    match distri_types::AgentRef::parse(agent) {
+        Ok(r) if r.version_no().is_some() => format!(
+            "agent '{}' has no version {} on this server (`distri agents versions {}` lists them)",
+            r.name,
+            r.version_no().unwrap_or_default(),
+            r.name
+        ),
+        _ => format!("agent '{agent}' not found"),
+    }
+}
+
+/// `distri agents versions <name>`: the saved versions, newest first.
+pub async fn print_versions(client: &Distri, agent: &str, json_out: bool) -> Result<()> {
+    let name = distri_types::AgentRef::parse(agent)
+        .map(|r| r.name)
+        .unwrap_or_else(|_| agent.to_string());
+    let Some(versions) = client.list_agent_versions(&name).await? else {
+        bail!(
+            "this server keeps no saved versions of agents (distri cloud does); \
+             '{name}' runs its current definition"
+        );
+    };
+    if json_out {
+        print_json(&serde_json::to_value(&versions)?);
+    } else {
+        print!("{}", format_versions(&name, &versions));
+    }
+    Ok(())
+}
+
+/// One line per version: number, date, breaking, note. The newest is the
+/// one `name` (and `name@latest`) runs.
+pub fn format_versions(name: &str, versions: &[distri::AgentVersionSummary]) -> String {
+    if versions.is_empty() {
+        return format!("No saved versions of '{name}'.\n");
+    }
+    let latest = versions.iter().map(|v| v.version_no).max();
+    let mut out = format!("{:<8}{:<18}{:<10}NOTE\n", "VERSION", "SAVED", "BREAKING");
+    for v in versions {
+        let mut no = format!("v{}", v.version_no);
+        if Some(v.version_no) == latest {
+            no.push('*');
+        }
+        let date = v
+            .created_at
+            .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_else(|| "-".into());
+        let breaking = if v.breaking { "yes" } else { "" };
+        out.push_str(&format!(
+            "{no:<8}{date:<18}{breaking:<10}{}\n",
+            v.note.as_deref().unwrap_or("")
+        ));
+    }
+    out.push_str(&format!(
+        "* latest. Run a version with `distri run --agent {name}@N`.\n"
+    ));
+    out
 }
 
 /// A raw A2A send from `distri run` (non-interactive: no local tools, no TUI).
@@ -709,6 +770,11 @@ pub fn format_card(card: &AgentCard) -> String {
         line("Description:", &card.description);
     }
     line("Version:", &card.version);
+    if let Some(n) =
+        distri_types::a2a_extensions::AgentDescriptor::from_card(card).and_then(|d| d.version_no)
+    {
+        line("Version no:", &format!("v{n}"));
+    }
     for i in &card.supported_interfaces {
         line(
             "Interface:",
@@ -1134,6 +1200,60 @@ fn event_detail(meta: &Value) -> String {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn versions_print_number_date_breaking_and_note() {
+        let at = |s: &str| Some(s.parse::<chrono::DateTime<chrono::Utc>>().unwrap());
+        let versions = vec![
+            distri::AgentVersionSummary {
+                version_no: 2,
+                created_at: at("2026-11-20T10:30:00Z"),
+                breaking: true,
+                note: Some("new tool".into()),
+                ..Default::default()
+            },
+            distri::AgentVersionSummary {
+                version_no: 1,
+                created_at: at("2026-11-19T08:00:00Z"),
+                ..Default::default()
+            },
+        ];
+        let out = format_versions("helper", &versions);
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[1].starts_with("v2*"), "{out}");
+        assert!(lines[1].contains("2026-11-20 10:30"), "{out}");
+        assert!(
+            lines[1].contains("yes") && lines[1].contains("new tool"),
+            "{out}"
+        );
+        assert!(
+            lines[2].starts_with("v1 ") && !lines[2].contains("yes"),
+            "{out}"
+        );
+        assert!(out.contains("distri run --agent helper@N"), "{out}");
+        assert_eq!(format_versions("x", &[]), "No saved versions of 'x'.\n");
+    }
+
+    #[test]
+    fn a_missing_version_says_so() {
+        assert!(not_found_message("helper@9").contains("has no version 9"));
+        assert_eq!(not_found_message("helper"), "agent 'helper' not found");
+    }
+
+    #[test]
+    fn a_pinned_card_shows_its_saved_version() {
+        let mut card = AgentCard {
+            name: "helper".into(),
+            ..Default::default()
+        };
+        assert!(!format_card(&card).contains("Version no:"));
+        distri_types::a2a_extensions::pin_card(&mut card, 3);
+        assert!(
+            format_card(&card).contains("Version no:   v3"),
+            "{}",
+            format_card(&card)
+        );
+    }
 
     #[derive(Parser, Debug)]
     struct TestCli {
