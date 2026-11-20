@@ -45,6 +45,16 @@ a request does not activate is refused with JSON-RPC `-32008` (ExtensionSupportR
 `SendMessage` returns `{"task": …}` with the same status and the artifacts. Timestamps are
 ISO-8601 (`2026-11-20T12:00:00.000Z`).
 
+### Answering input-required
+
+A task in `TASK_STATE_INPUT_REQUIRED` waits on client tool calls, each listed in its status message
+as a DataPart `{tool_call_id, tool_name, input}` (`distri/part_type: tool_call`). Answer with a new
+message on the same task (`message.taskId`): a DataPart `{tool_call_id, result}` per call, or just
+text when one call is pending. The run wakes; `SendStreamingMessage` streams the rest of the task,
+`SendMessage` returns it at its next end or park. Errors are `-32602` with `data`. Details:
+[client-tools.md](client-tools.md#answering-with-a-message-plain-a2a). With the official client:
+`a2acli send --task-id <task> "<answer>"`; with distri's: `distri tasks respond <task> <answer>`.
+
 ## Parts
 
 A distri part kind that A2A has no type for (tool call, tool result, artifact, resource link) is a

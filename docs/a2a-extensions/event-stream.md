@@ -19,6 +19,15 @@ auth-required; a park is input-required). The stream ends after the root's final
 `text_message_start|content|end` events (not artifacts). Events that belong to an extension the
 request did not activate are not sent as envelopes (their standard frames are sent instead).
 
-- **Replay:** `GET /v1/tasks/{task_id}/events`; `GET /v1/threads/{id}/messages` returns
-  `StreamResponse` values (`{"message"}` / `{"statusUpdate"}` with the envelope).
+- **Timestamps:** A2A 1.0 messages carry no time. With `event-stream` active every `Message` and
+  `TaskArtifactUpdateEvent` has `metadata["distri/created_at"]` (ISO-8601, ms, `Z`): stream frames,
+  the trailing `{message}`, `GetTask` history and replays. `GET /v1/threads/{id}/messages` always
+  has it. Status updates keep the standard `status.timestamp`.
+- **Replay:** `GET /v1/tasks/{task_id}/events` is this extension's own method: calling it activates
+  `event-stream`. The envelopes of other extensions follow the request's `A2A-Extensions` header,
+  as on a stream: `tool_calls` / `tool_results` / `tool_execution_*` need `client-tools`,
+  `run_parked` needs `durable-runs`. The activated URIs are echoed. Each `data:` line is one
+  envelope; the stream ends on the task's own end.
+- **History:** `GET /v1/threads/{id}/messages` returns `StreamResponse` values (`{"message"}` /
+  `{"statusUpdate"}` with the envelope).
 - **params:** `envelope`, `events`, `replay`.

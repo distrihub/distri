@@ -14,3 +14,8 @@ running it.
 - **SendMessage:** a parked task's `metadata.pending_calls` lists the calls (only with this
   extension active).
 - **params:** `requires`, `pending_calls`, `thread_pending_calls`, `claim`, `events`, `envelope`.
+- **Answering:** a parked task is answered with `complete-tool`, or with a message on the task
+  (see [client-tools.md](client-tools.md#answering-with-a-message-plain-a2a)); a late answer to an
+  expired call is `-32602` `{tool_call_id, status: "expired"}`.
+- **`GET .../pending-calls`** answers `200 []` for a thread or task that does not exist yet or that
+  the caller cannot see (never 404: it reveals nothing either way).
