@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="Distri. Open-source embedded agents for your end users. Powering AI-native experiences with a managed agents platform." width="100%">
+  <img src="docs/assets/banner.svg" alt="Distri. Embed AI experiences or build in your product. AI Agents that live natively in your product: any model, self-host or cloud." width="100%">
 </p>
 
 <p align="center">
@@ -16,14 +16,17 @@
   <img src="https://img.shields.io/badge/protocols-A2A%20%C2%B7%20MCP-3b82f6" alt="A2A and MCP">
 </p>
 
-<h3 align="center">Powering AI-native experiences with a managed agents platform.</h3>
+<h3 align="center">AI Agents that live natively in your product.</h3>
 
-<p align="center">
-Coding agents have transformed the software industry.<br>
-Distri brings those agentic capabilities, embedded directly in your product.
-</p>
+Distri is an open-source (MIT) agent server written in Rust. An agent is a markdown file; Distri runs it on any model, on your own server or on [Distri Cloud](https://app.distri.dev), and exposes it as an [A2A 1.0](https://a2a-protocol.org/) endpoint your product, your backend or a chat app can call.
 
-<br>
+## Three ways to use it
+
+| | What you get | Where |
+|---|---|---|
+| **Embed AI experiences** | A chat UI in your app whose agent calls your app's own functions (`cart.add`, `form.setValues`) in the signed-in user's browser or phone. | [`@distri/react`](https://www.npmjs.com/package/@distri/react), [`@distri/react-native`](https://www.npmjs.com/package/@distri/react-native), [`@distri/angular`](https://www.npmjs.com/package/@distri/angular) ([distrijs](https://github.com/distrihub/distrijs)), or one `<script src="https://embed.distri.dev/v1/embed.js">` tag on Distri Cloud |
+| **Bots and channels** | The same agent answers in Telegram, WhatsApp and Discord, with alerts from scheduled workflows. | Distri Cloud |
+| **Build agents in your product** | Agents and workflows your backend calls over A2A; tools over MCP and HTTP; 11 provider types; usage and cost per agent (per customer on Distri Cloud). | This repository, self-hosted, or Distri Cloud |
 
 <table>
   <tr>
@@ -34,73 +37,84 @@ Distri brings those agentic capabilities, embedded directly in your product.
     <td align="center"><b>KYC / KYB</b><br>Reads two documents and fills the whole form.</td>
     <td align="center"><b>Checkout</b><br>One sentence becomes a cart, a discount and a ready-to-pay sheet.</td>
   </tr>
-  <tr>
-    <td><a href="https://distri.dev/samples/?id=design-canvas"><img src="docs/assets/samples/design-canvas.jpg" alt="An agent laying out mobile screens on a design canvas"></a></td>
-    <td><a href="https://distri.dev/samples/?id=3d-studio"><img src="docs/assets/samples/3d-studio.jpg" alt="An agent building a 3D model"></a></td>
-  </tr>
-  <tr>
-    <td align="center"><b>Design canvas</b><br>Lays out two mobile screens, then restyles them.</td>
-    <td align="center"><b>3D studio</b><br>Builds a model part by part in WebGL.</td>
-  </tr>
 </table>
 
-<p align="center"><a href="https://distri.dev/samples/"><b>Play them live →</b></a></p>
+Live: [distri.dev/samples](https://distri.dev/samples/). Blueprints that set up an agent, its workflows and its channel from one sentence: [`samples/`](samples) (`distri apply samples/sre-agent`).
 
-## An open-source alternative to Claude Managed Agents
+## Quickstart (self-hosted, no API key)
 
-Claude Managed Agents runs Claude agents on Anthropic's managed infrastructure. Distri is a managed agents platform you can run anywhere, on any model, and it puts the agent inside your product.
-
-| | Distri | Claude Managed Agents |
-|---|---|---|
-| **Licence** | Open source, MIT | Proprietary, hosted by Anthropic |
-| **Where it runs** | Distri Cloud, your cloud, or fully self-hosted | Anthropic's managed infrastructure |
-| **Models** | OpenAI, Anthropic, Gemini, Qwen, GLM and any OpenAI-compatible endpoint | Claude |
-| **Where tools run** | In your app, in the signed-in user's session, plus MCP and HTTP tools on the server | In a managed sandbox; custom tools run in your backend |
-| **Your UI** | Chat components for React, React Native and Angular, or one script tag | You build the client |
-| **Platform fee** | Free | Token rates plus a fee per session-hour |
-
-Distri also tracks identity, cost and limits per end user, and runs the same agents on Slack, Telegram, WhatsApp and Discord.
-
-## How it works
-
-<p align="center">
-  <img src="docs/assets/turn.svg" alt="One turn: the user asks, the agent on Distri calls a tool, the tool runs in your app, the result goes back" width="100%">
-</p>
-
-- **An agent is a markdown file:** instructions, a model and a list of tools.
-- **A tool is a function your app already has,** like `cart.add` or `form.setValues`.
-- **When the agent calls it, your handler runs in the user's browser or phone,** in their session. The user sees every step and approves what matters.
-
-## Quick start
+Needs Rust and [Ollama](https://ollama.com); the model runs locally, so no key is needed.
 
 ```bash
-curl -fsSL https://distri.dev/install.sh | sh
+git clone https://github.com/distrihub/distri && cd distri
+cargo build -p distri-cli -p distri-server-cli --features distri-server-cli/sqlite_vendored
+./target/debug/distri-server --headless &      # listens on http://127.0.0.1:8081/v1
+ollama pull qwen3:4b
 ```
 
-**1. Write the agent and push it**
+Write an agent:
 
-```markdown
+```bash
+mkdir -p agents && cat > agents/greeter.md <<'MD'
 ---
-name = "shop_assistant"
-description = "Helps shoppers check out"
-
-[tools]
-external = ["add_to_cart"]
+name = "greeter"
+description = "Answers in one short sentence"
 
 [model_settings]
-model = "gpt-4.1-mini"
+model = "qwen3:4b"
+
+[model_settings.provider]
+name = "openai_compat"
+base_url = "http://127.0.0.1:11434/v1"
+api_key = "ollama"
 ---
 
-# ROLE
-You help shoppers on our store.
+Answer in one short sentence. /no_think
+MD
 ```
+
+Push it and send it a message:
 
 ```bash
-distri login
-distri push
+export DISTRI_BASE_URL=http://127.0.0.1:8081/v1
+./target/debug/distri push
+#   Pushed agent 'greeter'
+
+curl -s $DISTRI_BASE_URL/agents/greeter -H 'Content-Type: application/json' -d '{
+  "jsonrpc": "2.0", "id": "1", "method": "SendMessage",
+  "params": {"message": {"messageId": "m-1", "role": "ROLE_USER",
+                         "parts": [{"text": "What is the capital of France?"}]}}}'
 ```
 
-**2. Hand it your functions**
+```json
+{"jsonrpc": "2.0", "id": "1", "result": {"task": {
+  "id": "f4bb01ef-ba78-429f-a929-b10c4209f967",
+  "contextId": "d566bd02-af53-4ed3-b47c-a3f12a83f027",
+  "status": {"state": "TASK_STATE_COMPLETED", "timestamp": "2026-11-20T19:39:18.099Z",
+    "message": {"role": "ROLE_AGENT", "parts": [{"text": "Paris"}], "metadata": {"is_final": true, "message_type": "text"}, …}}}}}
+```
+
+To use a hosted model instead, start the server with the provider's key in its environment and change the provider block:
+
+```bash
+export OPENAI_API_KEY=sk-...                     # read by distri-server
+```
+
+```toml
+[model_settings]
+model = "gpt-4.1-mini"
+
+[model_settings.provider]
+name = "openai"
+```
+
+The other provider names are under [Models](#models).
+
+On a 16-core CPU with no GPU, qwen3:4b took 10 minutes to send that reply; use a hosted model or a GPU for anything past this check. `/no_think` turns off Qwen3's reasoning.
+
+More: [streaming, tasks and the CLI](docs/cli.md), the agent card at `/v1/agents/greeter/.well-known/agent-card.json`, and [distri's A2A extensions](docs/a2a-extensions/README.md).
+
+## Embed it in a React app
 
 ```tsx
 import { DistriProvider, Chat } from '@distri/react';
@@ -113,193 +127,43 @@ const addToCart: DistriFnTool = {
   parameters: { type: 'object', properties: { sku: { type: 'string' } }, required: ['sku'] },
   autoExecute: true,
   handler: async ({ sku }) => {
-    await cart.add(sku); // your code, in the browser
+    await cart.add(sku); // your code, in the user's browser
     return { ok: true, items: cart.count };
   },
 };
 
-<DistriProvider config={{ baseUrl: 'https://api.distri.dev/v1', clientId: 'dpc_…', workspaceId: '…' }}>
-  <Chat agentId="shop_assistant" externalTools={[addToCart]} />
-</DistriProvider>
+export const App = ({ threadId }: { threadId: string }) => ( // one id per conversation
+  <DistriProvider config={{ baseUrl: 'https://api.distri.dev/v1', clientId: 'dpc_…', workspaceId: '…' }}>
+    <Chat agentId="shop_agent" threadId={threadId} externalTools={[addToCart]} />
+  </DistriProvider>
+);
 ```
 
-**3. Ask it something**
+The agent lists `add_to_cart` under `[tools] external`; when it calls it, the handler runs in the page and the cart changes the way it does for a click. The snippet typechecks against `@distri/react` 0.4.6 from npm. Guide: [in-product tools](https://distri.dev/docs/guides/agent/in-product-tools/).
 
-> Add two oat milks to my cart
+## Compared with
 
-The agent calls `add_to_cart`, your handler runs, and the cart on screen changes the way it does for a click.
+From each project's own docs, 2026-11-20.
 
-Full guide: [in-product tools](https://distri.dev/docs/guides/agent/in-product-tools/). The SDKs for React, React Native and Angular live in [distrihub/distrijs](https://github.com/distrihub/distrijs).
+| | Distri | Claude Managed Agents | OpenAI Agents SDK | Vercel AI SDK |
+|---|---|---|---|---|
+| Licence | MIT | No public source | MIT | Apache-2.0 |
+| Models | 11 provider types, any OpenAI-compatible endpoint | Claude | OpenAI plus 100+ other LLMs | Provider packages |
+| What it is | Agent server, UI SDKs, channels | Hosted agent API (self-hosted server through Anthropic sales) | Python/TS library | TypeScript library |
+| Price | Free to self-host | Tokens plus $0.08 per session-hour | Free library | Free library |
 
-## Call an agent
+OpenAI's Agent Builder shuts down on 2026-11-30 ([deprecations](https://developers.openai.com/api/docs/deprecations)).
 
-Every agent is an [A2A 1.0](https://a2a-protocol.org/) JSON-RPC endpoint. Any A2A client
-(e.g. a2a-rs's `a2acli`) works unchanged; distri's additions are opt-in
-[A2A extensions](docs/a2a-extensions/README.md) a client activates with the `A2A-Extensions` header.
+## Models
 
-**Send a message**
+Set the model per agent in `[model_settings]`. Provider `name` values: `openai`, `anthropic`, `gemini`, `azure_openai`, `azure_ai_foundry`, `aws_bedrock`, `google_vertex`, `alibaba_cloud` (Qwen), `zai` (GLM), `fal_ai` (images) and `openai_compat` (Ollama, vLLM, OpenRouter, Together, Groq, any OpenAI-compatible URL). The model catalog is [`distri-types/src/default_models.json`](distri-types/src/default_models.json).
+
+## Install the CLI
 
 ```bash
-curl -X POST https://api.distri.dev/v1/agents/shop_assistant \
-  -H "Authorization: Bearer $DISTRI_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": "1",
-    "method": "SendMessage",
-    "params": {
-      "message": {
-        "messageId": "m-1",
-        "role": "ROLE_USER",
-        "parts": [{ "text": "What is in my cart?" }]
-      }
-    }
-  }'
+curl -fsSL https://distri.dev/install.sh | sh    # macOS and Linux, from GitHub releases
+distri login                                      # Distri Cloud
 ```
-
-**Stream the reply** over SSE: use `"method": "SendStreamingMessage"` and `curl -N`. Add
-`-H "A2A-Extensions: https://distri.dev/a2a/extensions/event-stream/v1"` for distri's full event
-stream. (The A2A 0.x method names, `message/send` …, still work for one release.)
-
-**Self-hosted:** the same calls work against `http://localhost:7777/v1/agents/shop_assistant`.
-
-```bash
-curl http://localhost:7777/agents                                          # list agents
-curl http://localhost:7777/agents/shop_assistant/.well-known/agent-card.json  # A2A agent card
-```
-
-**From the CLI**
-
-```bash
-distri run --agent shop_assistant --task "What is in my cart?"   # run one task
-distri tui shop_assistant                                        # chat in the terminal
-distri push                                                      # sync agents, skills and templates
-distri traces list                                               # inspect runs
-distri serve                                                     # run the server and UI locally
-```
-
-**A2A from the CLI**, by domain (`--agent` defaults to `$DISTRI_AGENT`, else `distri`; `--json`
-prints the protocol JSON, one frame per line when streaming; `--extensions` activates A2A
-extensions by name or URI, and the ones the server activated are reported on stderr)
-
-```bash
-distri agents card shop_assistant [--extended] [--json]          # the public A2A card
-distri run --agent shop_assistant --task "…" --json              # SendMessage (waits for the task)
-distri run --task "…" --stream [--extensions event-stream]       # SendStreamingMessage: one line per frame
-distri run --task "…" --async                                    # print the task id and return
-distri run --task "…" --context-id <thread> --task-id <id> --data-part '{"k":1}' --metadata @meta.json
-distri tasks get <task_id> [--history 5]                         # GetTask
-distri tasks list [--context <thread>] [--state input-required] [--limit 20]   # ListTasks
-distri tasks cancel <task_id>                                    # CancelTask
-distri tasks subscribe <task_id>                                 # SubscribeToTask (event-stream)
-distri tasks push-config list|get|set|delete <task_id> …         # push configs (set --url [--token])
-distri tasks pending <task_id>                                   # pending calls (durable-runs extension)
-```
-
-`distri run` without those flags is the interactive runner (local tools, terminal rendering); any
-of `--json`, `--stream`, `--async`, `--metadata`, `--data-part`, `--extensions` makes it a plain,
-non-interactive A2A send.
-
-With durable runs on (`DISTRI_DURABLE_RUNS=1`), the agent card lists the A2A extension
-`https://distri.dev/a2a/extensions/durable-runs/v1` in `capabilities.extensions`; its `params`
-name the pending-calls and claim endpoints.
-
-## Everything an embedded agent needs, built in
-
-<p align="center">
-  <img src="docs/assets/platform.png" alt="The Distri platform: the Distri Client runs inside your apps and connects to the managed agent runtime; channels and the API connect to the same runtime" width="100%">
-</p>
-
-| | |
-|---|---|
-| **Distri Client** | Runs inside your app: chat components, client-side tools, approvals in your own UI and streaming. For web, mobile, or any page with one script tag. |
-| **Runtime** | Durable runs, workflows, sub-agents, schedules, webhooks and steps that wait for a person. |
-| **Agents** | Agents as markdown, skills, templates, threads, sessions and end users. |
-| **Protocols and tools** | [A2A](https://google.github.io/a2a/) for every agent, MCP for tools, HTTP tools, OAuth connections and secrets. |
-| **AI Gateway** | Multi-provider connectivity, cost attribution per agent and end user, limits and budgets, OpenTelemetry traces. |
-| **Channels** | The same agent on Slack, Telegram, WhatsApp and Discord, or from your backend over the API. |
-
-## Providers and models
-
-Set the model per agent. Connect to frontier and open-source models, for text, voice, audio and images.
-
-```toml
-[model_settings]
-model = "claude-sonnet-4"
-
-[model_settings.provider]
-name = "anthropic"
-```
-
-| Provider | `name` | Models |
-|---|---|---|
-| **OpenAI** | `openai` | GPT-6 (Astra, Sol, Luna), GPT-5.6, GPT-5.5, GPT-5.4, GPT-5 mini and nano, GPT-4.1, GPT-4o, o3, o4-mini |
-| **Anthropic** | `anthropic` | Claude Opus, Sonnet and Haiku |
-| **Google Gemini** | `gemini` | Gemini 2.5 Pro and Flash |
-| **Azure OpenAI** | `azure_openai` | Your Azure deployments |
-| **Azure AI Foundry** | `azure_ai_foundry` | Models in your Foundry resource |
-| **AWS Bedrock** | `aws_bedrock` | Models in your Bedrock account |
-| **Google Vertex AI** | `google_vertex` | Models in your Vertex project |
-| **Alibaba Cloud** | `alibaba_cloud` | Qwen |
-| **Z.ai** | `zai` | GLM |
-| **fal.ai** | `fal_ai` | Image models such as FLUX |
-| **Any OpenAI-compatible endpoint** | `openai_compat` | Llama, Mistral, DeepSeek and others through Ollama, vLLM, OpenRouter, Together or Groq |
-
-**Voice and audio:** `gpt-4o-mini-tts`, `tts-1` and `tts-1-hd` for speech, `whisper-1` for transcription.
-**Images:** `gpt-image-1`, `gpt-image-2` and fal.ai models.
-
-## Run it
-
-**Distri Cloud** is the fastest way to start: [app.distri.dev](https://app.distri.dev).
-
-**Self-host** with one command. It starts the server and the web UI:
-
-```bash
-distri serve            # http://localhost:7777
-```
-
-<details>
-<summary><b>CLI reference</b></summary>
-
-```bash
-distri                                   # interactive TUI
-distri tui my_agent                      # chat with one agent
-distri run --agent my_agent --task "…"   # run a single task
-
-distri push                              # sync agents, skills and templates
-distri push --dry-run                    # preview what would upload
-distri agents list
-distri skills list
-distri traces list                       # inspect runs
-distri agents card my_agent              # the agent's public A2A card
-distri tasks list                        # A2A tasks: list/get/cancel/subscribe/pending
-distri secrets list
-distri connections list
-
-distri update                            # pull the latest server and UI
-distri version
-```
-
-</details>
-
-<details>
-<summary>Other install options</summary>
-
-**Direct download:**
-```bash
-# darwin-arm64 | darwin-x86_64 | linux-arm64 | linux-x86_64
-TARGET=darwin-arm64
-curl -L "https://github.com/distrihub/distri/releases/latest/download/distri-${TARGET}.tar.gz" -o distri.tar.gz
-sudo tar -xzf distri.tar.gz -C /usr/local/bin distri
-```
-
-**Windows (PowerShell):**
-```powershell
-Invoke-WebRequest https://github.com/distrihub/distri/releases/latest/download/distri-windows-x86_64.zip -OutFile distri.zip
-Expand-Archive distri.zip -DestinationPath $Env:LOCALAPPDATA\distri -Force
-$Env:Path += ";$Env:LOCALAPPDATA\distri"
-```
-</details>
 
 <details>
 <summary><b>Repository layout</b></summary>
@@ -312,19 +176,16 @@ distri/
 ├── distri-a2a/            # A2A protocol types
 ├── distri-workflow/       # Workflow definitions
 ├── distri-tool/           # TypeScript script-tool contract (Deno)
+├── samples/               # Blueprints for `distri apply`
 └── server/
     ├── distri-core/       # Agent loop, tools, model clients
     ├── distri-server/     # HTTP server (actix-web, A2A endpoints)
+    ├── distri-server-cli/ # The `distri-server` binary
     ├── distri-stores/     # SQLite and Postgres stores
     ├── distri-auth/       # Auth and OAuth connections
     ├── distri-filesystem/ # File and artifact tools
     ├── llm-gateway/       # Provider clients
     └── agents/            # Built-in agent definitions
-```
-
-```bash
-cargo build
-cargo test
 ```
 
 </details>

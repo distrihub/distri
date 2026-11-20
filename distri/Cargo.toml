@@ -2,7 +2,7 @@
 name = "distri"
 version = "0.4.6"
 edition = "2024"
-description = "Rust client for the Distri A2A agent platform"
+description = "Rust A2A client for Distri, the open-source server for AI agents that live natively in your product"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/distrihub/distri"
