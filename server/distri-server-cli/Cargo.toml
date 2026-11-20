@@ -3,7 +3,7 @@ name = "distri-server-cli"
 version = "0.4.6"
 edition = "2021"
 license = "MIT"
-description = "Distri OSS server binary"
+description = "Distri agent server: markdown agents on any model, each an A2A 1.0 endpoint"
 
 [features]
 default = ["sqlite"]
