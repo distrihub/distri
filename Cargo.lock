@@ -1790,6 +1790,9 @@ dependencies = [
 name = "distri-a2a"
 version = "0.4.6"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "jsonschema 0.45.0",
  "schemars",
  "serde",
  "serde_json",
