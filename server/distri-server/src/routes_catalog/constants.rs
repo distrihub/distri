@@ -93,12 +93,15 @@ define_routes! {
     /// discovery metadata (name, description, version, icon, skills), never the
     /// system prompt / tools / model config that the full `/agents` list exposes.
     AgentCards        => "/agents/cards" { GET: Read },
-    Agents            => "/agents" { GET: Read, POST: Write },
-    AgentValidate     => "/agents/{id:.*}/validate" { GET: Execute },
+    /// The full definition list (instructions, tools, model): a developer
+    /// surface (R8), so `Write`. Runtime clients list `/agents/cards`.
+    Agents            => "/agents" { GET: Write, POST: Write },
+    AgentValidate     => "/agents/{id:.*}/validate" { GET: Write },
     AgentCompleteTool => "/agents/{id:.*}/complete-tool" { POST: Execute },
-    AgentDag          => "/agents/{id:.*}/dag" { GET: Execute },
-    /// a2a JSON-RPC dispatch (POST=run) + agent definition CRUD.
-    AgentDispatch     => "/agents/{id:.*}" { GET: Read, POST: Execute, PUT: Write, DELETE: Manage },
+    AgentDag          => "/agents/{id:.*}/dag" { GET: Write },
+    /// a2a JSON-RPC dispatch (POST=run) + agent definition CRUD. Reading the
+    /// definition (GET: definition + markdown) is a developer surface (R8).
+    AgentDispatch     => "/agents/{id:.*}" { GET: Write, POST: Execute, PUT: Write, DELETE: Manage },
 
     // ── Hooks / tasks / tools (run surface) ─────────────────────────────────
     EventHooks        => "/event/hooks" { POST: Execute },
