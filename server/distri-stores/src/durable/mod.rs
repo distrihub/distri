@@ -12,10 +12,9 @@ use std::sync::Arc;
 
 use distri_types::durable::{PendingCallStore, RunQueue};
 
-/// The Postgres DDL for the OSS Diesel schema (the sqlite twin is an embedded
-/// migration). A host that runs distri-stores on Postgres applies it once.
-pub const PG_DURABLE_RUNS_UP_SQL: &str =
-    include_str!("../../pg_migrations/20261120000000_durable_runs/up.sql");
+// The sqlite DDL is an embedded OSS migration (`server/migrations`). The
+// Postgres DDL for these tables lives in the host that runs distri-stores on
+// Postgres (distri-cloud's `pg_migrations/`), not in this repository.
 
 /// One object implementing both durable traits.
 #[derive(Clone)]
