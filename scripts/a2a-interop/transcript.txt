@@ -1,0 +1,172 @@
+## card get --validate
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json card get --validate
+Name: echo
+Description: Answers hello (A2A interop agent)
+Version: 1.0.0
+Streaming: true
+Push Notifications: false
+Extended Card: false
+Interfaces:
+  - JSONRPC http://127.0.0.1:18481/v1/agents/echo (v1.0)
+
+Skills: 0
+[exit 0]
+
+## send (blocking)
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json send hello
+Task ID: c337b06a-4223-43a3-870e-f5a0d1ded84d
+Context ID: fca5a037-4728-41eb-9bbb-e20da316b0a4
+State: COMPLETED
+Text:
+Hello from distri (mock)
+[exit 0]
+
+## send --stream
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json send hello again --stream
+Task ID: d7d7e2e1-4c43-49fc-91d5-3ad69fa820d7
+Context ID: e53d61ab-48cf-409b-8363-4b0b7a2d8a51
+State: SUBMITTED
+Task ID: d7d7e2e1-4c43-49fc-91d5-3ad69fa820d7
+Context ID: e53d61ab-48cf-409b-8363-4b0b7a2d8a51
+State: WORKING
+Task ID: d7d7e2e1-4c43-49fc-91d5-3ad69fa820d7
+Context ID: e53d61ab-48cf-409b-8363-4b0b7a2d8a51
+State: COMPLETED
+Task ID: d7d7e2e1-4c43-49fc-91d5-3ad69fa820d7
+Context ID: e53d61ab-48cf-409b-8363-4b0b7a2d8a51
+State: COMPLETED
+Text:
+Hello from distri (mock)
+[exit 0]
+
+## send -o json (task id for the next steps)
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json -o json send and once more
+{
+  "task": {
+    "id": "4f1117ba-a734-4056-9d74-0c4e9a412ae1",
+    "contextId": "baa1f729-4263-41a6-95a3-5614d7c8e42d",
+    "status": {
+      "state": "TASK_STATE_COMPLETED",
+      "message": {
+        "messageId": "25401f3d-2e90-5f1e-a56e-048921b50e8d",
+        "contextId": "baa1f729-4263-41a6-95a3-5614d7c8e42d",
+        "taskId": "4f1117ba-a734-4056-9d74-0c4e9a412ae1",
+        "role": "ROLE_AGENT",
+        "parts": [
+          {
+            "text": "Hello from distri (mock)"
+          }
+        ],
+        "metadata": {
+          "message_type": "text",
+          "is_final": true
+        }
+      },
+      "timestamp": "2026-11-20T09:40:19.582Z"
+    }
+  }
+}
+[exit 0]
+
+## task get
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json task get 4f1117ba-a734-4056-9d74-0c4e9a412ae1
+Task ID: 4f1117ba-a734-4056-9d74-0c4e9a412ae1
+Context ID: baa1f729-4263-41a6-95a3-5614d7c8e42d
+State: COMPLETED
+Text:
+Hello from distri (mock)
+[exit 0]
+
+## task list
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json task list
+Total: 3
+Page Size: 3
+Task:
+Task ID: 4f1117ba-a734-4056-9d74-0c4e9a412ae1
+Context ID: baa1f729-4263-41a6-95a3-5614d7c8e42d
+State: COMPLETED
+
+Task:
+Task ID: d7d7e2e1-4c43-49fc-91d5-3ad69fa820d7
+Context ID: e53d61ab-48cf-409b-8363-4b0b7a2d8a51
+State: COMPLETED
+
+Task:
+Task ID: c337b06a-4223-43a3-870e-f5a0d1ded84d
+Context ID: fca5a037-4728-41eb-9bbb-e20da316b0a4
+State: COMPLETED
+[exit 0]
+
+## send --async a slow task
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json -o json send [slow] take your time --async --return-immediately
+{
+  "task": {
+    "id": "8b327c12-8654-4a66-9e9a-30404b592f41",
+    "contextId": "76f07450-b184-46e5-97cf-b6d296145787",
+    "status": {
+      "state": "TASK_STATE_WORKING",
+      "timestamp": "2026-11-20T09:40:19.692Z"
+    }
+  }
+}
+[exit 0]
+
+## task subscribe (follows the slow task to its end)
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json task subscribe 8b327c12-8654-4a66-9e9a-30404b592f41
+Task ID: 8b327c12-8654-4a66-9e9a-30404b592f41
+Context ID: 76f07450-b184-46e5-97cf-b6d296145787
+State: WORKING
+Task ID: 8b327c12-8654-4a66-9e9a-30404b592f41
+Context ID: 76f07450-b184-46e5-97cf-b6d296145787
+State: WORKING
+Task ID: 8b327c12-8654-4a66-9e9a-30404b592f41
+Context ID: 76f07450-b184-46e5-97cf-b6d296145787
+State: COMPLETED
+Task ID: 8b327c12-8654-4a66-9e9a-30404b592f41
+Context ID: 76f07450-b184-46e5-97cf-b6d296145787
+State: COMPLETED
+Text:
+Hello from distri (mock)
+[exit 0]
+
+## send --async another slow task
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json -o json send [slow] cancel me --async --return-immediately
+{
+  "task": {
+    "id": "6d0b54e1-c166-4603-93c9-e710f54c1c7d",
+    "contextId": "944b56b4-14bf-4ddd-9046-6452f8900b77",
+    "status": {
+      "state": "TASK_STATE_WORKING",
+      "timestamp": "2026-11-20T09:40:25.782Z"
+    }
+  }
+}
+[exit 0]
+
+## task cancel (working task)
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json task cancel 6d0b54e1-c166-4603-93c9-e710f54c1c7d
+Task ID: 6d0b54e1-c166-4603-93c9-e710f54c1c7d
+Context ID: 944b56b4-14bf-4ddd-9046-6452f8900b77
+State: CANCELED
+[exit 0]
+
+## task cancel (completed task: TaskNotCancelable -32002)
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json task cancel 4f1117ba-a734-4056-9d74-0c4e9a412ae1
+{"error":{"code":"TASK_NOT_CANCELABLE","message":"Task is already TASK_STATE_COMPLETED and cannot be canceled","a2aCode":-32002}}
+[exit 1]
+
+## task push-config list (card: pushNotifications=false)
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json task push-config list 4f1117ba-a734-4056-9d74-0c4e9a412ae1
+{"error":{"code":"PUSH_NOTIFICATION_NOT_SUPPORTED","message":"the agent card does not declare pushNotifications","a2aCode":-32003}}
+[exit 1]
+
+## task get (unknown task: TaskNotFound)
+$ a2acli -a http://127.0.0.1:18481/v1/agents/echo/.well-known/agent-card.json task get does-not-exist
+{"error":{"code":"TASK_NOT_FOUND","message":"Task not found","a2aCode":-32001}}
+[exit 1]
+
+## push-config over the wire (server answer, bypassing a2acli's pre-flight)
+$ curl -s http://127.0.0.1:18481/v1/agents/echo -d '{"method":"ListTaskPushNotificationConfigs",...}'
+{"jsonrpc":"2.0","error":{"code":-32003,"message":"Push notifications are not supported"},"id":1}
+
+interop: OK
