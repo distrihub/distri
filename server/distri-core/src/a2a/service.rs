@@ -465,7 +465,7 @@ impl A2AService {
             let after = after.timestamp_millis();
             tasks.retain(|t| t.updated_at > after);
         }
-        tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        tasks.sort_by_key(|t| std::cmp::Reverse(t.updated_at));
         let total = tasks.len();
         let page_size = params.page_size.filter(|n| *n > 0).unwrap_or(50).min(100) as usize;
         let offset: usize = params

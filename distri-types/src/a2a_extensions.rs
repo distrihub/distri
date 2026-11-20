@@ -477,7 +477,7 @@ impl ActiveExtensions {
         let uris = self.uris();
         card_extensions
             .iter()
-            .find(|e| e.required == Some(true) && !uris.iter().any(|u| *u == e.uri))
+            .find(|e| e.required == Some(true) && !uris.contains(&e.uri))
             .map(|e| e.uri.as_str())
     }
 
@@ -488,10 +488,10 @@ impl ActiveExtensions {
         let mut out = BTreeSet::new();
         if let Some(m) = metadata {
             for key in m.keys() {
-                if let Some(ext) = DistriExtension::for_metadata_key(key) {
-                    if !self.is_active(ext) {
-                        out.insert(ext);
-                    }
+                if let Some(ext) = DistriExtension::for_metadata_key(key)
+                    && !self.is_active(ext)
+                {
+                    out.insert(ext);
                 }
             }
         }
