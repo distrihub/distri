@@ -1,4 +1,5 @@
 mod client;
+mod client_a2a;
 mod client_app;
 mod client_stream;
 pub mod config;
@@ -27,6 +28,9 @@ pub use client::{
     SkillSource, SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary, TraceSummary,
     TtsModelsResponse, TtsSpeechRequest, TtsSpeechResponse, UpdatePluginRequest,
     UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,
+};
+pub use client_a2a::{
+    A2aRpcError, PushConfig, TaskPushNotificationConfig, a2a_request, rpc_result, task_query_params,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};
 pub use client_stream::{AgentStreamClient, StreamError, StreamItem, parse_sse_data};

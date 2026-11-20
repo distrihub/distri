@@ -1,5 +1,6 @@
 //! The library half of the `distri` CLI: what integration tests and other hosts can reuse.
 
+pub mod a2a_cli;
 pub mod interact;
 pub mod local_events;
 pub mod local_tools;

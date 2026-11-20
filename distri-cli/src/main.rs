@@ -123,6 +123,9 @@ enum Commands {
         agent: Option<String>,
     },
 
+    /// Talk to an agent over A2A: card, send, tasks, push configs, pending calls
+    A2a(distri_cli::a2a_cli::A2aArgs),
+
     /// Agent-related commands (defaults to list)
     Agents {
         #[clap(subcommand)]
@@ -932,6 +935,9 @@ async fn main() -> Result<()> {
             } else {
                 tui::runs::print_plain(&client, thread).await?;
             }
+        }
+        Commands::A2a(args) => {
+            distri_cli::a2a_cli::run(args, &client).await?;
         }
         Commands::Agents { command } => match command.unwrap_or(AgentsCommands::List) {
             AgentsCommands::List => {

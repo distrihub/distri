@@ -174,6 +174,27 @@ distri traces list                                               # inspect runs
 distri serve                                                     # run the server and UI locally
 ```
 
+**Over A2A from the CLI** (`distri a2a`, modelled on a2a-rs's `a2acli`; `--agent` defaults to
+`$DISTRI_AGENT`, else `distri`; `--json` prints the protocol JSON, one frame per line when streaming)
+
+```bash
+distri a2a card get --agent shop_assistant [--extended]          # agent card: capabilities, extensions, skills
+distri a2a send "What is in my cart?" --agent shop_assistant     # message/send (waits for the task)
+distri a2a send "…" --stream                                     # message/stream: one line per event
+distri a2a send "…" --async                                      # print the task id and return
+distri a2a send "…" --context <thread> --task <id> --data-part '{"k":1}' --metadata @meta.json
+distri a2a task get <task_id> [--history 5]                      # tasks/get
+distri a2a task list [--context <thread>] [--state input-required] [--limit 20]
+distri a2a task cancel <task_id>                                 # tasks/cancel
+distri a2a task subscribe <task_id>                              # tasks/resubscribe: follow events
+distri a2a task push-config list|get|set|delete <task_id> …      # tasks/pushNotificationConfig/* (set --url [--token])
+distri a2a task pending <task_id>                                # pending calls (durable-runs extension)
+```
+
+With durable runs on (`DISTRI_DURABLE_RUNS=1`), the agent card lists the A2A extension
+`https://distri.dev/a2a/extensions/durable-runs/v1` in `capabilities.extensions`; its `params`
+name the pending-calls and claim endpoints.
+
 ## Everything an embedded agent needs, built in
 
 <p align="center">
@@ -241,6 +262,7 @@ distri push --dry-run                    # preview what would upload
 distri agents list
 distri skills list
 distri traces list                       # inspect runs
+distri a2a card get --agent my_agent     # A2A: card, send, task get/list/cancel/subscribe/pending
 distri secrets list
 distri connections list
 
