@@ -409,7 +409,7 @@ fn collect_tool_prompts_skips_deferred() {
             output_schema: None,
         },
         distri_types::ToolDefinition {
-            name: "browsr_scrape".into(),
+            name: "browser__open".into(),
             description: "Scrape web".into(),
             parameters: json!({}),
             prompt: Some("Scrape websites for data.".into()),
@@ -427,7 +427,7 @@ fn collect_tool_prompts_skips_deferred() {
     ];
 
     let deferred: std::collections::HashSet<String> =
-        ["browsr_scrape".to_string()].into_iter().collect();
+        ["browser__open".to_string()].into_iter().collect();
     let (map, concat, entries) = MessageFormatter::collect_tool_prompts(&defs, &deferred);
 
     // All tools present in map (deferred gets empty string)
@@ -436,7 +436,7 @@ fn collect_tool_prompts_skips_deferred() {
         map.get("Bash").unwrap().as_str().unwrap(),
         "Use Bash for shell commands."
     );
-    assert_eq!(map.get("browsr_scrape").unwrap().as_str().unwrap(), ""); // deferred = empty
+    assert_eq!(map.get("browser__open").unwrap().as_str().unwrap(), ""); // deferred = empty
     assert_eq!(map.get("final").unwrap().as_str().unwrap(), "");
 
     // Concatenated prompts should NOT include deferred tool's prompt

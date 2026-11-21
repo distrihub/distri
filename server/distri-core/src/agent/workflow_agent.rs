@@ -169,11 +169,37 @@ impl BaseAgent for WorkflowAgent {
             .instrument(agent_span)
             .await;
 
+        // A run that errored before or around the driver (bad definition,
+        // cycle, invalid input) ends Failed with its error as the terminal
+        // event; a cancel is recorded by whoever canceled it.
+        if let Err(e) = &result {
+            if !matches!(e, AgentError::Canceled)
+                && !matches!(
+                    context.get_status().await,
+                    Some(distri_types::TaskStatus::Canceled)
+                )
+            {
+                context.update_status(distri_types::TaskStatus::Failed).await;
+                context
+                    .emit(distri_types::AgentEventType::RunError {
+                        message: e.to_string(),
+                        code: Some(crate::a2a::agent_run_error_code(e).to_string()),
+                        usage: Some(context.get_total_usage().await),
+                    })
+                    .await;
+            }
+            return result;
+        }
+
         // Emit RunFinished so OtelHooks records output.value and usage
         let usage = context.get_total_usage().await;
+        let success = !matches!(
+            context.get_status().await,
+            Some(distri_types::TaskStatus::Failed)
+        );
         context
             .emit(distri_types::AgentEventType::RunFinished {
-                success: result.is_ok(),
+                success,
                 total_steps: 0,
                 failed_steps: 0,
                 usage: Some(usage),
@@ -268,6 +294,7 @@ fn hydrate_run(state: WorkflowExecutionState, step_states: Vec<WorkflowStepState
             run.step_runs[i].error = saved.error.clone();
             run.step_runs[i].started_at = saved.started_at;
             run.step_runs[i].completed_at = saved.completed_at;
+            run.step_runs[i].input = saved.input.clone();
         }
     }
     run
@@ -293,6 +320,9 @@ impl WorkflowAgent {
     ) -> Result<InvokeResult, AgentError> {
         // Save user message to thread (like StandardAgent does)
         context.save_message(&message).await;
+        context
+            .update_status(distri_types::TaskStatus::Running)
+            .await;
 
         let workflow_store = context
             .orchestrator
@@ -433,6 +463,11 @@ impl WorkflowAgent {
         .await
         .map_err(AgentError::Execution)?;
         let final_state = run;
+
+        // The run's task carries its status (the conversation's status is
+        // its newest task's): Completed / Failed, or InputRequired when it
+        // parked on a wait step. Nothing else settles a workflow run.
+        context.update_status(status.clone()).await;
 
         // Persist the final accumulated context back so the workflow
         // store reflects the terminal state (useful for debugging +

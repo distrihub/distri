@@ -142,9 +142,8 @@ define_routes! {
     SessionsScope     => "/sessions" { GET: Execute, POST: Execute, PUT: Execute, DELETE: Execute },
     ArtifactsScope    => "/artifacts" { GET: Execute, POST: Execute, PUT: Execute, DELETE: Execute },
 
-    // ── Build / browser / llm / proxy (run surface) ─────────────────────────
+    // ── Build / llm / proxy (run surface) ───────────────────────────────────
     Build             => "/build" { POST: Execute },
-    BrowserSession    => "/browser/session" { POST: Execute },
     LlmExecute        => "/llm/execute" { POST: Execute },
     Decisions         => "/decisions" { POST: Execute },
     Request           => "/request" { POST: Execute },

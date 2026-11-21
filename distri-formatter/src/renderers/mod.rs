@@ -11,7 +11,6 @@ macro_rules! outln {
     }};
 }
 
-mod browser;
 mod code;
 pub(crate) mod data;
 mod local_tools;
@@ -62,10 +61,6 @@ pub fn render_tool_output(out: &mut dyn Write, result: &ToolResponse, verbose: b
         | "inject_connection_env" => {
             platform::render_platform_tool(out, result);
         }
-
-        // Browser / scraping
-        "browsr_scrape" | "browsr_crawl" => browser::render_scrape(out, result),
-        "browsr_browser" | "browser_step" => browser::render_browser_step(out, result),
 
         // Search
         "search" => search::render_search(out, result),

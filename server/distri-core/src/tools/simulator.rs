@@ -17,8 +17,6 @@ const SAFE_TOOLS: &[&str] = &[
     "load_skill",
     "get_task",      // read-only supervisor query
     "list_my_tasks", // read-only
-    "search",        // web search (read-only)
-    "browsr_scrape", // web scrape (read-only)
     "final",
     "write_todos", // todos are session-scoped, safe
 ];

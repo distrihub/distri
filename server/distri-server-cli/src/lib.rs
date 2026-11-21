@@ -3,7 +3,6 @@ use distri_core::{
     agent::{AgentOrchestrator, PromptRegistry},
     AgentOrchestratorBuilder,
 };
-use distri_types::browser::BrowsrClientConfig;
 use distri_types::configuration::AgentConfig;
 pub mod workspace;
 use std::{path::Path, sync::Arc};
@@ -81,7 +80,6 @@ pub async fn init_orchestrator(
 
     let durable_store_config = store_config.clone();
     let mut builder = AgentOrchestratorBuilder::default()
-        .with_browser_config(BrowsrClientConfig::default())
         .with_stores(stores)
         .with_prompt_registry(prompt_registry)
         .with_store_config(store_config)

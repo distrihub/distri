@@ -58,28 +58,6 @@ pub async fn validate_provider_secrets(
     Ok(())
 }
 
-/// Create browser session via browsr and return session info.
-/// Returns (session_id, frame_url, sse_url) or None if creation fails.
-async fn create_browser_session() -> Option<(String, Option<String>, Option<String>)> {
-    tracing::info!("[stream] Creating browser session via browsr");
-    let client = browsr_client::BrowsrClient::from_env();
-
-    match client.create_session().await {
-        Ok(session) => {
-            tracing::info!(
-                "[stream] Created browser session: {}, frame_url: {:?}",
-                session.session_id,
-                session.frame_url
-            );
-            Some((session.session_id, session.frame_url, session.sse_url))
-        }
-        Err(e) => {
-            tracing::error!("[stream] Failed to create browser session: {}", e);
-            None
-        }
-    }
-}
-
 pub async fn init_thread_get_message(
     agent_id: String,
     executor: Arc<AgentOrchestrator>,
@@ -123,13 +101,13 @@ pub async fn init_thread_get_message(
     Ok((thread_id, message))
 }
 
-/// Prepare ExecutorContext with metadata, browser session, definition overrides, etc.
+/// Prepare ExecutorContext with metadata, definition overrides, etc.
 /// Returns `(ExecutorContext, definition_overrides)` or an error.
 pub async fn prepare_execution(
     // The agent comes from the context (its name at its pinned version).
     _agent_id: &str,
     params: &MessageSendParams,
-    executor: &Arc<AgentOrchestrator>,
+    _executor: &Arc<AgentOrchestrator>,
     executor_context: &Arc<ExecutorContext>,
 ) -> Result<(ExecutorContext, DefinitionOverrides), AgentError> {
     let metadata_struct: ExecutorContextMetadata = match params.metadata.clone() {
@@ -182,23 +160,6 @@ pub async fn prepare_execution(
     let mut definition_overrides = DefinitionOverrides::default();
     if let Some(overrides) = metadata_struct.definition_overrides.clone() {
         definition_overrides = overrides;
-    }
-
-    // Determine if browser should be used
-    let mut should_stream_browser = match executor.context_agent(&exec_ctx).await {
-        Some(AgentConfig::StandardAgent(def)) => def.should_use_browser(),
-        _ => false,
-    };
-
-    if let Some(flag) = definition_overrides.use_browser {
-        should_stream_browser = flag;
-    }
-
-    // If browser is needed but no session from UI, create one now
-    if should_stream_browser && exec_ctx.browser_session_id.is_none() {
-        if let Some((session_id, _frame_url, _sse_url)) = create_browser_session().await {
-            exec_ctx.browser_session_id = Some(session_id);
-        }
     }
 
     Ok((exec_ctx, definition_overrides))

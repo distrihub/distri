@@ -230,7 +230,7 @@ pub fn is_agent_accessible(agent_name: &str, sub_agents: &[String]) -> bool {
 /// Resolve the logical "code" alias to the system runner for the caller's
 /// environment: web → `distri_browser_runner` (code in the page), cli →
 /// `distri_runner` (code on the user's machine), server →
-/// `distri_server_runner` (code in the browsr-cloud sandbox).
+/// `distri_server_runner` (code in the thread's sandbox).
 pub fn resolve_code_agent(runtime_mode: &RuntimeMode) -> &'static str {
     match runtime_mode {
         RuntimeMode::Browser => "distri_browser_runner",

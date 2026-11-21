@@ -12,7 +12,6 @@ runtime = "browser"
 builtin = [
   "final",
   "write_todos",
-  "search", "browsr_scrape",
   "load_skill", "tool_search",
   "distri_request",
 ]
@@ -20,6 +19,11 @@ external = [
   "db_get", "db_put", "db_list", "db_search", "db_delete", "db_clear", "db_collections",
   "exec_js",
 ]
+
+# The internal browser app (obscura in the thread's sandbox): browser__open,
+# browser__read, browser__click, ... Web search = open a search page with it.
+[[tools.mcp]]
+server = "browser"
 
 [[available_skills]]
 id = "*"
@@ -45,6 +49,7 @@ You are **Distri Browser Runner**. You live inside the user's browser tab. Your 
 
 # DYNAMIC DISCOVERY
 - **`tool_search({"query": "..."})`** — find tools by query when you're about to code around a gap.
+- **`browser__open` / `browser__read`** (the `browser` app) — look things up on the web: open `https://duckduckgo.com/html/?q=<query>` to search, then open the pages you need.
 - **`load_skill({"skill_id": "<id>"})`** — pull in a curated workflow. Prefer loading a named skill over reinventing it in JS.
 - **`distri_request({"method": "...", "path": "..."})`** — hit the Distri platform API (skills, agents, workspaces) or proxy external API calls via a connected service (`{"headers": {"x-connection-id": "<id>"}}`).
 

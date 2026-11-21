@@ -302,6 +302,7 @@ impl AgentHooks for OtelHooks {
             AgentEventType::PlanFinished { total_steps } => {
                 if let Some((_, span)) = self.plan_spans.remove(event.run_id.as_str()) {
                     span.record("gen_ai.plan.total_steps", *total_steps as i64);
+                    recorder::mark_span_end(&span);
                     drop(span);
                 }
             }
@@ -326,6 +327,10 @@ impl AgentHooks for OtelHooks {
             }
             AgentEventType::StepCompleted { step_id, .. } => {
                 if let Some((_, span)) = self.step_spans.remove(step_id.as_str()) {
+                    // The step span was entered (in_scope) to parent its plan,
+                    // tool and reflect spans, and tracing-opentelemetry stamps
+                    // the end on each exit — stamp the real end now.
+                    recorder::mark_span_end(&span);
                     drop(span); // closing exports the step span
                 }
                 self.current_step_id.remove(event.run_id.as_str());
@@ -370,6 +375,7 @@ impl AgentHooks for OtelHooks {
                     if let Some(r) = reason {
                         span.record("gen_ai.reflect.reason", r.as_str());
                     }
+                    recorder::mark_span_end(&span);
                     drop(span);
                 }
             }
@@ -445,6 +451,7 @@ impl AgentHooks for OtelHooks {
                             };
                             span.record("output.value", truncated.as_str());
                         }
+                        recorder::mark_span_end(&span);
                         drop(span); // exports with both input and output recorded
                     }
                 }
@@ -471,6 +478,7 @@ impl AgentHooks for OtelHooks {
                     if let Some(c) = code {
                         span.record("error.code", c.as_str());
                     }
+                    recorder::mark_span_end(&span);
                     drop(span);
                 }
             }
@@ -518,6 +526,7 @@ impl AgentHooks for OtelHooks {
                             cost,
                         );
                     }
+                    recorder::mark_span_end(&span);
                     // KNOWN LIMITATION: record_agent_finish() may be called after StandardAgent's
                     // .instrument() future has already finished (and its span clone dropped).
                     // In tracing-opentelemetry, a span is only exported when ALL clones drop.

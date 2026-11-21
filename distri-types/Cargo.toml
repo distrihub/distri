@@ -12,7 +12,6 @@ keywords = ["distri", "agent", "types", "llm"]
 categories = ["api-bindings", "data-structures"]
 
 [dependencies]
-browsr-types = { workspace = true }
 distri-a2a = { path = "../distri-a2a", version = "0.4.6" }
 
 async-trait = "0.1"
@@ -28,7 +27,7 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
 jsonschema = { workspace = true }
-schemars = { workspace = true, features = ["indexmap2"] }
+schemars = { workspace = true, features = ["indexmap2", "chrono04"] }
 indexmap = { version = "2", features = ["serde"] }
 utoipa = { workspace = true, features = ["indexmap"] }
 secrecy = { version = "0.10.3", features = ["serde"] }

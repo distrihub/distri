@@ -54,6 +54,35 @@ async fn build_step_context(
     ctx
 }
 
+/// What a step runs with, kept on its state row for the run page: the step's
+/// kind (`type` + fields) with templates resolved the way `execute_step` sees
+/// them, plus the resolved `input` mapping when the step declares one.
+///
+/// Resolved without the `env` namespace: `{env.TOKEN}` stays as written, so
+/// connection tokens never reach the workflow store or the API.
+pub(crate) fn resolved_step_input(
+    step: &WorkflowStep,
+    run_context: &serde_json::Value,
+) -> serde_json::Value {
+    let mut run_ctx = run_context.clone();
+    if let Some(obj) = run_ctx.as_object_mut() {
+        obj.remove("env");
+    }
+    let step_ctx = resolve::resolve_step_input(step.input.as_ref(), &run_ctx);
+    let mut spec = serde_json::to_value(&step.kind)
+        .map(|kind| resolve::resolve_value(&kind, &step_ctx))
+        .unwrap_or(serde_json::Value::Null);
+    if step.input.is_some() {
+        match spec.as_object_mut() {
+            Some(obj) => {
+                obj.insert("input".to_string(), step_ctx);
+            }
+            None => spec = serde_json::json!({ "input": step_ctx }),
+        }
+    }
+    spec
+}
+
 /// Skills the workflow agent natively executes (HTTP, MCP tools,
 /// shell, sub-agent dispatch). Used by `unmet_requirements` to mark
 /// steps `Failed` if they declare a skill the engine can't satisfy.
@@ -221,6 +250,7 @@ async fn commit_step(
         started_at: run.step_runs[idx].started_at,
         completed_at: Some(now),
         wait_task_id: None,
+        input: run.step_runs[idx].input.clone(),
     };
     upsert_step_state(workflow_store, run_task_id, state_row).await;
 
@@ -440,6 +470,7 @@ where
         if let Some((idx, step_id, _, step)) = wait_steps.into_iter().next() {
             run.step_runs[idx].status = TaskStatus::InputRequired;
             run.step_runs[idx].started_at = Some(Utc::now());
+            run.step_runs[idx].input = Some(resolved_step_input(&step, &run.context));
             run.status = TaskStatus::InputRequired;
             run.current_step = idx;
 
@@ -477,6 +508,7 @@ where
                     started_at: Some(Utc::now()),
                     wait_task_id,
                     result: schema.map(|s| serde_json::json!({"schema": s})),
+                    input: run.step_runs[idx].input.clone(),
                     ..Default::default()
                 },
             )
@@ -493,6 +525,7 @@ where
             for (idx, step_id, _, step) in &parallel {
                 run.step_runs[*idx].status = TaskStatus::Running;
                 run.step_runs[*idx].started_at = Some(Utc::now());
+                run.step_runs[*idx].input = Some(resolved_step_input(step, &run.context));
                 run.status = TaskStatus::Running;
                 upsert_step_state(
                     workflow_store,
@@ -501,6 +534,7 @@ where
                         step_id: step_id.clone(),
                         status: TaskStatus::Running,
                         started_at: run.step_runs[*idx].started_at,
+                        input: run.step_runs[*idx].input.clone(),
                         ..Default::default()
                     },
                 )
@@ -523,6 +557,7 @@ where
         if let Some((idx, step_id, _, step)) = sequential.into_iter().next() {
             run.step_runs[idx].status = TaskStatus::Running;
             run.step_runs[idx].started_at = Some(Utc::now());
+            run.step_runs[idx].input = Some(resolved_step_input(&step, &run.context));
             run.status = TaskStatus::Running;
             run.current_step = idx;
             upsert_step_state(
@@ -532,6 +567,7 @@ where
                     step_id: step_id.clone(),
                     status: TaskStatus::Running,
                     started_at: run.step_runs[idx].started_at,
+                    input: run.step_runs[idx].input.clone(),
                     ..Default::default()
                 },
             )

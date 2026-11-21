@@ -3,9 +3,6 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::agent::todos::TodosTool;
-use crate::tools::browser::{
-    BrowserStepTool, CrawlTool, DistriBrowserSharedTool, DistriScrapeSharedTool, SearchTool,
-};
 use crate::tools::save_artifact::SaveArtifactTool;
 use crate::{
     agent::{file::run_file_agent, ExecutorContext},
@@ -34,11 +31,6 @@ pub fn get_builtin_tools() -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(FinalTool) as Arc<dyn Tool>,
         Arc::new(ReflectTool) as Arc<dyn Tool>,
-        Arc::new(DistriScrapeSharedTool) as Arc<dyn Tool>,
-        Arc::new(DistriBrowserSharedTool) as Arc<dyn Tool>,
-        Arc::new(BrowserStepTool) as Arc<dyn Tool>,
-        Arc::new(SearchTool) as Arc<dyn Tool>,
-        Arc::new(CrawlTool) as Arc<dyn Tool>,
         Arc::new(TodosTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::tool_search::ToolSearchTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::inject_env::InjectConnectionEnvTool) as Arc<dyn Tool>,

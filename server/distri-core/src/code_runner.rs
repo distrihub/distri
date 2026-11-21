@@ -4,7 +4,9 @@
 //! module runs under the `@distri/tool` harness with `--no-prompt`, a cleared environment,
 //! no read/write/env/run/ffi permission and `--allow-net` only for the hosts its frontmatter
 //! declares. Multi-tenant hosts (distri-cloud) run code in a sandbox instead and only use
-//! this runner when an operator turns it on.
+//! this runner when an operator turns it on. The sandbox runner shares the harness
+//! ([`HARNESS`]), the import map ([`import_map_json`]), the argv ([`deno_code_argv`]) and the
+//! output contract ([`parse_code_output`]) from here, so both run a module the same way.
 
 use async_trait::async_trait;
 use distri_types::{CodeRunOutput, CodeRunRequest, CodeRunner};
@@ -13,7 +15,8 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 
-const HARNESS: &[(&str, &str)] = &[
+/// The `@distri/tool` harness files (name, content), written next to each other.
+pub const HARNESS: &[(&str, &str)] = &[
     (
         "mod.ts",
         include_str!(concat!(
@@ -31,7 +34,57 @@ const HARNESS: &[(&str, &str)] = &[
 ];
 
 /// The most stderr kept per run, in lines.
-const MAX_LOG_LINES: usize = 200;
+pub const MAX_LOG_LINES: usize = 200;
+
+/// The import map that points `@distri/tool` (and `jsr:@distri/tool`) at the harness's
+/// `mod.ts` (`mod_url`, a `file://` URL).
+pub fn import_map_json(mod_url: &str) -> serde_json::Value {
+    serde_json::json!({"imports": {
+        "jsr:@distri/tool": mod_url,
+        "@distri/tool": mod_url,
+    }})
+}
+
+/// The output contract of one run: stdout is the JSON document (`{"output": text}` when it
+/// is not JSON), stderr lines are logs (capped at [`MAX_LOG_LINES`]), a non-zero exit is an
+/// error carrying stderr's last lines (or stdout when stderr is empty).
+pub fn parse_code_output(
+    name: &str,
+    success: bool,
+    exit_code: i64,
+    stdout: &str,
+    stderr: &str,
+    duration_ms: u64,
+) -> Result<CodeRunOutput, String> {
+    let stdout = stdout.trim().to_string();
+    let logs: Vec<String> = stderr
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(MAX_LOG_LINES)
+        .map(String::from)
+        .collect();
+    if !success {
+        let tail = logs
+            .iter()
+            .rev()
+            .take(12)
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!(
+            "code '{name}' exited with {exit_code}: {}",
+            if tail.is_empty() { stdout } else { tail }
+        ));
+    }
+    let value = serde_json::from_str::<serde_json::Value>(&stdout)
+        .unwrap_or_else(|_| serde_json::json!({ "output": stdout }));
+    Ok(CodeRunOutput {
+        value,
+        logs,
+        duration_ms,
+    })
+}
 
 pub struct LocalDenoRunner {
     binary: PathBuf,
@@ -67,10 +120,7 @@ impl LocalDenoRunner {
             }
         }
         let mod_url = format!("file://{}", tool_dir.join("mod.ts").display());
-        let map = serde_json::json!({"imports": {
-            "jsr:@distri/tool": mod_url,
-            "@distri/tool": mod_url,
-        }});
+        let map = import_map_json(&mod_url);
         let import_map = self.root.join("import_map.json");
         let body = serde_json::to_vec_pretty(&map).unwrap_or_default();
         if std::fs::read(&import_map).ok().as_deref() != Some(body.as_slice()) {
@@ -187,37 +237,14 @@ impl CodeRunner for LocalDenoRunner {
                 ))
             }
         };
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let logs: Vec<String> = stderr
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .take(MAX_LOG_LINES)
-            .map(String::from)
-            .collect();
-        if !output.status.success() {
-            let tail = logs
-                .iter()
-                .rev()
-                .take(12)
-                .rev()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Err(format!(
-                "code '{}' exited with {}: {}",
-                request.name,
-                output.status.code().unwrap_or(-1),
-                if tail.is_empty() { stdout } else { tail }
-            ));
-        }
-        let value = serde_json::from_str::<serde_json::Value>(&stdout)
-            .unwrap_or_else(|_| serde_json::json!({ "output": stdout }));
-        Ok(CodeRunOutput {
-            value,
-            logs,
-            duration_ms: started.elapsed().as_millis() as u64,
-        })
+        parse_code_output(
+            &request.name,
+            output.status.success(),
+            output.status.code().unwrap_or(-1) as i64,
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+            started.elapsed().as_millis() as u64,
+        )
     }
 }
 
@@ -249,6 +276,17 @@ mod tests {
             &[],
         );
         assert!(!none.iter().any(|a| a.starts_with("--allow-net")));
+    }
+
+    #[test]
+    fn output_contract() {
+        let ok = parse_code_output("m", true, 0, "{\"a\":1}\n", "log one\n\nlog two\n", 5).unwrap();
+        assert_eq!(ok.value, serde_json::json!({"a": 1}));
+        assert_eq!(ok.logs, vec!["log one", "log two"]);
+        let text = parse_code_output("m", true, 0, "hello", "", 0).unwrap();
+        assert_eq!(text.value, serde_json::json!({"output": "hello"}));
+        let err = parse_code_output("m", false, 1, "", "Error: boom\n", 0).unwrap_err();
+        assert_eq!(err, "code 'm' exited with 1: Error: boom");
     }
 
     fn request(source: &str) -> CodeRunRequest {

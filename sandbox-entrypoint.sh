@@ -5,7 +5,7 @@
 # managed run: exec `distri run` as PID 1 — the container's lifetime is tied
 # to the agent's lifetime, and the orchestrator sees session_terminated on exit.
 #
-# Otherwise this is an interactive/exec session (e.g. direct browsr shell
+# Otherwise this is an interactive/exec session (e.g. a direct shell
 # usage) — fall back to `sleep infinity` so the container stays alive for
 # inbound `docker exec` calls.
 

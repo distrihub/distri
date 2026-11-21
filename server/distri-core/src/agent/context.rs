@@ -97,7 +97,7 @@ pub struct ExecutorContext {
     /// Tenant context for multi-tenant operations
     /// Stores can use this to filter data by tenant
     pub tenant_context: distri_types::TenantContext,
-    /// Browser session ID for browsr - if None, browsr will auto-create one
+    /// Browser session ID passed in request metadata, if any
     pub browser_session_id: Option<String>,
     pub additional_attributes: Option<AdditionalAttributes>,
     // External tools per agent
@@ -172,7 +172,7 @@ pub struct ExecutorContext {
     /// Mailbox for receiving inter-agent messages (from SendMessage tool).
     /// The agent loop drains this between iterations.
     pub mailbox: Option<Arc<tokio::sync::Mutex<Box<dyn crate::worker::MailboxReceiver>>>>,
-    /// True when this context is executing inside a browsr sandbox container
+    /// True when this context is executing inside a sandbox container
     /// (the process was started by SandboxLauncher via `distri run ...`, gated
     /// on the `DISTRI_IN_SANDBOX` env var). Tools and prompts can use this to
     /// detect "I'm inside the sandbox, not the host orchestrator".
@@ -461,17 +461,6 @@ impl ExecutorContext {
             "Orchestrator not intialized".to_string(),
         ))?;
         Ok(orchestrator)
-    }
-
-    /// Get the browser session ID if set.
-    /// Returns None if no session exists - browsr will auto-create one.
-    pub fn get_browser_session_id(&self) -> Option<String> {
-        self.browser_session_id.clone()
-    }
-
-    /// Set the browser session ID (called after browsr creates a session)
-    pub fn set_browser_session_id(&mut self, session_id: Option<String>) {
-        self.browser_session_id = session_id;
     }
 
     pub fn get_registry(&self) -> Result<Arc<RwLock<McpServerRegistry>>, AgentError> {

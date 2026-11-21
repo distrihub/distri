@@ -33,7 +33,7 @@ Installed packages stay in the sandbox for later turns, so check before reinstal
 
 - **Working directory**: starts at `/workspace`; `HOME=/workspace`.
 - **Persistence**: files under `/workspace` persist across turns and across pause/resume of the sandbox. Shell variables and Python interpreter state do NOT persist between `Bash` calls — write scripts to files and run them.
-- **Network**: outbound traffic goes through an egress proxy (`HTTP_PROXY`/`HTTPS_PROXY` are set). pip, npm and GitHub are reachable; arbitrary websites may not be. Use `browsr_scrape` / `search` for the web.
+- **Network**: outbound traffic goes through an egress proxy (`HTTP_PROXY`/`HTTPS_PROXY` are set). pip, npm and GitHub are reachable; arbitrary websites may not be. For the web, use the `browser` app (`browser__open`, `browser__read`; search by opening `https://duckduckgo.com/html/?q=<query>`).
 - **Output**: only what the command prints comes back. `print()` your results.
 
 ## Typical Flow

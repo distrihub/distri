@@ -363,6 +363,10 @@ pub struct WorkflowStepRun {
     pub started_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
+    /// The resolved step spec the step started with (see
+    /// `WorkflowStepState::input`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<serde_json::Value>,
 }
 
 impl WorkflowRun {

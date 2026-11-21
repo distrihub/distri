@@ -56,8 +56,6 @@ distri-auth = { path = "../distri-auth", version = "0.4.6" }
 distri-workflow = { path = "../../distri-workflow", version = "0.4.6" }
 
 # Browser automation
-browsr-client = { workspace = true }
-browsr-types = { workspace = true }
 
 schemars = { workspace = true }
 utoipa = { workspace = true }

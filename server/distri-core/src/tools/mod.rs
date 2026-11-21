@@ -7,13 +7,11 @@ use crate::agent::todos::TodosTool;
 use crate::agent::token_estimator::TokenEstimator;
 use crate::agent::ExecutorContext;
 use crate::servers::registry::McpServerRegistry;
-use crate::tools::browser::{BrowserStepTool, DistriBrowserSharedTool, DistriScrapeSharedTool};
 use crate::tools::builtin::ArtifactTool;
 use crate::types::{ToolCall, ToolsConfig};
 use crate::AgentError;
 use distri_types::Part;
 use serde::{Deserialize, Serialize};
-mod browser;
 pub mod save_artifact;
 // pub mod authenticated_example;
 pub mod context;
@@ -128,10 +126,6 @@ pub fn cast_to_executor_context_tool(
     match tool_name.as_str() {
         "final" => Ok(Box::new(FinalTool)),
         "write_todos" => Ok(Box::new(TodosTool)),
-        // Browsr tools
-        "browsr_scrape" => Ok(Box::new(DistriScrapeSharedTool)),
-        "browsr_browser" => Ok(Box::new(DistriBrowserSharedTool)),
-        "browser_step" => Ok(Box::new(BrowserStepTool)),
         "artifact_tool" => Ok(Box::new(ArtifactTool)),
         "load_skill" => Ok(Box::new(skill_script::LoadSkillTool)),
         // Tool discovery
@@ -170,7 +164,7 @@ pub trait RunToolProvider: Send + Sync {
     async fn tools_for_run(&self, ctx: &ExecutorContext) -> Vec<Arc<dyn Tool>>;
 
     /// Tools to take away from a run this provider added tools to: the ones
-    /// its tools replace (the sandbox tools replace browsr's shell tools).
+    /// its tools replace (the sandbox tools replace the old shell tools).
     fn replaces(&self) -> &[&'static str] {
         &[]
     }
@@ -325,7 +319,7 @@ pub async fn resolve_tools_config_with_pool(
             if distri_types::REMOVED_BUILTIN_TOOLS.contains(&builtin_name) {
                 tracing::warn!(
                     tool = builtin_name,
-                    "builtin removed (browsr's shell and code tools): skipped; the run's sandbox gives Bash/Read/Write/Edit"
+                    "builtin removed (old shell and code tools): skipped; the run's sandbox gives Bash/Read/Write/Edit"
                 );
                 continue;
             }
@@ -698,7 +692,7 @@ mod tests {
 
     #[test]
     fn pattern_prefix_wildcard() {
-        assert!(matches_pattern("browsr_search", "browsr_*"));
+        assert!(matches_pattern("browser__open", "browser__*"));
     }
 
     #[test]
@@ -708,12 +702,12 @@ mod tests {
 
     #[test]
     fn pattern_middle_wildcard() {
-        assert!(matches_pattern("browsr_search_tool", "browsr_*_tool"));
+        assert!(matches_pattern("github_search_tool", "github_*_tool"));
     }
 
     #[test]
     fn pattern_wildcard_no_match() {
-        assert!(!matches_pattern("other_tool", "browsr_*"));
+        assert!(!matches_pattern("other_tool", "browser__*"));
     }
 
     // ── Tool trait implementations ────────────────────────────────

@@ -51,7 +51,7 @@ fn builtin_tools_have_no_filesystem_tools() {
         !tool_names.contains(&"list_artifacts".to_string()),
         "builtin tools should not include artifact tools"
     );
-    // browsr's shell and code tools are gone: code runs in the thread's
+    // The old shell and code tools are gone: code runs in the thread's
     // sandbox (Bash/Read/Write/Edit, added per run by the host).
     for gone in [
         "start_shell",
