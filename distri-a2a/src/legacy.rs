@@ -187,3 +187,83 @@ pub fn downgrade_part(part: Value) -> Value {
     }
     Value::Object(out)
 }
+
+/// The protocol version the 0.x card advertises (`AgentCard.protocolVersion`
+/// in A2A 0.3).
+pub const LEGACY_PROTOCOL_VERSION: &str = "0.3.0";
+
+/// A 1.0 [`crate::AgentCard`] with the 0.x fields old clients read added
+/// back, for the pre-1.0 path `/.well-known/agent.json` only.
+///
+/// `@a2a-js/sdk` 0.3.x (what `@distri/core` ≤ 0.4.6 bundles) throws
+/// "Fetched Agent Card does not contain a valid 'url' for the service
+/// endpoint" on a card without a top-level `url`, and refuses to stream
+/// unless `capabilities.streaming` is true. Added here:
+///
+/// - `url`: the preferred interface's URL;
+/// - `preferredTransport`: its protocol binding;
+/// - `protocolVersion`: [`LEGACY_PROTOCOL_VERSION`];
+/// - `capabilities.streaming`: `true` when the card leaves it unset (the
+///   server streams `message/stream` for every agent).
+///
+/// Every 1.0 field stays as it is. Remove with the `agent.json` route once no
+/// supported client fetches it (`@distri/core` 0.4.5/0.4.6 and the apps that
+/// pin them, such as heyzippy/platform before its upgrade).
+pub fn legacy_card(card: &crate::AgentCard) -> Value {
+    let mut value = serde_json::to_value(card).unwrap_or(Value::Null);
+    let Value::Object(obj) = &mut value else {
+        return value;
+    };
+    if let Some(iface) = card.supported_interfaces.first() {
+        obj.entry("url")
+            .or_insert_with(|| Value::String(iface.url.clone()));
+        obj.entry("preferredTransport")
+            .or_insert_with(|| Value::String(iface.protocol_binding.clone()));
+    }
+    obj.entry("protocolVersion")
+        .or_insert_with(|| Value::String(LEGACY_PROTOCOL_VERSION.to_string()));
+    let caps = obj
+        .entry("capabilities")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Value::Object(caps) = caps {
+        caps.entry("streaming").or_insert(Value::Bool(true));
+    }
+    value
+}
+
+#[cfg(test)]
+mod legacy_card_tests {
+    use super::*;
+    use crate::{AgentCard, AgentInterface};
+
+    fn card() -> AgentCard {
+        AgentCard {
+            name: "zippy".into(),
+            description: "tutor".into(),
+            version: "1.2.0".into(),
+            supported_interfaces: vec![AgentInterface::jsonrpc(
+                "https://api.example.com/v1/agents/zippy",
+            )],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn adds_the_fields_a2a_js_0_3_reads() {
+        let v = legacy_card(&card());
+        assert_eq!(v["url"], "https://api.example.com/v1/agents/zippy");
+        assert_eq!(v["preferredTransport"], "JSONRPC");
+        assert_eq!(v["protocolVersion"], LEGACY_PROTOCOL_VERSION);
+        assert_eq!(v["capabilities"]["streaming"], true);
+        // 1.0 fields are untouched.
+        assert_eq!(v["version"], "1.2.0");
+        assert_eq!(v["supportedInterfaces"][0]["protocolVersion"], "1.0");
+    }
+
+    #[test]
+    fn keeps_an_explicit_streaming_false() {
+        let mut c = card();
+        c.capabilities.streaming = Some(false);
+        assert_eq!(legacy_card(&c)["capabilities"]["streaming"], false);
+    }
+}

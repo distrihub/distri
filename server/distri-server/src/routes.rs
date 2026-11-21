@@ -61,7 +61,9 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
         web::resource(Route::Token.path()).route(web::post().to(crate::token_auth::issue_token)),
     )
     .service(web::resource(Route::AgentCard.path()).route(web::get().to(get_agent_card)))
-    .service(web::resource(Route::AgentCardLegacy.path()).route(web::get().to(get_agent_card)))
+    .service(
+        web::resource(Route::AgentCardLegacy.path()).route(web::get().to(get_agent_card_legacy)),
+    )
     .service(web::resource(Route::AgentCards.path()).route(web::get().to(list_agent_cards)))
     .service(
         web::resource(Route::Agents.path())
@@ -783,13 +785,33 @@ async fn get_agent_card(
     executor: web::Data<Arc<AgentOrchestrator>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
-    let agent_name = agent_ref_from_path(&agent_name.into_inner());
+    agent_card_response(agent_name.into_inner(), executor, server_config, false).await
+}
+
+/// The pre-1.0 path: the same card plus the 0.x fields old clients read
+/// (`distri_a2a::legacy::legacy_card`).
+async fn get_agent_card_legacy(
+    agent_name: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+    server_config: web::Data<ServerConfig>,
+) -> HttpResponse {
+    agent_card_response(agent_name.into_inner(), executor, server_config, true).await
+}
+
+async fn agent_card_response(
+    agent_name: String,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+    server_config: web::Data<ServerConfig>,
+    legacy: bool,
+) -> HttpResponse {
+    let agent_name = agent_ref_from_path(&agent_name);
 
     let handler = A2AHandler::new(executor.get_ref().clone());
     match handler
         .agent_def_to_card(agent_name.clone(), Some(server_config.get_ref().clone()))
         .await
     {
+        Ok(card) if legacy => HttpResponse::Ok().json(distri_a2a::legacy::legacy_card(&card)),
         Ok(card) => HttpResponse::Ok().json(card),
         Err(distri_core::a2a::A2AError::AgentError(e)) if agent_ref_error(&e).is_some() => {
             agent_ref_error(&e).unwrap_or_else(|| HttpResponse::NotFound().finish())
