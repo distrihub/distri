@@ -1,0 +1,24 @@
+name = "customer-service"
+title = "Customer service desk with Telegram escalation"
+category = "support"
+about = "An agent that answers each customer message, sends you a one-line gist of it on Telegram, and escalates the ones it should not handle alone (refunds, complaints, anything it cannot answer) with its draft reply."
+prompt = "Create a customer service agent for my shop that answers customer messages, sends me a short gist of each one on Telegram, and escalates refunds and angry customers to me there."
+
+[params.business_name]
+ask = "What is the business called?"
+example = "Acme Coffee"
+
+[params.escalate_when]
+ask = "Which messages should come to you instead of being answered alone?"
+example = "refunds, double charges, complaints, legal questions"
+default = "refunds, double charges, complaints, legal questions, and anything you cannot answer from what you know"
+
+[channel]
+kind = "telegram"
+agent = "support_desk"
+workflows = ["handle_message"]
+
+[test]
+workflow = "handle_message"
+input = { from = "Sam", message = "I was charged twice for order #1042. I want a refund today.", test = true }
+expect = "steps.handle.decision is escalate with a reply and a gist, and a 🚨 message arrives on Telegram (the notify step reports \"no chat connected\" until Telegram is connected)"

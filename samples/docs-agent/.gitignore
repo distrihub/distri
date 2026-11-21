@@ -1,0 +1,5 @@
+app/.env
+app/.npmrc
+app/package-lock.json
+test/package-lock.json
+test/out/

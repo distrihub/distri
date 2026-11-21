@@ -1,0 +1,15 @@
+name = "hello-world"
+title = "Hello world"
+category = "starter"
+about = "One agent and a one-step workflow that asks it for a greeting. The smallest blueprint: use it to check your install, your key and your model."
+prompt = "Create an agent that says hello."
+
+[params.name]
+ask = "Who should it greet?"
+example = "Ada"
+default = "world"
+
+[test]
+workflow = "say_hello"
+input = { test = true }
+expect = "The run completes and steps.greet.output holds the agent's greeting"

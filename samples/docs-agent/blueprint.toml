@@ -1,0 +1,19 @@
+name = "docs-agent"
+title = "Docs agent on a React portal"
+category = "support"
+about = "A docs agent inside your React portal: it searches the portal's own pages with a tool that runs in the browser, answers with the page it used, and opens that page for the reader."
+prompt = "Add a docs agent to my React developer portal that answers questions from our docs pages and opens the page it used."
+
+[params.product_name]
+ask = "What is the product called?"
+example = "Acme API"
+default = "Acme API"
+
+[params.site_url]
+ask = "Which origin serves the portal (like https://docs.acme.com)?"
+example = "https://docs.acme.com"
+default = "http://localhost:5302"
+
+[embed]
+agent = "docs_agent"
+origins = ["{{params.site_url}}"]

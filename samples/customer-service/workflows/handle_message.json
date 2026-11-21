@@ -1,0 +1,60 @@
+{
+  "agent_type": "workflow_agent",
+  "name": "handle_message",
+  "description": "Answers one customer message for {{params.business_name}}, sends the owner its gist on Telegram, and escalates it when it must go to a person.",
+  "version": "0.1.0",
+  "definition": {
+    "id": "handle_message",
+    "steps": [
+      {
+        "id": "handle",
+        "label": "Answer, gist, escalate or not",
+        "kind": {
+          "type": "agent_run",
+          "agent_id": "support_desk",
+          "prompt": "A customer message arrived. Reply with one JSON object and nothing else: {\"decision\": \"escalate\" or \"answer\", \"reply\": the message the customer receives, \"gist\": one line for the owner}.\n\nFrom: {input.from}\nMessage: {input.message}"
+        }
+      },
+      {
+        "id": "escalate",
+        "label": "Escalate to the owner on Telegram",
+        "depends_on": [
+          "handle"
+        ],
+        "when": "{steps.handle.decision} == \"escalate\"",
+        "on_failure": "continue",
+        "kind": {
+          "type": "notify",
+          "to": "owner",
+          "text": "🚨 Needs you: {steps.handle.gist}\n\nFrom {input.from}: {input.message}\n\nDraft reply: {steps.handle.reply}"
+        }
+      },
+      {
+        "id": "send_gist",
+        "label": "Send the gist on Telegram",
+        "depends_on": [
+          "handle"
+        ],
+        "when": "{steps.handle.decision} != \"escalate\"",
+        "on_failure": "continue",
+        "kind": {
+          "type": "notify",
+          "to": "owner",
+          "text": "🧾 {steps.handle.gist}\n\nAnswered: {steps.handle.reply}"
+        }
+      }
+    ],
+    "entry_points": [
+      {
+        "id": "main",
+        "label": "A customer message",
+        "starts_at": "handle",
+        "triggers": [
+          {
+            "type": "manual"
+          }
+        ]
+      }
+    ]
+  }
+}
