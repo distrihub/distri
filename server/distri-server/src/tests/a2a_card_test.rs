@@ -75,7 +75,16 @@ mod tests {
             assert_eq!(card["version"], "2.3.4", "the agent's own version");
             assert_eq!(card["supportedInterfaces"][0]["protocolVersion"], "1.0");
             assert_eq!(card["supportedInterfaces"][0]["protocolBinding"], "JSONRPC");
-            assert!(card.get("url").is_none(), "no 0.x card.url");
+            if path.ends_with("agent-card.json") {
+                assert!(card.get("url").is_none(), "no 0.x card.url on the 1.0 path");
+            } else {
+                // 0.x clients (@a2a-js/sdk 0.3 in @distri/core <= 0.4.6)
+                // need `url` and `capabilities.streaming` on this path.
+                assert_eq!(card["url"], card["supportedInterfaces"][0]["url"]);
+                assert_eq!(card["preferredTransport"], "JSONRPC");
+                assert_eq!(card["protocolVersion"], "0.3.0");
+                assert_eq!(card["capabilities"]["streaming"], true);
+            }
             let uris: Vec<&str> = card["capabilities"]["extensions"]
                 .as_array()
                 .unwrap()
