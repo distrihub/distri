@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="Distri. Embed AI experiences or build in your product. AI Agents that live natively in your product: any model, self-host or cloud." width="100%">
+  <img src="docs/assets/banner.svg" alt="Distri. Embed AI agents in your product. Open source, any model, self-host or cloud." width="100%">
 </p>
 
 <p align="center">
@@ -16,17 +16,17 @@
   <img src="https://img.shields.io/badge/protocols-A2A%20%C2%B7%20MCP-3b82f6" alt="A2A and MCP">
 </p>
 
-<h3 align="center">AI Agents that live natively in your product.</h3>
+<h3 align="center">Embed AI agents in your product.</h3>
 
 Distri is an open-source (MIT) agent server written in Rust. An agent is a markdown file; Distri runs it on any model, on your own server or on [Distri Cloud](https://app.distri.dev), and exposes it as an [A2A 1.0](https://a2a-protocol.org/) endpoint your product, your backend or a chat app can call.
 
-## Three ways to use it
+## Where the agent runs
 
 | | What you get | Where |
 |---|---|---|
-| **Embed AI experiences** | A chat UI in your app whose agent calls your app's own functions (`cart.add`, `form.setValues`) in the signed-in user's browser or phone. | [`@distri/react`](https://www.npmjs.com/package/@distri/react), [`@distri/react-native`](https://www.npmjs.com/package/@distri/react-native), [`@distri/angular`](https://www.npmjs.com/package/@distri/angular) ([distrijs](https://github.com/distrihub/distrijs)), or one `<script src="https://embed.distri.dev/v1/embed.js">` tag on Distri Cloud |
+| **In your app** | A chat UI in your app whose agent calls your app's own functions (`cart.add`, `form.setValues`) in the signed-in user's browser or phone. | [`@distri/react`](https://www.npmjs.com/package/@distri/react), [`@distri/react-native`](https://www.npmjs.com/package/@distri/react-native), [`@distri/angular`](https://www.npmjs.com/package/@distri/angular) ([distrijs](https://github.com/distrihub/distrijs)), or one `<script src="https://embed.distri.dev/v1/embed.js">` tag on Distri Cloud |
 | **Bots and channels** | The same agent answers in Telegram, WhatsApp and Discord, with alerts from scheduled workflows. | Distri Cloud |
-| **Build agents in your product** | Agents and workflows your backend calls over A2A; tools over MCP and HTTP; 11 provider types; usage and cost per agent (per customer on Distri Cloud). | This repository, self-hosted, or Distri Cloud |
+| **From your backend** | Agents and workflows your backend calls over A2A; tools over MCP and HTTP; 11 provider types; usage and cost per agent (per customer on Distri Cloud). | This repository, self-hosted, or Distri Cloud |
 
 <table>
   <tr>
