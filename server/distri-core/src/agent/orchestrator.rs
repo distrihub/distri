@@ -16,7 +16,7 @@ use distri_stores::{initialize_stores, InitializedStores};
 pub use distri_stores::{AgentStore, ThreadStore};
 use distri_types::configuration::AgentConfig;
 use distri_types::stores::{PromptTemplateStore, SecretStore};
-use distri_types::{browser::BrowsrClientConfig, configuration::StoreConfig, HookMutation};
+use distri_types::{configuration::StoreConfig, HookMutation};
 use distri_types::{
     configuration::{DefinitionOverrides, ObjectStorageConfig},
     LLmContext, OrchestratorTrait,
@@ -49,7 +49,6 @@ pub struct AgentOrchestrator {
     /// Optional workspace filesystem for HTTP file routes (not used by agent tools).
     /// Set by the hosting application if workspace file APIs are needed.
     pub workspace_filesystem: Option<Arc<FileSystem>>,
-    pub browser_config: Arc<RwLock<BrowsrClientConfig>>,
     pub additional_tools: Arc<RwLock<HashMap<String, Vec<Arc<dyn Tool>>>>>,
     pub prompt_registry: Arc<PromptRegistry>,
     /// Store configuration for creating new session stores
@@ -239,7 +238,6 @@ pub struct AgentOrchestratorBuilder {
     tenant_scope: Option<Arc<dyn distri_types::TenantScope>>,
     session_storage_path: Option<std::path::PathBuf>,
     workspace_filesystem: Option<Arc<FileSystem>>,
-    browser_config: Option<BrowsrClientConfig>,
     stores: Option<InitializedStores>,
     prompt_registry: Option<Arc<PromptRegistry>>,
     store_config: Option<StoreConfig>,
@@ -356,11 +354,6 @@ impl AgentOrchestratorBuilder {
 
     pub fn with_store_config(mut self, store_config: StoreConfig) -> Self {
         self.store_config = Some(store_config);
-        self
-    }
-
-    pub fn with_browser_config(mut self, browser_config: BrowsrClientConfig) -> Self {
-        self.browser_config = Some(browser_config);
         self
     }
 
@@ -494,8 +487,6 @@ impl AgentOrchestratorBuilder {
     }
 
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
-        let browser_config = self.browser_config.unwrap_or_default();
-
         let registry = self
             .registry
             .unwrap_or_else(|| Arc::new(RwLock::new(McpServerRegistry::new())));
@@ -534,8 +525,6 @@ impl AgentOrchestratorBuilder {
             Arc::new(distri_filesystem::create_file_system(fs_config).await?)
         };
 
-        let browser_config = Arc::new(RwLock::new(browser_config));
-
         // Initialize prompt registry with defaults only (no auto-discovery)
         // User-specific partials are loaded at render time in formatter.rs
         let prompt_registry = if let Some(registry) = self.prompt_registry {
@@ -558,7 +547,6 @@ impl AgentOrchestratorBuilder {
             session_filesystem_root: session_filesystem,
             tenant_scope: self.tenant_scope,
             workspace_filesystem: self.workspace_filesystem,
-            browser_config,
             additional_tools: Arc::new(RwLock::new(self.additional_tools.unwrap_or_default())),
             prompt_registry,
             store_config,
@@ -1487,7 +1475,6 @@ impl AgentOrchestrator {
         if let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config {
             if definition.should_use_browser() {
                 tracing::debug!("🌐 Browser enabled for agent: {}", agent_id);
-                // No in-process browser initialization; sessions are handled via browsr-client.
             }
         }
 
@@ -2587,6 +2574,7 @@ impl AgentOrchestrator {
             started_at: step.started_at,
             completed_at: Some(now),
             wait_task_id: step.wait_task_id.clone(),
+            input: step.input.clone(),
         };
         workflow_store
             .upsert_step(run_task_id, updated)

@@ -30,7 +30,7 @@ For the raw API reference (endpoints, bodies, examples), also load `distri_platf
 - What's the *one sentence* summary of its job? If you can't state it in one sentence, split it into multiple agents.
 
 **2. Pick capabilities.** Based on the role:
-- **Tools** — what built-in tools (`search`, `browsr_scrape`, `distri_request`, shell tools) does it need?
+- **Tools** — what built-in tools (`distri_request`, `load_skill`, `notify`, ...) does it need? Does it read the web? Then give it the `browser` app (`[[tools.mcp]] server = "browser"`: `browser__open`, `browser__read`, `browser__click`, ...); it searches by opening a search page such as `https://duckduckgo.com/html/?q=<query>`.
 - **Sub-agents** — can it delegate to specialists (`coder`, `explore`, `plan`)? Prefer delegation over stuffing the parent agent with every tool.
 - **Skills** — which skills should it be allowed to load? Use `[{"id": "*", "name": "*"}]` for "all" during prototyping; narrow once the agent is stable.
 - **Connections** — does it talk to external services (Google, Slack, GitHub)? OAuth connections are attached to the user, not the agent — the agent references them by ID at call time.
@@ -38,7 +38,7 @@ For the raw API reference (endpoints, bodies, examples), also load `distri_platf
 **3. Write focused instructions.** The `instructions` field is the agent's system prompt. Good prompts:
 - Start with a clear `# ROLE` statement (one paragraph, what you are and aren't)
 - Include `# TASK` with `{{task}}` placeholder for the incoming user request
-- List capabilities concretely — don't say "you have tools", say "you use `search` for web lookups and `distri_request` for platform calls"
+- List capabilities concretely — don't say "you have tools", say "you use `browser__open` / `browser__read` for web lookups and `distri_request` for platform calls"
 - State rules as imperatives ("Always call `final` when done" > "You should probably call `final`")
 - Keep it short. 80–150 lines is a healthy range. If it's longer, the agent probably has too many responsibilities.
 
@@ -62,8 +62,11 @@ reasoning_depth = "standard"          # "shallow" | "standard" | "deep"
 type = "tools"                         # tool-based execution
 
 [tools]
-builtin = ["final", "search", "distri_request", "load_skill", "tool_search"]
+builtin = ["final", "distri_request", "load_skill", "tool_search"]
 external = []                          # external tool names (if any)
+
+[[tools.mcp]]                         # web access: the internal browser app
+server = "browser"
 
 [[available_skills]]
 id = "*"

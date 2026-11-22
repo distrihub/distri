@@ -11,9 +11,9 @@
 //!   - [`WorkflowExecutionState`] — the run-level extras (definition
 //!     snapshot, entry point, input, shared context) that a bare
 //!     `Task` row can't carry.
-//!   - [`WorkflowStepState`] — per-step extras (status, result, error,
-//!     timestamps, and the optional `wait_task_id` for wait-style steps
-//!     that need to be A2A-addressable).
+//!   - [`WorkflowStepState`] — per-step extras (status, resolved input,
+//!     result, error, timestamps, and the optional `wait_task_id` for
+//!     wait-style steps that need to be A2A-addressable).
 //!   - [`WorkflowStore`] trait — a single CRUD surface over both.
 //!
 //! What is **not** here: the run's status, the tree shape, the
@@ -130,6 +130,12 @@ pub struct WorkflowStepState {
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_task_id: Option<String>,
+    /// What the step ran with: its kind (`type` + fields) with templates
+    /// resolved against the run context when the step started, plus the
+    /// resolved `input` mapping when the step declares one. `{env.X}`
+    /// references are left as written so connection tokens never land here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<serde_json::Value>,
 }
 
 /// Persist and load workflow execution state. One trait, both

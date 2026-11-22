@@ -219,15 +219,8 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
                 .unwrap_or("?");
             format!("{}(\"{}\")", name, skill)
         }
-        "browsr_scrape" | "browsr_crawl" => {
+        "browser__open" | "browser__navigate" => {
             format!("{}(\"{}\")", name, truncate(&str_field("url"), 60))
-        }
-        "browsr_browser" | "browser_step" => {
-            let action = str_field("action");
-            match input.get("url").and_then(|v| v.as_str()) {
-                Some(u) => format!("{}({} \"{}\")", name, action, truncate(u, 50)),
-                None => format!("{}({})", name, action),
-            }
         }
         "execute_shell" => {
             format!("execute_shell(\"{}\")", truncate(&str_field("command"), 60))

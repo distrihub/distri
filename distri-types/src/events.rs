@@ -293,7 +293,7 @@ pub enum AgentEventType {
         reason: Option<String>,
     },
 
-    /// A live, embeddable view produced by a tool (e.g. browsr viewer, Grafana
+    /// A live, embeddable view produced by a tool (e.g. the browser app's live view, Grafana
     /// dashboard, map widget). The channel renders it inline as an iframe
     /// (web) or as a clickable link (Telegram, WhatsApp, CLI).
     LiveView {

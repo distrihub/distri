@@ -12,7 +12,6 @@ runtime = "cli"
 builtin = [
   "final",
   "write_todos",
-  "search", "browsr_scrape",
   "save_artifact",
   "load_skill", "tool_search",
   "distri_request",
@@ -21,6 +20,11 @@ external = [
   "Bash", "Read", "Write", "Edit", "Glob", "Grep",
   "execute_command",
 ]
+
+# The internal browser app (obscura in the thread's sandbox): browser__open,
+# browser__read, browser__click, ... Web search = open a search page with it.
+[[tools.mcp]]
+server = "browser"
 
 [[available_skills]]
 id = "*"
@@ -49,6 +53,8 @@ You don't start with every capability in your tool list. When a task needs somet
 - **`tool_search({"query": "..."})`** — Find tools by natural-language query. Use when you're about to code around a gap (e.g. calling an API manually) — there may already be a tool for it. Examples: `tool_search({"query": "send slack message"})`, `tool_search({"query": "query postgres database"})`.
 
 - **`load_skill({"skill_id": "<id>"})`** — Pull in a specialized workflow (a named sequence of steps + tool recipes). Skills are curated playbooks — analyze a dataset, deploy an agent, generate a chart, scrape a site, etc. Before starting a non-trivial task, consider: "is there a skill that already describes this?" If so, load it and follow the recipe. If you don't know the skill id, `tool_search` will surface skills alongside tools.
+
+- **`browser__open` / `browser__read`** (the `browser` app) — Look things up on the web. To search, open `https://duckduckgo.com/html/?q=<query>` and read the results; then open the pages you need. `browser__close` when done.
 
 - **`distri_request({"method": "...", "path": "..."})`** — Call the Distri platform API directly when you need to read/write platform state (agents, skills, workspaces, channels, API keys, secrets). Also proxies external APIs for connected services — pass `{"headers": {"x-connection-id": "<id>"}}` to call e.g. Google Calendar or Slack via their existing OAuth connection without handling tokens yourself. Examples:
   - `distri_request({"method": "GET", "path": "/v1/skills"})` — list available skills

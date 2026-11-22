@@ -66,13 +66,13 @@ fn make_tool(name: &str, desc: &str, prompt: Option<&str>) -> Arc<dyn Tool> {
 
 #[tokio::test]
 async fn tool_search_keyword_omits_deferred_params() {
-    let deferred: HashSet<String> = ["browsr_scrape".to_string()].into();
+    let deferred: HashSet<String> = ["browser__open".to_string()].into();
     let ctx = make_context_with_deferred(deferred).await;
 
     // Add tools to context
     ctx.extend_tools(vec![
         make_tool("execute_shell", "Run shell commands", Some("Use for shell")),
-        make_tool("browsr_scrape", "Scrape websites", Some("Use for scraping")),
+        make_tool("browser__open", "Scrape websites", Some("Use for scraping")),
     ])
     .await;
 
@@ -94,10 +94,10 @@ async fn tool_search_keyword_omits_deferred_params() {
     let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
     let tools = parsed["tools"].as_array().unwrap();
 
-    // Should find browsr_scrape
+    // Should find browser__open
     assert_eq!(tools.len(), 1);
     let tool = &tools[0];
-    assert_eq!(tool["name"], "browsr_scrape");
+    assert_eq!(tool["name"], "browser__open");
     // Deferred tool: NO parameters field
     assert!(
         tool.get("parameters").is_none(),
@@ -112,20 +112,20 @@ async fn tool_search_keyword_omits_deferred_params() {
 
 #[tokio::test]
 async fn tool_search_exact_name_returns_full_schema_and_prompt() {
-    let deferred: HashSet<String> = ["browsr_scrape".to_string()].into();
+    let deferred: HashSet<String> = ["browser__open".to_string()].into();
     let ctx = make_context_with_deferred(deferred).await;
 
     ctx.extend_tools(vec![make_tool(
-        "browsr_scrape",
+        "browser__open",
         "Scrape websites",
-        Some("Use browsr for scraping."),
+        Some("Use the browser app to open pages."),
     )])
     .await;
 
     let tool_call = ToolCall {
         tool_call_id: "tc2".into(),
         tool_name: "tool_search".into(),
-        input: json!({"names": ["browsr_scrape"]}),
+        input: json!({"names": ["browser__open"]}),
     };
 
     let result = ToolSearchTool
@@ -148,7 +148,7 @@ async fn tool_search_exact_name_returns_full_schema_and_prompt() {
         "exact name lookup MUST return full schema"
     );
     // MUST have prompt (this is how deferred tool instructions are delivered)
-    assert_eq!(tool["prompt"], "Use browsr for scraping.");
+    assert_eq!(tool["prompt"], "Use the browser app to open pages.");
     // Should NOT have deferred flag (it's been "loaded")
     assert!(tool.get("deferred").is_none());
 }

@@ -89,19 +89,14 @@ pub fn format_status_text(name: &str, input: &Value) -> String {
             let query = str_field("query").unwrap_or_else(|| "...".to_string());
             format!("Searching: {}", truncate(&query, 50))
         }
-        "browsr_scrape" => {
+        // The internal browser MCP app (obscura in the thread's sandbox).
+        "browser__open" | "browser__navigate" => {
             let url = str_field("url").unwrap_or_else(|| "...".to_string());
             let host = extract_host(&url);
             format!("Browsing {}", host)
         }
-        "browsr_crawl" => {
-            let url = str_field("url").unwrap_or_else(|| "...".to_string());
-            let host = extract_host(&url);
-            format!("Crawling {}", host)
-        }
-        "browsr_browser" | "browser_step" => {
-            let action = str_field("action").unwrap_or_else(|| "navigating".to_string());
-            format!("Browser: {}", action)
+        n if n.starts_with("browser__") => {
+            format!("Browser: {}", n.trim_start_matches("browser__"))
         }
         "load_skill" => {
             let skill = str_field("skill_name").unwrap_or_else(|| "...".to_string());
@@ -229,10 +224,17 @@ mod tests {
     }
 
     #[test]
-    fn browsr_scrape_status() {
+    fn browser_open_status() {
         let input = json!({"url": "https://docs.rs/tokio/latest"});
-        let result = format_status_text("browsr_scrape", &input);
+        let result = format_status_text("browser__open", &input);
         assert_eq!(result, "Browsing docs.rs");
+    }
+
+    #[test]
+    fn browser_click_status() {
+        let input = json!({"session_id": "s1", "text": "Sign in"});
+        let result = format_status_text("browser__click", &input);
+        assert_eq!(result, "Browser: click");
     }
 
     #[test]

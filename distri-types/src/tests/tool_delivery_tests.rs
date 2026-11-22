@@ -37,11 +37,11 @@ fn call_agent_is_always_core() {
 #[test]
 fn always_full_schema_overrides() {
     let config = ToolsConfig {
-        always_full_schema: vec!["browsr_scrape".to_string()],
+        always_full_schema: vec!["browser__open".to_string()],
         ..Default::default()
     };
-    assert!(config.is_core_tool("browsr_scrape"));
-    assert!(!config.is_core_tool("browsr_browser"));
+    assert!(config.is_core_tool("browser__open"));
+    assert!(!config.is_core_tool("browser__click"));
 }
 
 #[test]
@@ -81,5 +81,5 @@ fn names_only_defers_everything_except_core() {
         ToolDeliveryMode::NamesOnly
     );
     assert!(config.is_core_tool("final"));
-    assert!(!config.is_core_tool("browsr_scrape"));
+    assert!(!config.is_core_tool("browser__open"));
 }

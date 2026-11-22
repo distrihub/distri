@@ -195,6 +195,40 @@ pub fn record_agent_finish(
     }
 }
 
+// ─── Span end time ───────────────────────────────────────────────────────────
+
+/// Stamp `span`'s OpenTelemetry end time with "now".
+///
+/// tracing-opentelemetry (0.29, `layer.rs` `on_exit`) sets a span's OTel end
+/// time on every *exit* of the span, not when the span closes. A span that was
+/// entered only briefly — an LLM span `.instrument()`ed around opening a stream
+/// whose chunks are then read outside it, or a step span entered with
+/// `in_scope` to parent a child — would export with the end of that first
+/// entry (LLM calls showed 12–39 ms). Entering and leaving the span once more
+/// when the work really finishes moves the end to the right moment.
+pub fn mark_span_end(span: &tracing::Span) {
+    span.in_scope(|| {});
+}
+
+/// Stamps the span's end time ([`mark_span_end`]) when dropped.
+///
+/// Hold one for the life of a call so every way out of it (success, error,
+/// early return) records when the call really ended.
+#[must_use = "the span's end is stamped when the guard drops"]
+pub struct SpanEndGuard(tracing::Span);
+
+impl SpanEndGuard {
+    pub fn new(span: tracing::Span) -> Self {
+        Self(span)
+    }
+}
+
+impl Drop for SpanEndGuard {
+    fn drop(&mut self) {
+        mark_span_end(&self.0);
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

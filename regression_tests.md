@@ -1,7 +1,7 @@
 # Distri CLI Regression Test Plan
 
 **Last run:** 2026-03-19 | **Version:** 0.3.6 | **Platform:** macOS arm64
-**API:** https://api.distri.dev/v1 | **Browsr:** https://api.browsr.dev
+**API:** https://api.distri.dev/v1
 
 ## Quick Run
 
@@ -48,20 +48,8 @@ BINARY_PATH=./target/release/distri bash integration_tests.sh
 | 4.5 | read_from_storage | `tools invoke read_from_storage --input '{"key":"k"}'` | Returns stored value | PASS |
 | 4.6 | create_skill | `tools invoke create_skill --input '{"name":"x","description":"x","content":"x","tags":[]}'` | Returns skill ID | PASS |
 | 4.7 | delete_skill | `tools invoke delete_skill --input '{"skill_id":"<id>"}'` | `deleted: true` | PASS |
-| 4.8 | transfer_to_agent | `tools invoke transfer_to_agent --input '{"agent_name":"browsr","message":"test"}'` | `status: success` | PASS |
+| 4.8 | transfer_to_agent | `tools invoke transfer_to_agent --input '{"agent_name":"explore","message":"test"}'` | `status: success` | PASS |
 | 4.9 | tool_search | `tools invoke tool_search --input '{"query":"search"}'` | Returns results | PASS |
-
-### 5. Tools — Browsr (requires browsr-cloud deployed)
-
-| # | Test | Command | Expected | Status |
-|---|------|---------|----------|--------|
-| 5.1 | Search | `tools invoke search --input '{"query":"hello","limit":3}'` | `total: 3`, result entries | PASS |
-| 5.2 | Scrape markdown | `tools invoke browsr_scrape --input '{"url":"https://example.com","formats":["markdown"]}'` | markdown string | PASS |
-| 5.3 | Scrape html | `tools invoke browsr_scrape --input '{"url":"https://example.com","formats":["html"]}'` | `html.full` string | PASS |
-| 5.4 | Scrape screenshot | `tools invoke browsr_scrape --input '{"url":"https://example.com","formats":["screenshot"]}'` | base64 PNG | PASS |
-| 5.5 | Crawl | `tools invoke browsr_crawl --input '{"url":"https://example.com","limit":2}'` | `completed >= 1` | PASS |
-
-**Note:** First scrape after cold start may timeout (worker VMSS scales from 0). Retry once.
 
 ### 6. Prompts
 
@@ -82,8 +70,6 @@ BINARY_PATH=./target/release/distri bash integration_tests.sh
 | # | Test | Command | Expected | Status |
 |---|------|---------|----------|--------|
 | 8.1 | Simple task | `distri run --task "What is 2+2?"` | Agent responds with answer | PASS |
-| 8.2 | Search task | `distri run --task "Search for 'X' and summarize"` | Uses search tool, returns result | PASS |
-| 8.3 | Scrape task | `distri run --task "Scrape example.com, tell me the title"` | Uses browsr_scrape, returns title | PASS |
 
 ### 9. Known Failures (server-side)
 
@@ -111,9 +97,3 @@ Workspace must have:
      -d '{"provider_id":"openai","secrets":{"OPENAI_API_KEY":"sk-..."},"default_model":"openai/gpt-4.1"}' \
      https://api.distri.dev/v1/providers
    ```
-
-## Dependencies
-
-- **browsr-cloud** must be deployed (router + worker) for tests 5.x
-- **browsr-types** 0.3.8+ with v1 API types
-- **browsr-client** 0.3.8+ calling `/v1/search`

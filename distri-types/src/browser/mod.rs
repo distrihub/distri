@@ -1,19 +1,19 @@
-pub use browsr_types::BrowsrClientConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Agent-level configuration for enabling the shared browser runtime
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-#[derive(Default)]
+/// Agent-level browser flag. The browser itself is the internal `browser` MCP
+/// app (obscura in the thread's sandbox), which agents opt into with
+/// `[[tools.mcp]] server = "browser"`; this only marks an agent as wanting it.
+///
+/// Unknown keys are ignored so stored agent files that still carry the old
+/// runtime overrides from the old browser driver (`headless`, ...) keep loading.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default)]
 pub struct BrowserAgentConfig {
-    /// Whether the orchestrator should eagerly initialize the browser
+    /// Whether the orchestrator should offer the browser agent
     pub enabled: bool,
     /// Persist and restore session cookies/state between runs
     pub persist_session: bool,
-    /// Optional runtime overrides for the Chromium driver
-    #[serde(skip_serializing_if = "Option::is_none", flatten)]
-    pub runtime: Option<BrowsrClientConfig>,
 }
 
 impl BrowserAgentConfig {
@@ -23,9 +23,5 @@ impl BrowserAgentConfig {
 
     pub fn should_persist_session(&self) -> bool {
         self.persist_session
-    }
-
-    pub fn runtime_config(&self) -> BrowsrClientConfig {
-        self.runtime.clone().unwrap_or_default()
     }
 }

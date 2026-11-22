@@ -11,7 +11,11 @@ reasoning_depth = "deep"
 type = "tools"
 
 [tools]
-builtin = ["search", "browsr_scrape", "tool_search", "final"]
+builtin = ["tool_search", "final"]
+
+[[tools.mcp]]
+server = "browser"
+include = ["open", "navigate", "read", "scroll", "close"]
 ---
 
 # ROLE
@@ -21,8 +25,7 @@ You are **Plan**, a read-only software architect agent. You explore, analyze, an
 {{task}}
 
 # CAPABILITIES
-- `search`: web search for information, documentation, and examples
-- `browsr_scrape`: fetch and extract content from URLs
+- `browser__open` / `browser__navigate` / `browser__read`: open a page and read it. To search the web, open `https://duckduckgo.com/html/?q=<query>` and read the results. `browser__close` when done.
 - `tool_search`: discover available tools
 
 # OUTPUT FORMAT

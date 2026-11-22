@@ -1,6 +1,6 @@
 use crate::AgentError;
 use crate::a2a::AgentSkill;
-use crate::browser::{BrowserAgentConfig, BrowsrClientConfig};
+use crate::browser::BrowserAgentConfig;
 use crate::configuration::DefinitionOverrides;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -423,7 +423,7 @@ impl LlmDefinition {
 pub enum RuntimeMode {
     /// Running from distri-cli with local filesystem access
     Cli,
-    /// Running on distri-cloud server (browsr sandbox for code execution).
+    /// Running on distri-cloud server (the thread's sandbox for code execution).
     /// User-facing name: **server**.
     #[default]
     #[serde(alias = "server")]
@@ -580,7 +580,7 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_config: Option<BrowserAgentConfig>,
 
-    /// No effect: browsr's shell tools are gone. Kept so stored agent files
+    /// No effect: the old shell tools are gone. Kept so stored agent files
     /// that set it still load; code runs in the thread's sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_shell: Option<bool>,
@@ -811,11 +811,6 @@ impl StandardDefinition {
         self.browser_config.as_ref()
     }
 
-    /// Returns the runtime Chromium driver configuration if enabled
-    pub fn browser_runtime_config(&self) -> Option<BrowsrClientConfig> {
-        self.browser_config.as_ref().map(|cfg| cfg.runtime_config())
-    }
-
     /// Should browser session state be serialized after tool runs
     pub fn should_persist_browser_session(&self) -> bool {
         self.browser_config
@@ -950,10 +945,10 @@ impl StandardDefinition {
 /// Tools configuration for agents
 /// Canonical list of valid builtin tool names.
 ///
-/// Includes both server-executed tools (search, invoke_agent, etc.) and
+/// Includes both server-executed tools (invoke_agent, notify, etc.) and
 /// client-executed tools (http_request). Agent definitions reference these
 /// by name in `tools.builtin = [...]`.
-/// browsr's shell and code tools, removed: code runs in the thread's
+/// The old shell and code tools, removed: code runs in the thread's
 /// sandbox (Bash/Read/Write/Edit, which the host adds per run). An agent file
 /// that still names them loads; the names are skipped. Only server agents
 /// may name them, as before.
@@ -975,12 +970,6 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     "wait_task",
     "cancel_task",
     "list_my_tasks",
-    // Browser & scraping
-    "browsr_scrape",
-    "browsr_browser",
-    "browsr_crawl",
-    "browser_step",
-    "search",
     // Tool discovery
     "tool_search",
     // Message the owner (their Telegram / WhatsApp chat) through the host's notifier
@@ -2797,17 +2786,17 @@ tool_format = "json_l"
         assert!(config.is_core_tool("tool_search"));
         assert!(config.is_core_tool("Bash"));
         assert!(config.is_core_tool("call_agent"));
-        assert!(!config.is_core_tool("browsr_scrape"));
+        assert!(!config.is_core_tool("browser__open"));
     }
 
     #[test]
     fn test_tools_config_always_full_schema() {
         let config = ToolsConfig {
-            always_full_schema: vec!["browsr_scrape".to_string()],
+            always_full_schema: vec!["browser__open".to_string()],
             ..Default::default()
         };
-        assert!(config.is_core_tool("browsr_scrape"));
-        assert!(!config.is_core_tool("browsr_browser"));
+        assert!(config.is_core_tool("browser__open"));
+        assert!(!config.is_core_tool("browser__click"));
     }
 
     #[test]
@@ -2922,7 +2911,7 @@ tool_format = "json_l"
             RuntimeMode::Browser
         );
         assert_eq!(
-            agent_with(None, &["search"], &[]).inferred_environment(),
+            agent_with(None, &["notify"], &[]).inferred_environment(),
             RuntimeMode::Cloud
         );
         assert_eq!(
@@ -2959,14 +2948,14 @@ tool_format = "json_l"
         assert!(
             agent_with(
                 Some(RuntimeMode::Cloud),
-                &["distri_execute_code", "search"],
+                &["distri_execute_code", "notify"],
                 &[]
             )
             .validate_environment()
             .is_ok()
         );
         assert!(
-            agent_with(Some(RuntimeMode::Browser), &["search"], &["*"])
+            agent_with(Some(RuntimeMode::Browser), &["notify"], &["*"])
                 .validate_environment()
                 .is_ok()
         );

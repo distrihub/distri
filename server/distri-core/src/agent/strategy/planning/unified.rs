@@ -390,7 +390,7 @@ mod grouping_tests {
     fn multiple_tool_calls_collapse_into_one_step() {
         let calls = vec![
             tc("a", "search"),
-            tc("b", "browsr_scrape"),
+            tc("b", "browser__open"),
             tc("c", "search"),
         ];
         let steps = UnifiedPlanner::group_tool_calls_into_steps(calls, "thinking".to_string());

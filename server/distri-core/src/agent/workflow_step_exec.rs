@@ -449,7 +449,8 @@ pub(crate) async fn execute_step(
                 .and_then(|o| o.code_runner.clone())
             else {
                 return Ok(StepResult::failed(
-                    "no code runner on this server: code steps need Deno (OSS) or a sandbox (cloud)",
+                    "no code runner on this server: code steps need Deno (OSS: deno on PATH or DISTRI_DENO) \
+                     or a sandbox (cloud: WORKFLOW_CODE_RUNNER=sandbox with DISTRI_SANDBOX_DEFAULT=on and SANDBOX_URL)",
                 ));
             };
             // The input is the step's resolved input mapping, minus the `env` namespace the

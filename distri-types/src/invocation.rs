@@ -221,7 +221,7 @@ pub enum Executor {
 /// flags, ...). The orchestrator does not interpret `config`.
 ///
 /// Examples (the strings are conventions, not a closed set):
-/// - `{ "kind": "sandbox", "config": { "image": "..." } }` — browsr
+/// - `{ "kind": "sandbox", "config": { "image": "..." } }` — a sandbox
 ///   container running distri-cli.
 /// - `{ "kind": "loopback", "config": {} }` — loopback HTTP to another
 ///   orchestrator instance (DEV_MODE / OSS distri-server).

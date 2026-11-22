@@ -345,7 +345,7 @@ impl ExecutionStrategy for AgentExecutor {
                 )
                 .await
             }
-            // Code steps ran in a browsr shell, which is gone: code runs in
+            // Code steps ran in a shell tool that is gone: code runs in
             // the thread's sandbox through `Bash`.
             Action::Code { .. } => Ok(ExecutionResult {
                 step_id: step.id.clone(),

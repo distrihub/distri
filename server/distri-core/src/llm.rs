@@ -536,6 +536,9 @@ impl LLMExecutor {
         let inf_attrs =
             llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
         let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
+        // The span is entered only while the stream opens; the chunks are read
+        // outside it. Stamp its end when this call returns, not at that first exit.
+        let _span_end = llm_gateway::observability::recorder::SpanEndGuard::new(span.clone());
         let start = std::time::Instant::now();
 
         tracing::debug!(

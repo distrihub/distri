@@ -42,7 +42,6 @@ plugins/**/dist/
 
 threads/*
 distrijs
-browsr_scenarios.json
 releases/*
 distri.toml
 node_modules/.pnpm/@babel+code-frame@7.27.1/node_modules/@babel/code-frame/package.json

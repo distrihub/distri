@@ -5,7 +5,6 @@ Instructions for AI agents working on the distri codebase.
 ## Key documentation
 
 - `CLAUDE.md` — Build commands, architecture, conventions
-- `docs/code-agent.md` — Code execution agent (browsr shell sessions)
 - TypeScript SDK: separate repo, [distrihub/distrijs](https://github.com/distrihub/distrijs)
 
 ## Working with the codebase
@@ -16,7 +15,7 @@ Always run `cargo check` before considering a change complete. Fix all errors an
 
 ### Testing
 
-Run `cargo test` after changes. Tests that require API keys (OPENAI_API_KEY, BROWSR_API_KEY) are gated with early returns or `#[ignore]`.
+Run `cargo test` after changes. Tests that require API keys (OPENAI_API_KEY) are gated with early returns or `#[ignore]`.
 
 Unit tests for pure functions should not require any external services.
 

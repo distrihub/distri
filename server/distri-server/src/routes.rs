@@ -145,10 +145,6 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     )
     .service(web::resource(Route::Build.path()).route(web::post().to(build_workspace)))
     .configure(tools::configure)
-    // Browser session endpoint
-    .service(
-        web::resource(Route::BrowserSession.path()).route(web::post().to(create_browser_session)),
-    )
     // LLM execute
     .service(web::resource(Route::LlmExecute.path()).route(web::post().to(llm_execute)))
     // Configuration endpoints
@@ -2456,24 +2452,6 @@ async fn complete_hook_handler(
         Err(e) => HttpResponse::BadRequest().json(json!({
             "success": false,
             "error": e
-        })),
-    }
-}
-
-/// Create a new browser session via browsr
-/// Returns the session info directly from browsr (session_id, viewer_url, stream_url)
-async fn create_browser_session() -> HttpResponse {
-    let client = browsr_client::BrowsrClient::from_env();
-    tracing::info!(
-        "[browser] Creating session, base_url={}, has_api_key={}",
-        client.base_url(),
-        client.has_auth()
-    );
-
-    match client.create_session().await {
-        Ok(session) => HttpResponse::Ok().json(session),
-        Err(e) => HttpResponse::InternalServerError().json(json!({
-            "error": format!("Failed to create browser session: {}", e)
         })),
     }
 }

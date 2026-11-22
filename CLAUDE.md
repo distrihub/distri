@@ -27,7 +27,6 @@ distri/
 │   ├── distri-auth/       # Auth providers
 │   └── distri-parsers/    # Parsing utilities
 └── docs/                  # Documentation
-    └── code-agent.md      # Code execution agent docs
 ```
 
 ## Architecture
@@ -46,7 +45,7 @@ User message → AgentOrchestrator.execute()
     → PlanningStrategy.plan() — calls LLM, produces AgentPlan with steps
     → ExecutionStrategy.execute_step() per step:
       - Action::ToolCalls → execute tools, emit events
-      - Action::Code → execute_code_with_tools() via browsr shell
+      - Action::Code → rejected: code runs in the host's sandbox tools (Bash/Read/Write/Edit)
     → Loop until max_iterations or final tool called
   → Return InvokeResult
 ```
@@ -72,8 +71,8 @@ cargo test --ignored                 # Run integration tests (require API keys)
 - Tools implement the `Tool` trait; tools needing agent context also implement `ExecutorContextTool`
 - All stores are trait-based with in-memory and diesel implementations
 - LLM calls go through `LLMExecutor` which handles provider abstraction
-- Code runs in browsr shell sessions (sandboxed containers)
-- Key env vars: `BROWSR_API_KEY`, `BROWSR_BASE_URL`
+- Code runs in the thread's sandbox through the host's `Bash`/`Read`/`Write`/`Edit` tools
+- Web access is the host's `browser` MCP app (`[[tools.mcp]] server = "browser"`); there is no builtin search or scrape tool
 
 ## Test infrastructure
 

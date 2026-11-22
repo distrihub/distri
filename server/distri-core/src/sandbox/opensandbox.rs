@@ -101,8 +101,6 @@ impl OpenSandboxConfig {
     /// - `OPENSANDBOX_VOLUME_SIZE` (default `5Gi`; ignored by Docker volumes);
     /// - `OPENSANDBOX_CPU_REQUEST` (default `250m`), `OPENSANDBOX_MEMORY_REQUEST`
     ///   (default `512Mi`): the reservation, below the limits (k8s only).
-    ///
-    /// `SANDBOX_IMAGE` belongs to the old browsr launcher and is not read.
     pub fn from_env() -> SandboxResult<Self> {
         let url = env_first(&["SANDBOX_URL", "OPENSANDBOX_URL"])
             .ok_or_else(|| SandboxError::NotConfigured("SANDBOX_URL is not set".into()))?;

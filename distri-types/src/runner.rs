@@ -11,7 +11,7 @@ use crate::RuntimeMode;
 ///
 /// `distri-types` only defines this trait — it has no concrete
 /// implementation and no knowledge of sandboxes/containers. The concrete
-/// implementation (spawning a browsr container running `distri-cli`)
+/// implementation (spawning a sandbox container running `distri-cli`)
 /// lives in `distri-cloud` (`cloud::runner::SandboxLauncher`), scoped to
 /// the specific tool that needs it (e.g. a channel-only "run this in the
 /// background" tool) rather than wired as an automatic fallback for every
