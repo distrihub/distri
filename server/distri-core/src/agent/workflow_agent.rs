@@ -275,6 +275,17 @@ impl BaseAgent for WorkflowAgent {
     }
 }
 
+/// The run context as it is kept in the workflow store: without the `env` namespace, which
+/// holds resolved connection tokens and secrets. A sync webhook answers with the kept context
+/// and the run page reads it; a resume refills `env` from the executor context.
+pub(crate) fn context_to_keep(context: &serde_json::Value) -> serde_json::Value {
+    let mut kept = context.clone();
+    if let Some(obj) = kept.as_object_mut() {
+        obj.remove("env");
+    }
+    kept
+}
+
 /// Hydrate an in-memory `WorkflowRun` from the persisted
 /// `WorkflowExecutionState` + per-step rows. Used on resume so the
 /// runner picks up exactly where the previous invocation parked.
@@ -397,7 +408,7 @@ impl WorkflowAgent {
                 .with_workspace_id(context.workspace_id.clone())
                 .with_entry_point(entry_point_for_record)
                 .with_input(input_for_record)
-                .with_context(run.context.clone());
+                .with_context(context_to_keep(&run.context));
                 if let Err(e) = store.create_run(state).await {
                     tracing::warn!(
                         error = %e,
@@ -478,7 +489,7 @@ impl WorkflowAgent {
             .and_then(|o| o.workflow_store.clone())
         {
             if let Err(e) = workflow_store
-                .update_context(&context.task_id, final_state.context.clone())
+                .update_context(&context.task_id, context_to_keep(&final_state.context))
                 .await
             {
                 tracing::warn!(
