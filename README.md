@@ -36,6 +36,17 @@ distri run --agent hello --task "Say hello to Ada"
 QUICKSTART_OUTPUT
 ```
 
+If your workspace has no model yet, `apply` says so and `--test` fails until you pick one:
+
+```
+To finish:
+  • Choose a default model
+    The agents answer with the workspace's default model.
+    https://app.distri.dev/gateway/models
+```
+
+Open the link, choose a model (or add a provider key there), and run `distri apply samples/hello-world --test` again.
+
 `distri run` streams the agent's reply. Next: [Getting started](https://distri.dev/docs/getting-started/) · [How Distri fits](https://distri.dev/docs/concepts/how-distri-fits/) · [Agent definition](https://distri.dev/docs/concepts/agent-definition/) · [CLI reference](https://distri.dev/docs/reference/cli-reference/).
 
 ## Samples
