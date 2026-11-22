@@ -1,6 +1,6 @@
 [package]
 name = "distri-a2a"
-version = "0.4.6"
+version = "0.5.0"
 edition = "2021"
 description = "A2A 1.0 protocol types for the Distri ecosystem"
 license = "MIT"

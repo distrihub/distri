@@ -1,6 +1,6 @@
 [package]
 name = "llm-gateway"
-version = "0.4.6"
+version = "0.5.0"
 edition = "2021"
 license = "MIT"
 description = "LLM gateway — unified provider definitions, TTS synthesis, STT transcription, and LLM client abstractions for OpenAI, Anthropic, Azure, ElevenLabs"
@@ -10,7 +10,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wiremock = "0.6"
 
 [dependencies]
-distri-types = { path = "../../distri-types", version = "0.4.6" }
+distri-types = { path = "../../distri-types", version = "0.5.0" }
 async-openai = { version = "0.32.2", features = [
   "completion-types",
   "chat-completion",

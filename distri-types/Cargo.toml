@@ -1,6 +1,6 @@
 [package]
 name = "distri-types"
-version = "0.4.6"
+version = "0.5.0"
 edition = "2024"
 description = "Shared message, tool, and config types for Distri"
 license = "MIT"
@@ -12,7 +12,7 @@ keywords = ["distri", "agent", "types", "llm"]
 categories = ["api-bindings", "data-structures"]
 
 [dependencies]
-distri-a2a = { path = "../distri-a2a", version = "0.4.6" }
+distri-a2a = { path = "../distri-a2a", version = "0.5.0" }
 
 async-trait = "0.1"
 serde = { workspace = true }
