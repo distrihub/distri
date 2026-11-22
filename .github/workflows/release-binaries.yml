@@ -17,6 +17,12 @@ on:
   push:
     tags:
       - 'v*'
+  # A PR that changes the release build builds every target (no publish).
+  pull_request:
+    paths:
+      - '.github/workflows/release-binaries.yml'
+      - 'scripts/build-cli-release.sh'
+      - 'scripts/build-server-release.sh'
   workflow_dispatch:
     inputs:
       tag:
@@ -47,9 +53,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ github.event_name != 'pull_request' && env.TAG || '' }}
           submodules: recursive
       - name: Tag matches distri-cli's version
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           v=$(awk -F'"' '/^version/ { print $2; exit }' distri-cli/Cargo.toml)
