@@ -508,6 +508,17 @@ pub fn render_template(s: &str, values: &BTreeMap<String, String>) -> String {
             return out;
         };
         let key = after[..end].trim();
+        // Only `{{params.<name>}}` is a placeholder. Any other `{{` (code in an inlined module,
+        // a `{{` in prose) is text: keep it and look again right after it, so it cannot swallow
+        // the placeholders that follow up to the next `}}`.
+        let is_placeholder = key
+            .strip_prefix("params.")
+            .is_some_and(|k| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+        if !is_placeholder {
+            out.push_str("{{");
+            rest = after;
+            continue;
+        }
         match key.strip_prefix("params.").and_then(|k| values.get(k)) {
             Some(v) => out.push_str(v),
             None => out.push_str(&rest[start..start + 2 + end + 2]),
@@ -809,6 +820,20 @@ expect = "a test alert arrives on Telegram"
         f.retain(|(p, _)| p != "tools/check.ts");
         let err = Blueprint::from_parts(MANIFEST, f).unwrap_err();
         assert!(err.to_string().contains("tools/check.ts"), "{err}");
+    }
+
+    #[test]
+    fn a_stray_double_brace_does_not_swallow_later_placeholders() {
+        let mut v = BTreeMap::new();
+        v.insert("cfg".to_string(), "X".to_string());
+        // An inlined code module that tests for "{{" before the workflow's own placeholders.
+        let s = r#"{"source": "if (c.startsWith(\"{{\")) return;", "a": "{{params.cfg}}", "b": "{{ params.cfg }}"}"#;
+        assert_eq!(
+            render_template(s, &v),
+            r#"{"source": "if (c.startsWith(\"{{\")) return;", "a": "X", "b": "X"}"#
+        );
+        assert_eq!(render_template("{{ {{params.cfg}}", &v), "{{ X");
+        assert_eq!(render_template("{{params.cfg", &v), "{{params.cfg");
     }
 
     #[test]
