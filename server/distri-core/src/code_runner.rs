@@ -31,17 +31,60 @@ pub const HARNESS: &[(&str, &str)] = &[
             "/../../distri-tool/run.ts"
         )),
     ),
+    (
+        "runtime.ts",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../distri-tool/runtime.ts"
+        )),
+    ),
 ];
+
+/// The first stdin line that carries a step's run token to the harness (`run.ts`), before the
+/// input document.
+pub const SDK_TOKEN_LINE: &str = "__distri_sdk_token__ ";
+
+/// What a run writes to the harness's stdin: the run token line when the step has the script
+/// SDK, then the input document.
+pub fn code_stdin(request: &CodeRunRequest) -> Vec<u8> {
+    let mut out = Vec::new();
+    if let Some(sdk) = &request.sdk {
+        out.extend_from_slice(SDK_TOKEN_LINE.as_bytes());
+        out.extend_from_slice(sdk.token.as_bytes());
+        out.push(b'\n');
+    }
+    out.extend(serde_json::to_vec(&request.input).unwrap_or_else(|_| b"null".to_vec()));
+    out
+}
+
+/// The hosts a run may reach: the module's declared hosts, plus the SDK's host when it has the
+/// script SDK.
+pub fn code_net(request: &CodeRunRequest) -> Vec<String> {
+    let mut net: Vec<String> = request.permissions.net.iter().cloned().collect();
+    if let Some(host) = request.sdk.as_ref().and_then(|s| s.net_host()) {
+        if !net.iter().any(|h| h == "*" || *h == host) {
+            net.push(host);
+        }
+    }
+    net
+}
 
 /// The most stderr kept per run, in lines.
 pub const MAX_LOG_LINES: usize = 200;
 
 /// The import map that points `@distri/tool` (and `jsr:@distri/tool`) at the harness's
-/// `mod.ts` (`mod_url`, a `file://` URL).
+/// `mod.ts` (`mod_url`, a `file://` URL), and `@distri/runtime` (the script SDK) at the
+/// `runtime.ts` next to it.
 pub fn import_map_json(mod_url: &str) -> serde_json::Value {
+    let runtime_url = match mod_url.rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/runtime.ts"),
+        None => "runtime.ts".to_string(),
+    };
     serde_json::json!({"imports": {
         "jsr:@distri/tool": mod_url,
         "@distri/tool": mod_url,
+        "jsr:@distri/runtime": runtime_url,
+        "@distri/runtime": runtime_url,
     }})
 }
 
@@ -152,6 +195,19 @@ pub fn deno_code_argv(
     cwd: &Path,
     net: &[String],
 ) -> Vec<String> {
+    deno_code_argv_sdk(import_map, harness, script, cwd, net, None)
+}
+
+/// [`deno_code_argv`], with the script SDK's URL as the harness's third argument (the run token
+/// goes on stdin, see [`code_stdin`]). `net` must already hold the SDK's host ([`code_net`]).
+pub fn deno_code_argv_sdk(
+    import_map: &Path,
+    harness: &Path,
+    script: &Path,
+    cwd: &Path,
+    net: &[String],
+    sdk_url: Option<&str>,
+) -> Vec<String> {
     let mut argv = vec![
         "run".to_string(),
         "--no-prompt".to_string(),
@@ -174,6 +230,9 @@ pub fn deno_code_argv(
     argv.push(harness.display().to_string());
     argv.push(format!("file://{}", script.display()));
     argv.push(cwd.display().to_string());
+    if let Some(url) = sdk_url {
+        argv.push(url.to_string());
+    }
     argv
 }
 
@@ -191,19 +250,20 @@ impl CodeRunner for LocalDenoRunner {
         let script = run_dir.join("module.ts");
         std::fs::write(&script, &request.source).map_err(|e| format!("code runner: {e}"))?;
 
-        let net: Vec<String> = request.permissions.net.iter().cloned().collect();
+        let net = code_net(&request);
         let mut cmd = tokio::process::Command::new(&self.binary);
         cmd.env_clear()
             .env("DENO_DIR", self.root.join("deno_dir"))
             .env("NO_COLOR", "1")
             .env("DENO_NO_UPDATE_CHECK", "1")
             .current_dir(&run_dir)
-            .args(deno_code_argv(
+            .args(deno_code_argv_sdk(
                 &import_map,
                 &harness,
                 &script,
                 &run_dir,
                 &net,
+                request.sdk.as_ref().map(|s| s.url.as_str()),
             ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -218,7 +278,7 @@ impl CodeRunner for LocalDenoRunner {
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("code runner: start deno: {e}"))?;
-        let input = serde_json::to_vec(&request.input).unwrap_or_else(|_| b"null".to_vec());
+        let input = code_stdin(&request);
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(&input).await;
             drop(stdin);
@@ -298,6 +358,7 @@ mod tests {
             timeout_secs: 60,
             workspace_id: None,
             owner_id: "wf".into(),
+            sdk: None,
         }
     }
 
@@ -342,5 +403,116 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("boom"), "{err}");
+    }
+
+    /// A one-route HTTP server for the SDK: answers every `POST …/call` with
+    /// `{ok: true, result: {echo: <op>}}` and keeps `(authorization, body)` of each request.
+    async fn sdk_server() -> (String, std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else { return };
+                let seen = seen2.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    let (head, body) = loop {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 { return; }
+                        buf.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buf).to_string();
+                        if let Some(i) = text.find("\r\n\r\n") {
+                            let head = text[..i].to_string();
+                            let len = head.lines()
+                                .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                                .unwrap_or(0);
+                            while buf.len() < i + 4 + len {
+                                let n = sock.read(&mut chunk).await.unwrap_or(0);
+                                if n == 0 { break; }
+                                buf.extend_from_slice(&chunk[..n]);
+                            }
+                            break (head, buf[i + 4..].to_vec());
+                        }
+                    };
+                    let auth = head.lines()
+                        .find_map(|l| l.to_ascii_lowercase().starts_with("authorization:").then(|| l[14..].trim().to_string()))
+                        .unwrap_or_default();
+                    let body: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+                    let op = body["op"].as_str().unwrap_or("").to_string();
+                    seen.lock().unwrap().push((auth, body));
+                    let reply = serde_json::json!({"ok": true, "result": {"echo": op}}).to_string();
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        reply.len(), reply
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        (format!("http://{addr}/v1/workflows/sdk"), seen)
+    }
+
+    #[test]
+    fn stdin_carries_the_token_and_net_the_sdk_host() {
+        let mut r = request("x");
+        assert_eq!(code_stdin(&r), br#"{"n":2}"#.to_vec());
+        assert!(code_net(&r).is_empty());
+        r.sdk = Some(distri_types::script_sdk::CodeSdkAccess {
+            url: "http://127.0.0.1:9/v1/workflows/sdk".into(),
+            token: "dsr_t".into(),
+        });
+        assert_eq!(
+            String::from_utf8(code_stdin(&r)).unwrap(),
+            "__distri_sdk_token__ dsr_t\n{\"n\":2}"
+        );
+        assert_eq!(code_net(&r), vec!["127.0.0.1:9".to_string()]);
+        let argv = deno_code_argv_sdk(
+            Path::new("/m"), Path::new("/h"), Path::new("/s"), Path::new("/c"),
+            &code_net(&r), Some("http://127.0.0.1:9/v1/workflows/sdk"),
+        );
+        assert_eq!(argv.last().unwrap(), "http://127.0.0.1:9/v1/workflows/sdk");
+        assert!(!argv.iter().any(|a| a.contains("dsr_t")), "the token is never on the command line");
+        let map = import_map_json("file:///r/tool/mod.ts");
+        assert_eq!(map["imports"]["@distri/runtime"], "file:///r/tool/runtime.ts");
+    }
+
+    #[tokio::test]
+    async fn real_deno_script_reaches_the_sdk_with_its_run_token() {
+        let Some(runner) = LocalDenoRunner::detect() else {
+            eprintln!("deno not installed; skipping");
+            return;
+        };
+        let (url, seen) = sdk_server().await;
+        let mut r = request(
+            r#"import { distri } from "@distri/runtime";
+export default async function (input: { n: number }) {
+  const s = await distri.state.set({ n: input.n });
+  const m = await distri.notify("hello", [[{ type: "url", label: "Open", url: "https://distri.dev" }]]);
+  return { s, m };
+}"#,
+        );
+        r.sdk = Some(distri_types::script_sdk::CodeSdkAccess { url, token: "dsr_test_token".into() });
+        let out = runner.run_code(r).await.unwrap();
+        assert_eq!(out.value["s"]["echo"], "state_set");
+        assert_eq!(out.value["m"]["echo"], "notify");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].0, "Bearer dsr_test_token");
+        assert_eq!(seen[0].1, serde_json::json!({"op": "state_set", "patch": {"n": 2}}));
+        assert_eq!(seen[1].1["text"], "hello");
+
+        // Without the SDK, a call throws a clear error.
+        let err = runner
+            .run_code(request(
+                r#"import { distri } from "@distri/runtime";
+export default async function () { await distri.state.get(); return {}; }"#,
+            ))
+            .await
+            .unwrap_err();
+        assert!(err.contains("offers no script SDK"), "{err}");
     }
 }

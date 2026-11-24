@@ -4,7 +4,8 @@
   "exports": {
     ".": "./mod.ts",
     "./extract": "./extract.ts",
-    "./run": "./run.ts"
+    "./run": "./run.ts",
+    "./runtime": "./runtime.ts"
   },
   "tasks": {
     "test": "deno test -A"

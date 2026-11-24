@@ -394,6 +394,8 @@ export async function writeOutput(out: unknown): Promise<void> {
 export interface RunOptions {
   tool?: string;
   cwd?: string;
+  /** The input document, when the harness already read stdin (v1.2: the script SDK's token line). */
+  input?: unknown;
 }
 
 /**
@@ -408,7 +410,7 @@ export async function runModule(mod: Record<string, unknown>, opts: RunOptions =
     ? (input: unknown, ctx: ToolContext) => tool.run!(input, ctx)
     : mod.default;
   if (typeof main !== "function") return false;
-  const input = await readInput();
+  const input = "input" in opts ? opts.input : await readInput();
   const name = opts.tool ?? (typeof tool?.name === "string" ? tool.name : "");
   const { ctx, close } = createContext(name, opts.cwd);
   try {

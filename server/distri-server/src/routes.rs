@@ -50,6 +50,7 @@ pub mod skills;
 pub mod spans;
 pub mod tools;
 pub mod usage;
+pub mod workflow_sdk;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
     cfg.configure(distri);
@@ -59,6 +60,10 @@ pub fn all(cfg: &mut web::ServiceConfig) {
 pub fn distri(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::resource(Route::Token.path()).route(web::post().to(crate::token_auth::issue_token)),
+    )
+    .service(
+        web::resource(Route::WorkflowSdkCall.path())
+            .route(web::post().to(workflow_sdk::workflow_sdk_call)),
     )
     .service(web::resource(Route::AgentCard.path()).route(web::get().to(get_agent_card)))
     .service(
