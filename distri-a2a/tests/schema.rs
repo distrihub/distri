@@ -248,6 +248,8 @@ fn card() -> AgentCard {
         }),
         documentation_url: Some("https://distri.dev/docs".into()),
         icon_url: None,
+        client_id_param: None,
+        scope_separator: None,
         security_schemes: schemes,
         security_requirements: vec![req],
         signatures: vec![AgentCardSignature {

@@ -180,6 +180,16 @@ pub struct OAuthProviderConfig {
     pub env_client_secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
+    /// The query/form parameter the provider wants the client id in when it
+    /// is not `client_id` (TikTok: `client_key`). When set, the authorize
+    /// URL, the code exchange and the refresh send the client id under
+    /// this name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id_param: Option<String>,
+    /// How scopes are joined in the authorize URL when the provider does
+    /// not take the RFC 6749 space (TikTok: `,`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_separator: Option<String>,
 }
 
 /// Directory tile wire shape served by `GET /v1/connections/providers`.
