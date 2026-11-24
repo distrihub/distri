@@ -37,6 +37,7 @@ pub mod trace_replay;
 mod universal_agent_access;
 mod usage_tracking;
 mod workflow_debug;
+mod workflow_nodes;
 mod workflow_run_record;
 mod workflow_steps;
 mod zero_step_run;

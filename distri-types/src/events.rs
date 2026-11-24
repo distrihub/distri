@@ -404,7 +404,7 @@ pub enum AgentEventType {
     /// on request). A `workflow_step` pending call resolves it.
     WorkflowPaused {
         step_id: String,
-        /// `failed`, `breakpoint` or `requested`.
+        /// `failed`, `breakpoint`, `requested` or `person`.
         reason: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
@@ -426,6 +426,14 @@ pub enum AgentEventType {
         after: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
+    },
+
+    /// A workflow `code` step's script called its run through the SDK (`@distri/runtime`):
+    /// `call` is the step's `ScriptCallRecord` (`seq`, `op`, `ok`, `side_effect`, `summary`,
+    /// `error`).
+    ScriptCall {
+        step_id: String,
+        call: serde_json::Value,
     },
 }
 
@@ -469,6 +477,7 @@ impl AgentEventType {
             AgentEventType::MemoryInjected { .. } => "memory_injected",
             AgentEventType::WorkflowPaused { .. } => "workflow_paused",
             AgentEventType::StepOp { .. } => "step_op",
+            AgentEventType::ScriptCall { .. } => "script_call",
         }
     }
 }

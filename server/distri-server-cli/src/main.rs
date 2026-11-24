@@ -48,6 +48,9 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| "127.0.0.1".to_string());
     let port = cli.port.or(server_section.port).unwrap_or(8081);
 
+    // Workflow scripts reach this server's SDK on the bound address.
+    distri_server_cli::set_default_script_sdk_url(&host, port);
+
     // Initialize orchestrator
     let orchestrator = init_orchestrator(&workspace_path, &workspace_path, &distri_config).await?;
 

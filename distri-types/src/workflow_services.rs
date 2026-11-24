@@ -115,6 +115,10 @@ pub struct CodeRunRequest {
     pub workspace_id: Option<String>,
     /// The workflow or agent running it (the sandbox key in the cloud).
     pub owner_id: String,
+    /// The script SDK (`@distri/runtime`): where the script reaches its run, with a run token.
+    /// `None` when the host offers no SDK. The runner adds the URL's host to `--allow-net`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk: Option<crate::script_sdk::CodeSdkAccess>,
 }
 
 /// What a code run printed.

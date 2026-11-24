@@ -58,6 +58,28 @@ pub fn durable_runs_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Where a workflow `code` step's script reaches this server's script SDK: `DISTRI_SDK_URL`, else
+/// the address `main` sets from the bound host and port (`DISTRI_SDK_DEFAULT_URL`). `off` turns
+/// the SDK off.
+pub fn script_sdk_url() -> Option<String> {
+    let url = std::env::var("DISTRI_SDK_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| SDK_DEFAULT_URL.get().cloned())?;
+    (!url.trim().eq_ignore_ascii_case("off")).then(|| url.trim().to_string())
+}
+
+static SDK_DEFAULT_URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The SDK URL for a server bound to `host:port` (a wildcard host is reached on loopback).
+pub fn set_default_script_sdk_url(host: &str, port: u16) {
+    let host = match host {
+        "0.0.0.0" | "::" | "[::]" | "" => "127.0.0.1",
+        h => h,
+    };
+    let _ = SDK_DEFAULT_URL.set(format!("http://{host}:{port}/v1/workflows/sdk"));
+}
+
 /// Initialize the orchestrator for the OSS server.
 pub async fn init_orchestrator(
     home_dir: &Path,
@@ -122,7 +144,13 @@ pub async fn init_orchestrator(
         .with_allow_host_shell(host_shell_allowed());
     // Workflow `code` steps run with this machine's Deno (the person running the server owns it).
     match distri_core::code_runner::LocalDenoRunner::detect() {
-        Some(runner) => builder = builder.with_code_runner(Arc::new(runner)),
+        Some(runner) => {
+            builder = builder.with_code_runner(Arc::new(runner));
+            // The script SDK (`@distri/runtime`): scripts call back to this server.
+            if let Some(url) = script_sdk_url() {
+                builder = builder.with_script_sdk_url(url);
+            }
+        }
         None => tracing::info!("deno not found: workflow code steps are unavailable"),
     }
     if durable_runs_enabled() {

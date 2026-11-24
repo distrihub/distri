@@ -449,6 +449,12 @@ pub struct WorkflowStepRun {
     /// A breakpoint on this step was already passed (resumed).
     #[serde(default)]
     pub released: bool,
+    /// A `for_each` step's items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items: Option<Vec<ForEachItem>>,
+    /// What a `code` step's script asked of the run (`@distri/runtime`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub script_calls: Vec<distri_types::script_sdk::ScriptCallRecord>,
 }
 
 /// What a step's `TaskStatus` does not say on its own.
@@ -890,6 +896,93 @@ pub struct WorkflowStep {
     /// Whether the step may be re-run without `force`. `None`: by kind (see `is_replay_safe`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_safe: Option<bool>,
+    /// Run the step once per element of a list (`"{steps.pick.items}"`, or
+    /// `{in, as, max, concurrency}`). The step's output is the array of per-item results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_each: Option<ForEach>,
+}
+
+/// `for_each` on a step: the list expression, or the list with its options.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ForEach {
+    /// `"{steps.pick.items}"`: the defaults for everything else.
+    Expr(String),
+    Spec(ForEachSpec),
+}
+
+/// The options of a `for_each`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ForEachSpec {
+    /// The list expression (a template resolving to an array, or to a JSON string holding one).
+    #[serde(rename = "in")]
+    pub items: String,
+    /// The name an item has in templates (`{item.x}`). Default `item`.
+    #[serde(default, rename = "as", skip_serializing_if = "Option::is_none")]
+    pub as_name: Option<String>,
+    /// The most items the step accepts; more fails the step. Default 50.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<usize>,
+    /// How many items run at once. Default 1, at most 10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<usize>,
+}
+
+/// Default most items of a `for_each`.
+pub const FOR_EACH_DEFAULT_MAX: usize = 50;
+/// The most items a `for_each` runs at once.
+pub const FOR_EACH_MAX_CONCURRENCY: usize = 10;
+/// The ceiling on a `for_each`'s `max`: a larger `max` is clamped to it.
+pub const FOR_EACH_HARD_MAX: usize = 500;
+/// The most bytes of one item's result a step row keeps in `items` (the step's output keeps
+/// the whole result).
+pub const FOR_EACH_ITEM_RESULT_MAX_BYTES: usize = 2048;
+
+impl ForEach {
+    pub fn items_expr(&self) -> &str {
+        match self {
+            ForEach::Expr(e) => e,
+            ForEach::Spec(s) => &s.items,
+        }
+    }
+    pub fn as_name(&self) -> &str {
+        match self {
+            ForEach::Spec(ForEachSpec {
+                as_name: Some(n), ..
+            }) if !n.trim().is_empty() => n.trim(),
+            _ => "item",
+        }
+    }
+    pub fn max(&self) -> usize {
+        match self {
+            ForEach::Spec(ForEachSpec { max: Some(m), .. }) => (*m).min(FOR_EACH_HARD_MAX),
+            _ => FOR_EACH_DEFAULT_MAX,
+        }
+    }
+    pub fn concurrency(&self) -> usize {
+        match self {
+            ForEach::Spec(ForEachSpec {
+                concurrency: Some(c),
+                ..
+            }) => (*c).clamp(1, FOR_EACH_MAX_CONCURRENCY),
+            _ => 1,
+        }
+    }
+}
+
+/// One item of a `for_each` step, as its row keeps it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ForEachItem {
+    pub index: usize,
+    /// `pending | running | completed | failed | paused`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// An agent item's own task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_task_id: Option<String>,
 }
 
 /// What a step's failure does to the run.
@@ -924,13 +1017,21 @@ impl WorkflowStep {
             on_failure: OnFailure::Fail,
             pause_before: false,
             replay_safe: None,
+            for_each: None,
         }
+    }
+
+    /// Run this step once per element of `items_expr` (see [`ForEach`]).
+    pub fn with_for_each(mut self, for_each: ForEach) -> Self {
+        self.for_each = Some(for_each);
+        self
     }
 
     /// Whether re-running this step has no side effects worth asking about (A3): the step's own
     /// `replay_safe`, else by kind. `agent_run`, `code`, `condition`, `set_state`, `checkpoint`,
     /// `wait_for_input` and a `GET` `api_call` are safe; `notify`, `reply`, `tool_call`,
-    /// `script`, `memory` and other calls are not.
+    /// `script`, `memory` and other calls are not. `llm` and `person` are safe. A `code` step
+    /// whose script made side-effecting SDK calls is not: see [`Self::is_replay_safe_after`].
     pub fn is_replay_safe(&self) -> bool {
         if let Some(v) = self.replay_safe {
             return v;
@@ -941,7 +1042,9 @@ impl WorkflowStep {
             | StepKind::Condition { .. }
             | StepKind::SetState { .. }
             | StepKind::Checkpoint { .. }
-            | StepKind::WaitForInput { .. } => true,
+            | StepKind::WaitForInput { .. }
+            | StepKind::Llm { .. }
+            | StepKind::Person { .. } => true,
             StepKind::ApiCall { method, .. } => method.eq_ignore_ascii_case("GET"),
             StepKind::Notify { .. }
             | StepKind::Reply { .. }
@@ -949,6 +1052,55 @@ impl WorkflowStep {
             | StepKind::Script { .. }
             | StepKind::Memory { .. } => false,
         }
+    }
+
+    /// [`Self::is_replay_safe`], given the script calls the step's last attempt made: a `code`
+    /// step that sent a message or ran a tool or an agent is not safe to rerun (unless the step
+    /// says `replay_safe: true`).
+    pub fn is_replay_safe_after(&self, calls: &[distri_types::script_sdk::ScriptCallRecord]) -> bool {
+        if let Some(v) = self.replay_safe {
+            return v;
+        }
+        self.is_replay_safe() && !distri_types::script_sdk::any_side_effect(calls)
+    }
+
+    /// The kinds `for_each` cannot run (they park the run or route it).
+    pub fn for_each_refused(&self) -> Option<&'static str> {
+        match &self.kind {
+            StepKind::Person { .. } => Some("person"),
+            StepKind::WaitForInput { .. } => Some("wait_for_input"),
+            StepKind::Condition { .. } => Some("condition"),
+            _ => None,
+        }
+    }
+
+    pub fn llm(id: &str, prompt: &str) -> Self {
+        Self::new_step(
+            id,
+            id,
+            StepKind::Llm {
+                prompt: prompt.to_string(),
+                system: None,
+                model: None,
+                output_schema: None,
+                temperature: None,
+                max_tokens: None,
+            },
+        )
+    }
+
+    pub fn person(id: &str, ask: &str) -> Self {
+        Self::new_step(
+            id,
+            id,
+            StepKind::Person {
+                ask: ask.to_string(),
+                to: None,
+                buttons: vec![],
+                input_schema: None,
+                deadline_secs: None,
+            },
+        )
     }
 
     pub fn pause_on_failure(mut self) -> Self {
@@ -1218,8 +1370,11 @@ pub enum StepKind {
         shell: Option<ShellType>,
     },
 
-    /// Delegate to a Distri agent (sub-agent run)
+    /// Delegate to a Distri agent (sub-agent run). Also read as `{"type": "agent", "agent":
+    /// "<name>"}`; the agent may itself be a workflow (a nested DAG, run as the step's child task).
+    #[serde(alias = "agent")]
     AgentRun {
+        #[serde(alias = "agent")]
         agent_id: String,
         prompt: String,
         #[serde(default)]
@@ -1321,6 +1476,40 @@ pub enum StepKind {
         /// Template applied per `buttons_from` element.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         button_template: Option<distri_types::channel_commands::ReplyButtonSpec>,
+    },
+
+    /// One model call, no tools, no loop. `prompt` and `system` are templated. With
+    /// `output_schema` (a JSON Schema) the reply is parsed and validated, with one repair call;
+    /// the step's output is the parsed value. Without it the output is `{text}`. The model is the
+    /// workspace's default unless `model` names another.
+    Llm {
+        prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        system: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_schema: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        temperature: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_tokens: Option<u32>,
+    },
+
+    /// Ask a person and park the run until they answer (a pause with reason `person`).
+    /// `to` is `owner` (default) or `user:<id>`; `buttons` are answer labels. The answer
+    /// (`complete {output}`) becomes the step's output `{answer, by}`.
+    Person {
+        ask: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        buttons: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input_schema: Option<serde_json::Value>,
+        /// Overrides the workflow's `pause_deadline.after_secs` for this question.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deadline_secs: Option<u64>,
     },
 
     /// Write to agent memory with no LLM call: a **signal** (how an output was received:
@@ -1542,6 +1731,9 @@ pub struct StepResult {
     /// Updates to merge into workflow context for subsequent steps.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_updates: Option<serde_json::Value>,
+    /// What a `code` step's script asked of the run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub script_calls: Vec<distri_types::script_sdk::ScriptCallRecord>,
 }
 
 impl StepResult {
@@ -1551,6 +1743,7 @@ impl StepResult {
             result: Some(result),
             error: None,
             context_updates: None,
+            script_calls: vec![],
         }
     }
 
@@ -1560,6 +1753,7 @@ impl StepResult {
             result: Some(result),
             error: None,
             context_updates: Some(updates),
+            script_calls: vec![],
         }
     }
 
@@ -1569,6 +1763,7 @@ impl StepResult {
             result: None,
             error: Some(error.to_string()),
             context_updates: None,
+            script_calls: vec![],
         }
     }
 
@@ -1578,6 +1773,7 @@ impl StepResult {
             result: None,
             error: None,
             context_updates: None,
+            script_calls: vec![],
         }
     }
 }

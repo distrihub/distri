@@ -135,6 +135,11 @@ pub struct AgentOrchestrator {
     /// `workflow_step_*` tools act on this run and step.
     pub workflow_debug_bindings:
         Arc<dashmap::DashMap<String, crate::agent::workflow_ops::WorkflowDebugBinding>>,
+    /// The script SDK's base URL (`…/v1/workflows/sdk`), as a sandboxed `code` step reaches this
+    /// host. `None`: code steps get no SDK (`@distri/runtime` calls fail with a clear error).
+    pub script_sdk_url: Option<String>,
+    /// The run tokens of the `code` steps running now (see `agent::script_sdk`).
+    pub script_sdk: Arc<crate::agent::script_sdk::ScriptSdkRegistry>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -278,6 +283,7 @@ pub struct AgentOrchestratorBuilder {
     llm_executor_factory: Option<Arc<dyn crate::llm::LlmExecutorFactory>>,
     workflow_run_hook: Option<Arc<dyn distri_workflow::WorkflowRunHook>>,
     workflow_pending_calls: Option<Arc<dyn distri_types::PendingCallStore>>,
+    script_sdk_url: Option<String>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -473,6 +479,14 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Offer the script SDK (`@distri/runtime`) to `code` steps: `url` is the SDK base
+    /// (`…/v1/workflows/sdk`) as the code runner's sandbox reaches this host.
+    pub fn with_script_sdk_url(mut self, url: impl Into<String>) -> Self {
+        let url = url.into().trim().trim_end_matches('/').to_string();
+        self.script_sdk_url = (!url.is_empty()).then_some(url);
+        self
+    }
+
     /// Run workflow `code` steps through `runner`.
     pub fn with_code_runner(mut self, runner: Arc<dyn distri_types::CodeRunner>) -> Self {
         self.code_runner = Some(runner);
@@ -645,6 +659,8 @@ impl AgentOrchestratorBuilder {
             workflow_run_hook: self.workflow_run_hook,
             workflow_pending_calls,
             workflow_debug_bindings: Arc::new(dashmap::DashMap::new()),
+            script_sdk_url: self.script_sdk_url,
+            script_sdk: Arc::new(crate::agent::script_sdk::ScriptSdkRegistry::default()),
         };
 
         // Sync system prompts to the store

@@ -369,60 +369,40 @@ pub(crate) async fn execute_step_as(
             agent_id, prompt, ..
         } => {
             let resolved_prompt = resolve_template(prompt, wf_context);
-            let sub_message = crate::types::Message {
-                role: distri_types::MessageRole::User,
-                parts: vec![distri_types::Part::Text(resolved_prompt.clone())],
-                ..Default::default()
-            };
+            run_agent_child(&context, agent_id, resolved_prompt, child_task_id, &step.id).await
+        }
 
-            let Some(orchestrator) = context.orchestrator.as_ref() else {
-                return Ok(StepResult::failed(
-                    "No orchestrator available for agent delegation",
-                ));
-            };
+        StepKind::Llm {
+            prompt,
+            system,
+            model,
+            output_schema,
+            temperature,
+            max_tokens,
+        } => {
+            let prompt = resolve_template(prompt, wf_context);
+            let system = system.as_ref().map(|s| resolve_template(s, wf_context));
+            execute_llm_step(
+                &context,
+                &step.id,
+                LlmStepSpec {
+                    prompt,
+                    system,
+                    model: model.clone(),
+                    output_schema: output_schema.clone(),
+                    temperature: *temperature,
+                    max_tokens: *max_tokens,
+                },
+                child_task_id,
+            )
+            .await
+        }
 
-            // The agent step runs in its own task (parent = the run's task, same thread), so
-            // its events and messages are kept, a hand-off can attach to it, and two agent
-            // steps of one run never share a scratchpad. Its events go to its own topic, not
-            // into the workflow's stream.
-            let mut child = context.new_task(agent_id).await;
-            if let Some(id) = child_task_id {
-                child.task_id = id;
-            }
-            child.run_id = uuid::Uuid::new_v4().to_string();
-            child.event_tx = None;
-            let child = orchestrator.with_own_event_topic(child);
-            if let Err(e) = orchestrator
-                .stores
-                .task_store
-                .create_task(
-                    distri_types::stores::CreateTaskInput::local(&child.thread_id)
-                        .with_id(&child.task_id)
-                        .with_status(TaskStatus::Running)
-                        .with_parent(&context.task_id),
-                )
-                .await
-            {
-                tracing::warn!(error = %e, step = %step.id, "agent step: child task create failed");
-            }
-            let sub_ctx = Arc::new(child);
-
-            let result = orchestrator
-                .execute_stream(agent_id, sub_message, sub_ctx, None)
-                .await;
-
-            match result {
-                Ok(invoke_result) => {
-                    let output = invoke_result.content.unwrap_or_default();
-                    let result = serde_json::from_str::<serde_json::Value>(&output)
-                        .unwrap_or_else(|_| serde_json::json!({"output": output}));
-                    Ok(StepResult::done(result))
-                }
-                Err(e) => Ok(StepResult::failed(&format!(
-                    "Agent '{}' failed: {}",
-                    agent_id, e
-                ))),
-            }
+        StepKind::Person { .. } => {
+            // The driver parks the run at a person step; it never executes one.
+            Ok(StepResult::failed(
+                "a person step waits for an answer; it is not executed (park the run instead)",
+            ))
         }
 
         StepKind::Condition {
@@ -504,24 +484,52 @@ pub(crate) async fn execute_step_as(
                     "state": wf_context.get("state").cloned().unwrap_or_default(),
                 });
             }
+            let timeout_secs = timeout_secs.or(declared_timeout).unwrap_or(60);
+            // The script SDK: a run token bound to this step, revoked when the script ends.
+            let orchestrator = context.orchestrator.clone();
+            let sdk = orchestrator.as_ref().and_then(|o| {
+                let url = o.script_sdk_url.clone()?;
+                let binding = super::script_sdk::ScriptSdkBinding::new(
+                    context.clone(),
+                    &step.id,
+                    std::time::Duration::from_secs(timeout_secs.saturating_add(30)),
+                );
+                let token = o.script_sdk.mint(binding);
+                Some((
+                    distri_types::script_sdk::CodeSdkAccess {
+                        url,
+                        token: token.clone(),
+                    },
+                    super::script_sdk::RunTokenGuard::new(o.script_sdk.clone(), token),
+                ))
+            });
+            let (sdk, guard) = match sdk {
+                Some((access, guard)) => (Some(access), Some(guard)),
+                None => (None, None),
+            };
             let request = distri_types::CodeRunRequest {
                 source: source.clone(),
                 name: module.clone().unwrap_or_else(|| step.id.clone()),
                 input,
                 permissions,
-                timeout_secs: timeout_secs.or(declared_timeout).unwrap_or(60),
+                timeout_secs,
                 workspace_id: context.workspace_id.clone(),
                 owner_id: context.agent_id.clone(),
+                sdk,
             };
-            match runner.run_code(request).await {
+            let outcome = runner.run_code(request).await;
+            let script_calls = guard.map(|g| g.finish()).unwrap_or_default();
+            let mut result = match outcome {
                 Ok(out) => {
                     for line in out.logs.iter().take(20) {
                         tracing::debug!(step = %step.id, "code: {line}");
                     }
-                    Ok(StepResult::done(out.value))
+                    StepResult::done(out.value)
                 }
-                Err(e) => Ok(StepResult::failed(&e)),
-            }
+                Err(e) => StepResult::failed(&e),
+            };
+            result.script_calls = script_calls;
+            Ok(result)
         }
 
         StepKind::SetState { values } => {
@@ -566,6 +574,7 @@ pub(crate) async fn execute_step_as(
                 })),
                 error: None,
                 context_updates: None,
+                script_calls: vec![],
             })
         }
 
@@ -647,5 +656,442 @@ pub(crate) async fn notify(
             }
         ))),
         Err(e) => Ok(StepResult::failed(&format!("notify: {e}"))),
+    }
+}
+
+/// The most workflows nested in one another (an `agent` node naming a workflow), below the
+/// root run.
+pub const MAX_WORKFLOW_NESTING: usize = 5;
+/// `tool_metadata` key holding the names of the workflows a run is nested in, root first.
+pub const WORKFLOW_CHAIN_KEY: &str = "workflow_chain";
+
+/// The workflows this context runs in, root first (its own name last).
+fn workflow_chain(context: &ExecutorContext) -> Vec<String> {
+    let mut chain: Vec<String> = context
+        .tool_metadata
+        .as_ref()
+        .and_then(|m| m.get(WORKFLOW_CHAIN_KEY))
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    if chain.last() != Some(&context.agent_id) {
+        chain.push(context.agent_id.clone());
+    }
+    chain
+}
+
+/// Why running workflow `target` from this context would nest too deep or loop.
+pub(crate) fn nesting_error(chain: &[String], target: &str) -> Option<String> {
+    if chain.iter().any(|c| c == target) {
+        return Some(format!(
+            "workflow nesting: {} → {target} is a cycle",
+            chain.join(" → ")
+        ));
+    }
+    if chain.len() > MAX_WORKFLOW_NESTING {
+        return Some(format!(
+            "workflow nesting: {} → {target} is deeper than {MAX_WORKFLOW_NESTING}",
+            chain.join(" → ")
+        ));
+    }
+    None
+}
+
+/// Run `agent_id` with `prompt` as a child task of the run (an `agent` node, an `agent_run`
+/// step, or a script's `distri.agent(name).run(prompt)`). When the agent is itself a workflow,
+/// it runs as a nested DAG: the chain of workflows is checked for cycles and depth, the prompt
+/// is its input (a JSON object, else `{prompt}`), and the output is the nested run's
+/// `{workflow, status, steps: {id: result}}`; a nested run that does not complete fails here.
+pub(crate) async fn run_agent_child(
+    context: &Arc<ExecutorContext>,
+    agent_id: &str,
+    prompt: String,
+    child_task_id: Option<String>,
+    step_id: &str,
+) -> Result<StepResult, String> {
+    let Some(orchestrator) = context.orchestrator.as_ref() else {
+        return Ok(StepResult::failed(
+            "No orchestrator available for agent delegation",
+        ));
+    };
+
+    let is_workflow = matches!(
+        orchestrator.stores.agent_store.get(agent_id).await,
+        Some(distri_types::configuration::AgentConfig::WorkflowAgent(_))
+    );
+    let mut nested_chain = None;
+    let mut prompt = prompt;
+    if is_workflow {
+        let chain = workflow_chain(context);
+        if let Some(e) = nesting_error(&chain, agent_id) {
+            return Ok(StepResult::failed(&e));
+        }
+        let mut next = chain;
+        next.push(agent_id.to_string());
+        nested_chain = Some(next);
+        if !serde_json::from_str::<serde_json::Value>(&prompt)
+            .map(|v| v.is_object())
+            .unwrap_or(false)
+        {
+            prompt = serde_json::json!({ "prompt": prompt }).to_string();
+        }
+    }
+
+    let sub_message = crate::types::Message {
+        role: distri_types::MessageRole::User,
+        parts: vec![distri_types::Part::Text(prompt)],
+        ..Default::default()
+    };
+
+    // The agent step runs in its own task (parent = the run's task, same thread), so
+    // its events and messages are kept, a hand-off can attach to it, and two agent
+    // steps of one run never share a scratchpad. Its events go to its own topic, not
+    // into the workflow's stream.
+    let mut child = context.new_task(agent_id).await;
+    if let Some(id) = child_task_id {
+        child.task_id = id;
+    }
+    child.run_id = uuid::Uuid::new_v4().to_string();
+    child.event_tx = None;
+    if let Some(chain) = nested_chain {
+        let mut meta = child.tool_metadata.clone().unwrap_or_default();
+        meta.insert(WORKFLOW_CHAIN_KEY.to_string(), serde_json::json!(chain));
+        child.tool_metadata = Some(meta);
+    }
+    let child = orchestrator.with_own_event_topic(child);
+    if let Err(e) = orchestrator
+        .stores
+        .task_store
+        .create_task(
+            distri_types::stores::CreateTaskInput::local(&child.thread_id)
+                .with_id(&child.task_id)
+                .with_status(TaskStatus::Running)
+                .with_parent(&context.task_id),
+        )
+        .await
+    {
+        tracing::warn!(error = %e, step = %step_id, "agent step: child task create failed");
+    }
+    let sub_ctx = Arc::new(child);
+
+    let result = orchestrator
+        .execute_stream(agent_id, sub_message, sub_ctx, None)
+        .await;
+
+    match result {
+        Ok(invoke_result) => {
+            let output = invoke_result.content.unwrap_or_default();
+            let value = serde_json::from_str::<serde_json::Value>(&output)
+                .unwrap_or_else(|_| serde_json::json!({"output": output}));
+            if is_workflow {
+                return Ok(nested_workflow_result(agent_id, value));
+            }
+            Ok(StepResult::done(value))
+        }
+        Err(e) => Ok(StepResult::failed(&format!(
+            "Agent '{}' failed: {}",
+            agent_id, e
+        ))),
+    }
+}
+
+/// A nested workflow's summary as the step's output (`{workflow, status, steps: {id: result}}`),
+/// or a failure when it did not complete.
+fn nested_workflow_result(agent_id: &str, summary: serde_json::Value) -> StepResult {
+    let status = summary
+        .get("status")
+        .and_then(|s| s.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let mut steps = serde_json::Map::new();
+    let mut first_error = None;
+    for s in summary
+        .get("steps")
+        .and_then(|s| s.as_array())
+        .cloned()
+        .unwrap_or_default()
+    {
+        let id = s.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+        if first_error.is_none() {
+            first_error = s.get("error").and_then(|e| e.as_str()).map(String::from);
+        }
+        steps.insert(
+            id.to_string(),
+            s.get("result").cloned().unwrap_or(serde_json::Value::Null),
+        );
+    }
+    if status != "completed" {
+        return StepResult::failed(&format!(
+            "nested workflow '{agent_id}' ended {status}{}",
+            first_error.map(|e| format!(": {e}")).unwrap_or_default()
+        ));
+    }
+    StepResult::done(serde_json::json!({
+        "workflow": agent_id,
+        "status": status,
+        "steps": steps,
+    }))
+}
+
+/// An `llm` node's call, templates resolved.
+pub(crate) struct LlmStepSpec {
+    pub prompt: String,
+    pub system: Option<String>,
+    pub model: Option<String>,
+    pub output_schema: Option<serde_json::Value>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+}
+
+/// Pull a JSON document out of a model reply: the whole text, else a fenced block, else the
+/// outermost `{…}` / `[…]`.
+pub(crate) fn extract_json(text: &str) -> Option<serde_json::Value> {
+    let t = text.trim();
+    if let Ok(v) = serde_json::from_str(t) {
+        return Some(v);
+    }
+    if let Some(start) = t.find("```") {
+        let rest = &t[start + 3..];
+        let rest = rest.strip_prefix("json").unwrap_or(rest);
+        if let Some(end) = rest.find("```") {
+            if let Ok(v) = serde_json::from_str(rest[..end].trim()) {
+                return Some(v);
+            }
+        }
+    }
+    for (open, close) in [('{', '}'), ('[', ']')] {
+        if let (Some(a), Some(b)) = (t.find(open), t.rfind(close)) {
+            if a < b {
+                if let Ok(v) = serde_json::from_str(&t[a..=b]) {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Check `text` against `schema`: the parsed value, or why it is not acceptable.
+pub(crate) fn check_llm_output(
+    text: &str,
+    schema: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let value = extract_json(text).ok_or_else(|| "the reply is not JSON".to_string())?;
+    let validator =
+        jsonschema::validator_for(schema).map_err(|e| format!("invalid output_schema: {e}"))?;
+    let errors: Vec<String> = validator.iter_errors(&value).map(|e| e.to_string()).collect();
+    if errors.is_empty() {
+        Ok(value)
+    } else {
+        Err(format!("the reply does not match the schema: {}", errors.join("; ")))
+    }
+}
+
+/// One model call (no tools, no loop) in the step's own child task. With an output schema the
+/// reply is parsed and validated, with one repair call; else the output is `{text}`.
+pub(crate) async fn execute_llm_step(
+    context: &Arc<ExecutorContext>,
+    step_id: &str,
+    spec: LlmStepSpec,
+    child_task_id: Option<String>,
+) -> Result<StepResult, String> {
+    let Some(orchestrator) = context.orchestrator.as_ref() else {
+        return Ok(StepResult::failed("no orchestrator for the llm step"));
+    };
+    // The workspace's default model, as other engine-started runs resolve it.
+    let mut settings = match context.default_model_settings.clone() {
+        Some(m) => Some(m),
+        None => match orchestrator.effective_default_model_settings(None).await {
+            Ok(m) => m,
+            Err(e) => return Ok(StepResult::failed(&format!("llm: {e}"))),
+        },
+    };
+    if let Some(s) = settings.as_mut() {
+        if let Some(m) = spec.model.as_ref().filter(|m| !m.trim().is_empty()) {
+            s.model = m.trim().to_string();
+            if let Some(policy) = orchestrator.model_policy.as_ref() {
+                let qualified = format!("{}/{}", s.inner.provider.provider_id(), s.model);
+                if let Err(e) = policy
+                    .check_model(context.workspace_id.as_deref(), &qualified)
+                    .await
+                {
+                    return Ok(StepResult::failed(&format!("llm: {e}")));
+                }
+            }
+        }
+        if spec.temperature.is_some() {
+            s.inner.temperature = spec.temperature;
+        }
+        if spec.max_tokens.is_some() {
+            s.inner.max_tokens = spec.max_tokens;
+        }
+    }
+
+    let mut child = context.new_task(&context.agent_id).await;
+    if let Some(id) = child_task_id {
+        child.task_id = id;
+    }
+    child.run_id = uuid::Uuid::new_v4().to_string();
+    child.event_tx = None;
+    child.default_model_settings = settings.clone();
+    let child = orchestrator.with_own_event_topic(child);
+    if let Err(e) = orchestrator
+        .stores
+        .task_store
+        .create_task(
+            distri_types::stores::CreateTaskInput::local(&child.thread_id)
+                .with_id(&child.task_id)
+                .with_status(TaskStatus::Running)
+                .with_parent(&context.task_id),
+        )
+        .await
+    {
+        tracing::warn!(error = %e, step = %step_id, "llm step: child task create failed");
+    }
+    let child = Arc::new(child);
+
+    let mut messages = Vec::new();
+    if let Some(system) = spec.system.as_ref().filter(|s| !s.trim().is_empty()) {
+        messages.push(crate::types::Message {
+            role: MessageRole::System,
+            parts: vec![distri_types::Part::Text(system.clone())],
+            ..Default::default()
+        });
+    }
+    let mut user_text = spec.prompt.clone();
+    if let Some(schema) = &spec.output_schema {
+        user_text.push_str(&format!(
+            "\n\nAnswer with only a JSON document that matches this JSON Schema, no other text:\n{schema}"
+        ));
+    }
+    let user = crate::types::Message {
+        role: MessageRole::User,
+        parts: vec![distri_types::Part::Text(user_text)],
+        ..Default::default()
+    };
+    child.save_message(&user).await;
+    messages.push(user);
+
+    let llm_def = distri_types::LlmDefinition {
+        name: format!("workflow_llm_{step_id}"),
+        model_settings: settings,
+        tool_format: distri_types::ToolCallFormat::Provider,
+        tool_delivery_mode: Default::default(),
+    };
+    let llm = match crate::llm::create_llm_executor(
+        llm_def,
+        vec![],
+        child.clone(),
+        None,
+        Some("workflow_llm".to_string()),
+    ) {
+        Ok(l) => l,
+        Err(e) => {
+            settle(orchestrator, &child.task_id, TaskStatus::Failed).await;
+            return Ok(StepResult::failed(&format!("llm: {e}")));
+        }
+    };
+
+    let first = match llm.execute(&messages).await {
+        Ok(r) => r.content,
+        Err(e) => {
+            settle(orchestrator, &child.task_id, TaskStatus::Failed).await;
+            return Ok(StepResult::failed(&format!("llm: {e}")));
+        }
+    };
+    let Some(schema) = spec.output_schema.as_ref() else {
+        settle(orchestrator, &child.task_id, TaskStatus::Completed).await;
+        return Ok(StepResult::done(serde_json::json!({ "text": first })));
+    };
+    let problem = match check_llm_output(&first, schema) {
+        Ok(v) => {
+            settle(orchestrator, &child.task_id, TaskStatus::Completed).await;
+            return Ok(StepResult::done(v));
+        }
+        Err(problem) => problem,
+    };
+    // One repair call with the problem.
+    tracing::debug!(step = %step_id, %problem, "llm step: repairing the reply");
+    messages.push(crate::types::Message {
+        role: MessageRole::Assistant,
+        parts: vec![distri_types::Part::Text(first)],
+        ..Default::default()
+    });
+    messages.push(crate::types::Message {
+        role: MessageRole::User,
+        parts: vec![distri_types::Part::Text(format!(
+            "That answer was not acceptable: {problem}. Reply again with only the JSON document that matches the schema."
+        ))],
+        ..Default::default()
+    });
+    let second = match llm.execute(&messages).await {
+        Ok(r) => r.content,
+        Err(e) => {
+            settle(orchestrator, &child.task_id, TaskStatus::Failed).await;
+            return Ok(StepResult::failed(&format!("llm: {e}")));
+        }
+    };
+    match check_llm_output(&second, schema) {
+        Ok(v) => {
+            settle(orchestrator, &child.task_id, TaskStatus::Completed).await;
+            Ok(StepResult::done(v))
+        }
+        Err(problem) => {
+            settle(orchestrator, &child.task_id, TaskStatus::Failed).await;
+            Ok(StepResult::failed(&format!(
+                "llm: {problem} (after one repair)"
+            )))
+        }
+    }
+}
+
+async fn settle(orchestrator: &Arc<crate::AgentOrchestrator>, task_id: &str, status: TaskStatus) {
+    let _ = orchestrator
+        .stores
+        .task_store
+        .update_task_status(task_id, status)
+        .await;
+}
+
+#[cfg(test)]
+mod llm_json_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_json_from_replies() {
+        assert_eq!(extract_json("{\"a\":1}"), Some(serde_json::json!({"a": 1})));
+        assert_eq!(
+            extract_json("sure:\n```json\n{\"a\": 2}\n```"),
+            Some(serde_json::json!({"a": 2}))
+        );
+        assert_eq!(
+            extract_json("here you go {\"a\": 3} thanks"),
+            Some(serde_json::json!({"a": 3}))
+        );
+        assert_eq!(extract_json("no json here"), None);
+    }
+
+    #[test]
+    fn checks_against_the_schema() {
+        let schema = serde_json::json!({"type": "object", "required": ["score"],
+            "properties": {"score": {"type": "integer"}}});
+        assert!(check_llm_output("{\"score\": 3}", &schema).is_ok());
+        let e = check_llm_output("{\"score\": \"high\"}", &schema).unwrap_err();
+        assert!(e.contains("does not match"), "{e}");
+        assert!(check_llm_output("nope", &schema).unwrap_err().contains("not JSON"));
+    }
+
+    #[test]
+    fn nesting_guard() {
+        let chain = vec!["a".to_string(), "b".to_string()];
+        assert!(nesting_error(&chain, "c").is_none());
+        let e = nesting_error(&chain, "a").unwrap();
+        assert_eq!(e, "workflow nesting: a → b → a is a cycle");
+        let deep: Vec<String> = (0..=MAX_WORKFLOW_NESTING).map(|i| format!("w{i}")).collect();
+        assert!(nesting_error(&deep, "x").unwrap().contains("deeper than 5"));
     }
 }

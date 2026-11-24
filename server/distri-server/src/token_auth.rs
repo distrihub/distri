@@ -30,6 +30,8 @@ use serde::Deserialize;
 /// Path suffix of the mint endpoint, which authenticates itself and so is
 /// not behind the bearer check.
 const TOKEN_PATH: &str = "/token";
+/// The script SDK's call route (`routes::workflow_sdk`).
+const SDK_CALL_PATH: &str = "/workflows/sdk/call";
 
 /// Body of `POST /v1/token`. Every field is optional: an empty body mints a
 /// fresh pair, a `refresh_token` renews one.
@@ -95,8 +97,9 @@ pub async fn require_access_token<B: MessageBody + 'static>(
     req: ServiceRequest,
     next: Next<B>,
 ) -> Result<ServiceResponse<EitherBody<B>>, Error> {
-    // The mint endpoint carries its own credential check.
-    if req.path().ends_with(TOKEN_PATH) {
+    // The mint endpoint carries its own credential check, and so does a workflow script's
+    // call to its run (the step's run token, checked by the handler).
+    if req.path().ends_with(TOKEN_PATH) || req.path().ends_with(SDK_CALL_PATH) {
         return next.call(req).await.map(|res| res.map_into_left_body());
     }
     let Some(auth) = req.app_data::<web::Data<TokenAuth>>().cloned() else {

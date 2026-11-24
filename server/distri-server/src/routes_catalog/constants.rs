@@ -153,6 +153,12 @@ define_routes! {
     /// carries its own credential check (the deployment secret, or a refresh
     /// token) rather than a bearer access token, and 404s when auth is off.
     Token             => "/token" { POST: Public },
+
+    // ── Workflow script SDK ─────────────────────────────────────────────────
+    /// A sandboxed workflow `code` step's call to its run (`@distri/runtime`). Public in the
+    /// catalog sense: it carries its own credential, the step's run token, checked by the
+    /// handler (401 otherwise); never a user or API key.
+    WorkflowSdkCall   => "/workflows/sdk/call" { POST: Public },
 }
 
 /// Flat `(path, method, access)` over every route+method — the helper an
