@@ -596,6 +596,69 @@ impl WorkflowAgent {
 ///
 /// If `result_text` is valid JSON it is returned as-is (preserving structured MCP
 #[cfg(test)]
+mod hydrate_tests {
+    use super::*;
+    use distri_types::TaskStatus;
+
+    fn def() -> WorkflowDefinition {
+        serde_json::from_value(serde_json::json!({
+            "id": "d",
+            "steps": [
+                {"id": "x", "label": "X", "kind": {"type": "checkpoint", "message": "x"}},
+                {"id": "y", "label": "Y", "depends_on": ["x"],
+                 "kind": {"type": "set_state", "values": {"got": "{steps.x.value}"}}},
+                {"id": "z", "label": "Z", "kind": {"type": "checkpoint", "message": "z"}},
+                {"id": "w", "label": "W", "kind": {"type": "checkpoint", "message": "w"}}
+            ]
+        }))
+        .unwrap()
+    }
+
+    /// U4: an output set on a step row (by `complete`) reaches `context.steps.<id>` on resume,
+    /// whatever the saved context said; a skipped step reads `null`; a reset step has none.
+    #[test]
+    fn u4_hydrate_rebuilds_context_steps_from_rows() {
+        let state = WorkflowExecutionState::new("run", "agent", "thread", "user", def())
+            .with_context(serde_json::json!({
+                "steps": {"x": {"value": "stale"}, "z": {"old": true}, "w": "kept"}
+            }));
+        let rows = vec![
+            WorkflowStepState {
+                step_id: "x".into(),
+                status: TaskStatus::Completed,
+                result: Some(serde_json::json!({"value": "given"})),
+                ..Default::default()
+            },
+            WorkflowStepState {
+                step_id: "z".into(),
+                status: TaskStatus::Pending,
+                attempt: 2,
+                ..Default::default()
+            },
+            WorkflowStepState {
+                step_id: "w".into(),
+                status: TaskStatus::Canceled,
+                mark: Some(StepMark::Skipped),
+                ..Default::default()
+            },
+        ];
+        let run = hydrate_run(state, rows);
+        assert_eq!(run.context["steps"]["x"]["value"], "given");
+        assert!(run.context["steps"].get("z").is_none());
+        assert!(run.context["steps"]["w"].is_null());
+        assert_eq!(run.step_runs[2].attempt, 2);
+        // A later step reads it.
+        let y = &run.definition.steps[1];
+        let resolved = distri_workflow::resolve::resolve_value(
+            &serde_json::to_value(&y.kind).unwrap(),
+            &run.context,
+        );
+        assert_eq!(resolved["values"]["got"], "given");
+        assert_eq!(run.runnable_steps().len(), 2); // y (x done) and z (reset)
+    }
+}
+
+#[cfg(test)]
 mod reply_step_tests {
     use super::*;
     use distri_types::channel_commands::{ChannelButton, ReplyButtonSpec};

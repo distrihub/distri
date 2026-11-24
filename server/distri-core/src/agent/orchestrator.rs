@@ -2794,7 +2794,14 @@ impl AgentOrchestrator {
                 crate::a2a::stream::spawn_background_execution(
                     self_inner.clone(),
                     agent_id,
-                    distri_types::Message::default(),
+                    // A message must have a part; the workflow's resume path ignores it.
+                    distri_types::Message {
+                        role: distri_types::MessageRole::User,
+                        parts: vec![distri_types::Part::Text(
+                            r#"{"workflow_resume":true}"#.to_string(),
+                        )],
+                        ..Default::default()
+                    },
                     registered_ctx,
                     None,
                     run_task_id_for_ctx,
