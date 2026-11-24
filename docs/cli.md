@@ -76,6 +76,17 @@ With durable runs on (`DISTRI_DURABLE_RUNS=1`), the agent card lists the A2A ext
 `https://distri.dev/a2a/extensions/durable-runs/v1` in `capabilities.extensions`; its `params`
 name the pending-calls and claim endpoints.
 
+## Workflow `script` steps (host shell)
+
+A workflow `script` step runs a shell command on the machine that runs the server. The server
+refuses it ("host shell steps are disabled on this server") unless whoever starts it opts in:
+
+```bash
+DISTRI_ALLOW_HOST_SHELL=1 distri serve
+```
+
+Leave it off on any server that runs agents or workflows other people can define or trigger.
+
 
 
 ## CLI reference

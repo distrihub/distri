@@ -15,6 +15,38 @@ mod seed;
 pub use cli::Cli;
 
 /// Durable runs are on when `DISTRI_DURABLE_RUNS` is `1`/`true`/`on`.
+/// Whether workflow `script` steps may run a shell on this machine: only when the person
+/// running the server sets `DISTRI_ALLOW_HOST_SHELL=1` (or true/on/yes). Off by default, so an
+/// agent or workflow definition alone can never run commands on the host.
+pub fn host_shell_allowed() -> bool {
+    host_shell_allowed_from(std::env::var("DISTRI_ALLOW_HOST_SHELL").ok().as_deref())
+}
+
+fn host_shell_allowed_from(value: Option<&str>) -> bool {
+    value
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod host_shell_tests {
+    #[test]
+    fn host_shell_is_opt_in() {
+        use super::host_shell_allowed_from as f;
+        assert!(!f(None));
+        assert!(!f(Some("")));
+        assert!(!f(Some("0")));
+        assert!(!f(Some("no")));
+        assert!(f(Some("1")));
+        assert!(f(Some("TRUE")));
+    }
+}
+
 pub fn durable_runs_enabled() -> bool {
     std::env::var("DISTRI_DURABLE_RUNS")
         .map(|v| {
@@ -85,9 +117,9 @@ pub async fn init_orchestrator(
         .with_store_config(store_config)
         .with_session_storage_path(workspace_path.join(".distri/session_storage"))
         .with_workspace_filesystem(workspace_fs)
-        // The person running this server owns the machine: workflow `script` steps may run
-        // a shell here (the cloud never allows it).
-        .with_allow_host_shell(true);
+        // Workflow `script` steps run a shell here only when the person running the server
+        // opts in with DISTRI_ALLOW_HOST_SHELL=1 (the cloud never allows it).
+        .with_allow_host_shell(host_shell_allowed());
     // Workflow `code` steps run with this machine's Deno (the person running the server owns it).
     match distri_core::code_runner::LocalDenoRunner::detect() {
         Some(runner) => builder = builder.with_code_runner(Arc::new(runner)),

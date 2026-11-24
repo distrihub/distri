@@ -1262,14 +1262,31 @@ impl AgentOrchestrator {
 
                 // Agent memory: a session for this run and its tools, or none (so an agent
                 // without `[memory]` never inherits another's on a shared context).
-                match definition.memory.clone().filter(|m| m.enabled) {
+                // End users are held to their own scope and read only unless the agent sets
+                // `end_users_write`; an end-user surface without a proven id gets no memory.
+                let memory_caller = crate::agent::agent_memory::memory_caller(&context);
+                let memory = definition.memory.clone().filter(|m| m.enabled);
+                if memory.is_some()
+                    && memory_caller == crate::agent::agent_memory::MemoryCaller::Unidentified
+                {
+                    tracing::warn!(
+                        agent = %definition.name,
+                        "memory: off for this run (an end-user caller without a proven id)"
+                    );
+                }
+                let memory = memory.filter(|_| {
+                    memory_caller != crate::agent::agent_memory::MemoryCaller::Unidentified
+                });
+                match memory {
                     Some(memory) => {
-                        let read_only = memory.read_only;
-                        let session = Arc::new(crate::agent::agent_memory::MemorySession::new(
+                        let session = crate::agent::agent_memory::MemorySession::new(
                             crate::agent::agent_memory::workspace_key(&context),
                             &definition.name,
                             memory,
-                        ));
+                        )
+                        .for_caller(&memory_caller);
+                        let read_only = !session.can_write();
+                        let session = Arc::new(session);
                         crate::agent::agent_memory::set_session(&context, Some(session)).await;
                         let have: std::collections::HashSet<String> = context
                             .get_tools()

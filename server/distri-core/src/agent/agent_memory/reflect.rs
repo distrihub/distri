@@ -185,13 +185,15 @@ fn task_text(
     }
     t.push_str("\n## Signals (newest last)\n");
     for s in signals {
+        use distri_types::memory::guard::{clip, REFLECTION_FIELD_CHARS};
+        let cut = |t: &Option<String>| t.as_deref().map(|t| clip(t, REFLECTION_FIELD_CHARS));
         let line = serde_json::json!({
             "id": format!("sig:{}", s.id),
             "kind": s.kind,
-            "subject": s.subject,
-            "before": s.before,
-            "after": s.after,
-            "context": s.context,
+            "subject": cut(&s.subject),
+            "before": cut(&s.before),
+            "after": cut(&s.after),
+            "context": clip(&s.context.to_string(), REFLECTION_FIELD_CHARS),
         });
         t.push_str(&format!("{line}\n"));
     }
@@ -409,7 +411,8 @@ pub async fn queue_on_compaction(
     let Some(session) = session_of(ctx).await else {
         return;
     };
-    if session.config.reflect == ReflectMode::Off || session.config.read_only {
+    // Only trusted callers: an end user's conversation never becomes signals.
+    if session.config.reflect == ReflectMode::Off || session.config.read_only || !session.trusted {
         return;
     }
     let Some(orch) = ctx.orchestrator.as_ref() else {

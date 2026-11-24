@@ -42,12 +42,73 @@ pub fn workspace_key(ctx: &ExecutorContext) -> String {
         .unwrap_or_else(|| LOCAL_WORKSPACE.to_string())
 }
 
+/// Who a run's memory acts for (security review of #304).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MemoryCaller {
+    /// A workspace member, a workspace API key, a workflow, the CLI, or the host itself: the
+    /// agent's `[memory].scope` template applies.
+    Trusted,
+    /// A proven end user (an end-user token, an embed visitor or a channel user with a known
+    /// id): memory is forced into their own `user:<id>` scope.
+    EndUser(String),
+    /// An end-user surface without a proven id: no memory at all.
+    Unidentified,
+}
+
+impl MemoryCaller {
+    /// The scope an end user is held to.
+    pub fn forced_scope(&self) -> Option<String> {
+        match self {
+            MemoryCaller::EndUser(id) => Some(sanitize_segment(&format!("user:{id}"))),
+            _ => None,
+        }
+    }
+}
+
+/// Classify the run's caller from its [`distri_types::RequestCaller`]. The host sets the
+/// `end_user` attribute only when the credential proves it (`user:<id>` for end-user tokens,
+/// `u:<id>` for channel users); an API key's self-declared end user is not one.
+pub fn memory_caller(ctx: &ExecutorContext) -> MemoryCaller {
+    use distri_types::CallerKind;
+    let Some(caller) = ctx.caller.as_ref() else {
+        return MemoryCaller::Trusted;
+    };
+    let end_user = caller
+        .attributes
+        .get("end_user")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    match caller.kind {
+        CallerKind::Dashboard | CallerKind::Cli | CallerKind::Workflow => {
+            match end_user.and_then(|e| e.strip_prefix("user:")) {
+                Some(id) if !id.is_empty() => MemoryCaller::EndUser(id.to_string()),
+                _ => MemoryCaller::Trusted,
+            }
+        }
+        CallerKind::PublicClient | CallerKind::Bot => match end_user {
+            Some(e) => {
+                let id = e.strip_prefix("user:").unwrap_or(e);
+                if id.is_empty() {
+                    MemoryCaller::Unidentified
+                } else {
+                    MemoryCaller::EndUser(id.to_string())
+                }
+            }
+            None => MemoryCaller::Unidentified,
+        },
+    }
+}
+
 /// One agent's memory for one run.
 pub struct MemorySession {
     pub workspace_id: String,
     pub agent: String,
     pub space: String,
     pub config: MemoryConfig,
+    /// Set for end users: the only scope this run reads and writes.
+    pub forced_scope: Option<String>,
+    /// A trusted caller (see [`MemoryCaller`]).
+    pub trusted: bool,
     scope: RwLock<String>,
     /// `task_id|uri` of every item read in a task.
     read: Mutex<HashSet<String>>,
@@ -70,9 +131,27 @@ impl MemorySession {
             agent: agent.to_string(),
             space: config.space_for(agent),
             config,
+            forced_scope: None,
+            trusted: true,
             scope: RwLock::new(NO_SCOPE.to_string()),
             read: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// The session for `caller`: an end user is held to their own scope.
+    pub fn for_caller(mut self, caller: &MemoryCaller) -> Self {
+        self.trusted = matches!(caller, MemoryCaller::Trusted);
+        self.forced_scope = caller.forced_scope();
+        if let Some(scope) = &self.forced_scope {
+            self.set_scope(scope.clone());
+        }
+        self
+    }
+
+    /// Whether this run may write memory: never read-only agents, and end users only when the
+    /// agent sets `end_users_write`.
+    pub fn can_write(&self) -> bool {
+        !self.config.read_only && (self.trusted || self.config.end_users_write)
     }
 
     pub fn scope(&self) -> String {
@@ -144,12 +223,23 @@ pub fn sanitize_segment(s: &str) -> String {
 
 /// Resolve a `[memory].scope` template (`"{input.account}"`) against a run's input. A missing
 /// template, an empty result or an unresolved placeholder is the "no scope" scope (`_`).
-pub fn resolve_scope(template: Option<&str>, input: &serde_json::Value) -> String {
+///
+/// `{user.id}` is the run's user. Only trusted callers reach this: an end user's scope is
+/// forced (see [`MemoryCaller`]).
+pub fn resolve_scope(
+    template: Option<&str>,
+    input: &serde_json::Value,
+    user_id: Option<&str>,
+) -> String {
     let Some(t) = template.map(str::trim).filter(|t| !t.is_empty()) else {
         return NO_SCOPE.to_string();
     };
+    let t = match user_id.filter(|u| !u.is_empty()) {
+        Some(u) => t.replace("{user.id}", u),
+        None => t.to_string(),
+    };
     let ctx = serde_json::json!({ "input": input });
-    let resolved = distri_workflow::resolve::resolve_template(t, &ctx);
+    let resolved = distri_workflow::resolve::resolve_template(&t, &ctx);
     if resolved.contains('{') || resolved.contains('}') {
         return NO_SCOPE.to_string();
     }
@@ -267,7 +357,14 @@ pub async fn prepare_run(
     let Some(orch) = ctx.orchestrator.clone() else {
         return Ok(());
     };
-    let scope = resolve_scope(session.config.scope.as_deref(), &message_input(message));
+    let scope = match &session.forced_scope {
+        Some(forced) => forced.clone(),
+        None => resolve_scope(
+            session.config.scope.as_deref(),
+            &message_input(message),
+            Some(ctx.user_id.as_str()),
+        ),
+    };
     session.set_scope(scope.clone());
     let ws = session.workspace_id.clone();
 
@@ -343,19 +440,73 @@ mod unit_tests {
     fn scope_templates_resolve_or_fall_back() {
         let input = serde_json::json!({"account": "reddit:RadishGlobal341", "n": 2});
         assert_eq!(
-            resolve_scope(Some("{input.account}"), &input),
+            resolve_scope(Some("{input.account}"), &input, None),
             "reddit:RadishGlobal341"
         );
-        assert_eq!(resolve_scope(None, &input), "_");
-        assert_eq!(resolve_scope(Some("{input.missing}"), &input), "_");
+        assert_eq!(resolve_scope(None, &input, None), "_");
+        assert_eq!(resolve_scope(Some("{input.missing}"), &input, None), "_");
         assert_eq!(
-            resolve_scope(Some("hn {input.n}"), &input),
+            resolve_scope(Some("hn {input.n}"), &input, None),
             "hn-2",
             "spaces become dashes"
         );
         assert_eq!(
-            resolve_scope(Some("{input.account}"), &serde_json::json!("free text")),
+            resolve_scope(
+                Some("{input.account}"),
+                &serde_json::json!("free text"),
+                None
+            ),
             "_"
+        );
+        assert_eq!(
+            resolve_scope(Some("u-{user.id}"), &input, Some("42")),
+            "u-42"
+        );
+    }
+
+    #[test]
+    fn callers_are_classified() {
+        use distri_types::{CallerKind, RequestCaller};
+        let caller = |kind, end_user: Option<&str>| {
+            let mut ctx = ExecutorContext::default();
+            ctx.caller = Some(RequestCaller {
+                kind,
+                source_id: None,
+                origin: None,
+                client: None,
+                attributes: end_user
+                    .map(|e| [("end_user".to_string(), e.to_string())].into())
+                    .unwrap_or_default(),
+            });
+            memory_caller(&ctx)
+        };
+        assert_eq!(
+            memory_caller(&ExecutorContext::default()),
+            MemoryCaller::Trusted
+        );
+        assert_eq!(caller(CallerKind::Dashboard, None), MemoryCaller::Trusted);
+        assert_eq!(
+            caller(CallerKind::Dashboard, Some("api:k1:bob")),
+            MemoryCaller::Trusted,
+            "an API key's named end user is the workspace acting"
+        );
+        assert_eq!(
+            caller(CallerKind::Dashboard, Some("user:alice")),
+            MemoryCaller::EndUser("alice".into())
+        );
+        assert_eq!(
+            caller(CallerKind::PublicClient, None),
+            MemoryCaller::Unidentified
+        );
+        assert_eq!(
+            caller(CallerKind::Bot, Some("u:7")),
+            MemoryCaller::EndUser("u:7".into())
+        );
+        assert_eq!(
+            MemoryCaller::EndUser("u:7".into())
+                .forced_scope()
+                .as_deref(),
+            Some("user:u:7")
         );
     }
 }

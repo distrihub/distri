@@ -25,6 +25,27 @@ async fn own_memory_config(ctx: &ExecutorContext) -> Option<MemoryConfig> {
     .filter(|m| m.enabled)
 }
 
+/// `space` and `scope` of a step are literals or `{state.*}`: never chosen by the run's input
+/// (or a previous step's output), so a caller cannot point the step at another account.
+fn check_target_template(name: &str, v: &Option<String>) -> Result<(), String> {
+    let Some(t) = v else {
+        return Ok(());
+    };
+    let mut rest = t.as_str();
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let close = after.find('}').unwrap_or(after.len());
+        let reference = after[..close].trim();
+        if !reference.starts_with("state.") {
+            return Err(format!(
+                "memory step: `{name}` may not come from the run's input or other steps                  (`{{{reference}}}`); use a literal, {{state.*}} or the workflow's [memory].{name}"
+            ));
+        }
+        rest = &after[close.min(after.len())..];
+    }
+    Ok(())
+}
+
 fn opt(v: &Option<String>, wf: &serde_json::Value) -> Option<String> {
     v.as_ref()
         .map(|s| resolve_template(s, wf))
@@ -58,6 +79,13 @@ pub(crate) async fn execute_memory_step(
     let Some(orch) = ctx.orchestrator.as_ref() else {
         return Ok(StepResult::failed("memory step: no orchestrator"));
     };
+    // Templates never see the run's secrets.
+    let wf = &crate::agent::workflow_agent::context_to_keep(wf);
+    for (name, v) in [("space", space), ("scope", scope)] {
+        if let Err(e) = check_target_template(name, v) {
+            return Ok(StepResult::failed(&e));
+        }
+    }
     let config = own_memory_config(ctx).await;
     let space = opt(space, wf)
         .map(|s| sanitize_segment(&s))
@@ -80,6 +108,7 @@ pub(crate) async fn execute_memory_step(
         None => resolve_scope(
             config.as_ref().and_then(|c| c.scope.as_deref()),
             wf.get("input").unwrap_or(&serde_json::Value::Null),
+            Some(ctx.user_id.as_str()),
         ),
     };
     let ws = workspace_key(ctx);
@@ -142,14 +171,22 @@ pub(crate) async fn execute_memory_step(
                 }
                 Err(e) => return Ok(StepResult::failed(&format!("invalid_uri: {e}"))),
             };
-            if uri.space != space {
+            if uri.space != space || uri.scope != scope {
                 return Ok(StepResult::failed(&format!(
-                    "out_of_scope: {uri} is outside the space `{space}`"
+                    "out_of_scope: {uri} is outside mem://{space}/{scope}"
                 )));
             }
             if uri.folder == RULES_FOLDER {
                 return Ok(StepResult::failed(&format!(
                     "forbidden: {uri}: rules/ is written by the owner only"
+                )));
+            }
+            let folders = config.clone().unwrap_or_default().folders();
+            if !folders.contains(&uri.folder) {
+                return Ok(StepResult::failed(&format!(
+                    "unknown folder `{}` (folders: {})",
+                    uri.folder,
+                    folders.join(", ")
                 )));
             }
             let memory_op = if *op == MemoryStepOp::Forget {

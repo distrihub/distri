@@ -805,3 +805,307 @@ async fn script_steps_are_refused_unless_the_host_allows_a_shell() {
         }
     }
 }
+
+// ── security (review of #304) ───────────────────────────────────────────────
+
+fn end_user_caller(id: &str) -> distri_types::RequestCaller {
+    distri_types::RequestCaller {
+        kind: distri_types::CallerKind::Dashboard,
+        source_id: None,
+        origin: None,
+        client: None,
+        attributes: std::collections::BTreeMap::from([(
+            "end_user".to_string(),
+            format!("user:{id}"),
+        )]),
+    }
+}
+
+/// Run `agent` as `caller` (None: a trusted host call).
+async fn run_as(
+    orch: &Arc<AgentOrchestrator>,
+    agent: &str,
+    text: &str,
+    caller: Option<distri_types::RequestCaller>,
+) -> Vec<AgentEvent> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(10_000);
+    let mut ctx = ExecutorContext::default();
+    ctx.orchestrator = Some(orch.clone());
+    ctx.agent_id = agent.to_string();
+    ctx.workspace_id = Some(WS.into());
+    ctx.user_id = "u-caller".into();
+    ctx.task_id = uuid::Uuid::new_v4().to_string();
+    ctx.thread_id = uuid::Uuid::new_v4().to_string();
+    ctx.run_id = uuid::Uuid::new_v4().to_string();
+    ctx.event_tx = Some(Arc::new(tx));
+    ctx.caller = caller;
+    let msg = Message {
+        role: MessageRole::User,
+        parts: vec![Part::Text(text.to_string())],
+        ..Default::default()
+    };
+    orch.execute_stream(agent, msg, Arc::new(ctx), None)
+        .await
+        .unwrap_or_else(|e| panic!("{agent} run failed: {e}"));
+    let mut events = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        events.push(ev);
+    }
+    events
+}
+
+async fn seed(orch: &AgentOrchestrator, uri: &str, l0: &str) {
+    orch.agent_memory_store
+        .apply(
+            WS,
+            &distri_types::MemoryPlan {
+                ops: vec![distri_types::MemoryOp::Create {
+                    uri: uri.parse().unwrap(),
+                    l0: l0.into(),
+                    l1: None,
+                    body: "b".into(),
+                    evidence: vec![],
+                    pinned: None,
+                }],
+                skipped: vec![],
+            },
+            &distri_types::MemoryAuthor::User {
+                user_id: "owner".into(),
+            },
+        )
+        .await
+        .unwrap();
+}
+
+/// An end user cannot pick another account's scope through the input: their scope is forced
+/// to `user:<id>`; a trusted caller still gets the input-driven scope.
+#[tokio::test]
+async fn sec_end_users_get_their_own_forced_scope() {
+    let script = Arc::new(Script::default());
+    let orch = orchestrator(script.clone(), false).await;
+    register_agent(&orch, "writer", "scope = \"{input.account}\"").await;
+    seed(&orch, "mem://writer/victim/facts/secret", "VICTIM-SECRET").await;
+    seed(&orch, "mem://writer/user:alice/facts/mine", "ALICE-NOTE").await;
+    let input = json!({"account": "victim"}).to_string();
+
+    let events = run_as(&orch, "writer", &input, Some(end_user_caller("alice"))).await;
+    let (_, scope, ..) = injected(&events).expect("memory for the end user");
+    assert_eq!(scope, "user:alice");
+    let seen = script.agent_calls().last().unwrap().clone();
+    assert!(
+        !seen.contains("VICTIM-SECRET"),
+        "the input cannot choose the victim's scope"
+    );
+    assert!(seen.contains("ALICE-NOTE"));
+
+    let events = run_as(&orch, "writer", &input, None).await;
+    assert_eq!(
+        injected(&events).unwrap().1,
+        "victim",
+        "trusted callers keep the template"
+    );
+}
+
+/// An untrusted caller without a proven end-user id gets no memory at all (never `_`).
+#[tokio::test]
+async fn sec_untrusted_caller_without_identity_gets_no_memory() {
+    let script = Arc::new(Script::default());
+    let orch = orchestrator(script.clone(), false).await;
+    register_agent(&orch, "writer", "").await;
+    seed(&orch, "mem://writer/_/facts/shared", "SHARED-NOTE").await;
+    let embed = distri_types::RequestCaller {
+        kind: distri_types::CallerKind::PublicClient,
+        source_id: Some("pc-1".into()),
+        origin: None,
+        client: None,
+        attributes: Default::default(),
+    };
+    let events = run_as(&orch, "writer", "hi", Some(embed)).await;
+    assert!(injected(&events).is_none());
+    let seen = script.agent_calls().last().unwrap().clone();
+    assert!(!seen.contains("SHARED-NOTE"));
+    assert!(!seen.contains("memory_read"), "no memory tools");
+}
+
+/// End users get read tools only unless `end_users_write = true`, and then write only into
+/// their own scope.
+#[tokio::test]
+async fn sec_end_user_writes_need_opt_in_and_stay_in_their_scope() {
+    let script = Arc::new(Script::default());
+    let orch = orchestrator(script.clone(), false).await;
+    register_agent(&orch, "ro", "").await;
+    run_as(&orch, "ro", "hi", Some(end_user_caller("bob"))).await;
+    let seen = script.agent_calls().last().unwrap().clone();
+    assert!(seen.contains("memory_read"));
+    assert!(
+        !seen.contains("\"memory_write\""),
+        "no write tool for end users by default"
+    );
+
+    register_agent(&orch, "rw", "end_users_write = true").await;
+    script.push_agent(Box::new(|_| {
+        tool_call(
+            "memory_write",
+            json!({"uri": "mem://rw/_/facts/x", "l0": "into the shared scope", "body": "b"}),
+        )
+    }));
+    script.push_agent(Box::new(|_| {
+        tool_call(
+            "memory_write",
+            json!({"uri": "facts/pref", "l0": "bob likes short replies", "body": "b"}),
+        )
+    }));
+    script.push_agent(Box::new(|_| final_answer("done")));
+    let before = script.agent_calls().len();
+    run_as(&orch, "rw", "hi", Some(end_user_caller("bob"))).await;
+    let calls = script.agent_calls();
+    assert!(
+        calls[before + 1].contains("out_of_scope"),
+        "the shared scope is refused"
+    );
+    let mine: MemoryUri = "mem://rw/user:bob/facts/pref".parse().unwrap();
+    assert!(orch
+        .agent_memory_store
+        .get(WS, &mine)
+        .await
+        .unwrap()
+        .is_some());
+    let shared: MemoryUri = "mem://rw/_/facts/x".parse().unwrap();
+    assert!(orch
+        .agent_memory_store
+        .get(WS, &shared)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+/// Compaction notes are queued only for trusted callers.
+#[tokio::test]
+async fn sec_no_compaction_note_for_end_users() {
+    use crate::agent::agent_memory::{reflect::queue_on_compaction, set_session, MemorySession};
+    let orch = orchestrator(Arc::new(Script::default()), false).await;
+    let mut ctx = ExecutorContext::default();
+    ctx.orchestrator = Some(orch.clone());
+    ctx.workspace_id = Some(WS.into());
+    let ctx = Arc::new(ctx);
+    let session = MemorySession::new(WS.into(), "w", MemoryConfig::default()).for_caller(
+        &crate::agent::agent_memory::MemoryCaller::EndUser("eve".into()),
+    );
+    set_session(&ctx, Some(Arc::new(session))).await;
+    queue_on_compaction(
+        &ctx,
+        &distri_types::events::CompactionTier::Reset,
+        Some("s"),
+    )
+    .await;
+    assert!(orch
+        .agent_memory_store
+        .list_signals(WS, "w", None, false, 10)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+/// Memory steps: no input-chosen space or scope, URIs stay in the step's space and scope,
+/// folders follow `[memory].types`, and templates never see `env`; secrets are scrubbed.
+#[tokio::test]
+async fn sec_memory_step_limits_and_env() {
+    let orch = orchestrator(Arc::new(Script::default()), false).await;
+    register_workflow(
+        &orch,
+        "stepper",
+        json!({"id": "stepper", "steps": [
+            {"id": "in_scope", "label": "a", "on_failure": "continue",
+             "kind": {"type": "memory", "op": "signal", "kind": "note", "scope": "{input.account}"}},
+            {"id": "in_space", "label": "b", "depends_on": ["in_scope"], "on_failure": "continue",
+             "kind": {"type": "memory", "op": "signal", "kind": "note", "space": "{input.space}"}},
+            {"id": "other_scope", "label": "c", "depends_on": ["in_space"], "on_failure": "continue",
+             "kind": {"type": "memory", "op": "write", "uri": "mem://outreach/someone-else/facts/x", "l0": "x"}},
+            {"id": "bad_folder", "label": "d", "depends_on": ["other_scope"], "on_failure": "continue",
+             "kind": {"type": "memory", "op": "write", "uri": "nofolder/x", "l0": "x"}},
+            {"id": "env", "label": "e", "depends_on": ["bad_folder"],
+             "kind": {"type": "memory", "op": "write", "uri": "facts/env",
+                      "l0": "env check", "body": "secret={env.SECRET_TOKEN} key=sk-proj-AbCdEfGhIjKlMnOpQrStUv12"}},
+            {"id": "sig", "label": "f", "depends_on": ["env"],
+             "kind": {"type": "memory", "op": "signal", "kind": "edited",
+                      "before": "Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123", "after": "{env.SECRET_TOKEN}"}}
+        ]}),
+    )
+    .await;
+    let mut ctx = ExecutorContext::default();
+    ctx.orchestrator = Some(orch.clone());
+    ctx.agent_id = "stepper".into();
+    ctx.workspace_id = Some(WS.into());
+    ctx.task_id = uuid::Uuid::new_v4().to_string();
+    ctx.thread_id = uuid::Uuid::new_v4().to_string();
+    ctx.run_id = uuid::Uuid::new_v4().to_string();
+    ctx.env_vars
+        .write()
+        .await
+        .insert("SECRET_TOKEN".into(), "TOPSECRET123".into());
+    let msg = Message {
+        role: MessageRole::User,
+        parts: vec![Part::Text(
+            json!({"account": "victim", "space": "other"}).to_string(),
+        )],
+        ..Default::default()
+    };
+    let out = orch
+        .execute_stream("stepper", msg, Arc::new(ctx), None)
+        .await
+        .unwrap();
+    let summary: serde_json::Value = serde_json::from_str(&out.content.unwrap()).unwrap();
+    let err = |id: &str| {
+        summary["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == id)
+            .and_then(|s| s["error"].as_str().map(str::to_string))
+            .unwrap_or_default()
+    };
+    assert!(err("in_scope").contains("input"), "{summary}");
+    assert!(err("in_space").contains("input"), "{summary}");
+    assert!(err("other_scope").starts_with("out_of_scope"), "{summary}");
+    assert!(err("bad_folder").contains("folder"), "{summary}");
+    assert!(err("env").is_empty() && err("sig").is_empty(), "{summary}");
+    let item = orch
+        .agent_memory_store
+        .get(WS, &"mem://outreach/a1/facts/env".parse().unwrap())
+        .await
+        .unwrap();
+    // The workflow's configured scope is `{input.account}` = "victim" here.
+    let item = match item {
+        Some(i) => i,
+        None => orch
+            .agent_memory_store
+            .get(WS, &"mem://outreach/victim/facts/env".parse().unwrap())
+            .await
+            .unwrap()
+            .expect("written in the configured scope"),
+    };
+    assert!(
+        !item.body.contains("TOPSECRET123"),
+        "env is not visible to memory steps"
+    );
+    assert!(!item.body.contains("sk-proj"), "scrubbed");
+    let sigs = orch
+        .agent_memory_store
+        .list_signals(WS, "outreach", None, false, 10)
+        .await
+        .unwrap();
+    let s = sigs
+        .iter()
+        .find(|s| s.kind == distri_types::SignalKind::Edited)
+        .unwrap();
+    assert!(!s
+        .before
+        .as_deref()
+        .unwrap_or_default()
+        .contains("abcdefghijklmnop"));
+    assert!(!s
+        .after
+        .as_deref()
+        .unwrap_or_default()
+        .contains("TOPSECRET123"));
+}

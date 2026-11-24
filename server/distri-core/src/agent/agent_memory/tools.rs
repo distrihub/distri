@@ -272,8 +272,10 @@ impl ExecutorContextTool for MemoryWriteTool {
         ctx: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
         let s = session(&ctx).await?;
-        if s.config.read_only {
-            return Err(err("forbidden: this agent's memory is read-only"));
+        if !s.can_write() {
+            return Err(err(
+                "forbidden: memory is read-only for this agent or this caller",
+            ));
         }
         let input: WriteInput = input(&call)?;
         let uri = scoped_uri(&s, &input.uri)?;
@@ -365,8 +367,10 @@ impl ExecutorContextTool for MemoryForgetTool {
         ctx: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
         let s = session(&ctx).await?;
-        if s.config.read_only {
-            return Err(err("forbidden: this agent's memory is read-only"));
+        if !s.can_write() {
+            return Err(err(
+                "forbidden: memory is read-only for this agent or this caller",
+            ));
         }
         let input: ForgetInput = input(&call)?;
         let uri = scoped_uri(&s, &input.uri)?;
