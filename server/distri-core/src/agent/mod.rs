@@ -28,6 +28,7 @@ pub mod tool_lookup;
 pub mod types;
 pub mod workflow_agent;
 mod workflow_driver;
+pub mod workflow_ops;
 pub(crate) mod workflow_step_exec;
 // Export specific items to avoid conflicts
 pub use agent_loop::*;

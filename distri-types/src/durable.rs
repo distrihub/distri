@@ -166,6 +166,9 @@ pub enum PendingCallKind {
     Approval,
     Process,
     SubAgent,
+    /// A paused workflow step (`request`: `{step_id, reason, error?, attempt}`; `result`: the
+    /// `StepOpOutcome` that resolved it).
+    WorkflowStep,
 }
 
 impl PendingCallKind {
@@ -175,6 +178,7 @@ impl PendingCallKind {
             PendingCallKind::Approval => "approval",
             PendingCallKind::Process => "process",
             PendingCallKind::SubAgent => "sub_agent",
+            PendingCallKind::WorkflowStep => "workflow_step",
         }
     }
     pub fn parse(s: &str) -> Self {
@@ -182,6 +186,7 @@ impl PendingCallKind {
             "approval" => PendingCallKind::Approval,
             "process" => PendingCallKind::Process,
             "sub_agent" => PendingCallKind::SubAgent,
+            "workflow_step" => PendingCallKind::WorkflowStep,
             _ => PendingCallKind::ClientTool,
         }
     }

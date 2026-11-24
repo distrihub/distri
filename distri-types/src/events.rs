@@ -399,6 +399,34 @@ pub enum AgentEventType {
         tiers: Vec<String>,
         tokens: usize,
     },
+
+    /// A workflow run parked at a step (on failure with `on_failure: pause`, a breakpoint, or
+    /// on request). A `workflow_step` pending call resolves it.
+    WorkflowPaused {
+        step_id: String,
+        /// `failed`, `breakpoint` or `requested`.
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        pending_call_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deadline: Option<chrono::DateTime<chrono::Utc>>,
+    },
+
+    /// An operation on a workflow run's step (`complete`, `rerun`, `skip`, `attach`) or on the
+    /// run (`pause`, `resume`, `cancel`), with who did it.
+    StepOp {
+        step_id: String,
+        op: String,
+        /// `user:<id>`, `agent:<name>`, `bot:<channel user>`, or `deadline`.
+        actor: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
 }
 
 /// `RunError.code` of a run that needs the user to connect or authorize an
@@ -439,6 +467,8 @@ impl AgentEventType {
             AgentEventType::ChannelReply { .. } => "channel_reply",
             AgentEventType::LlmCall { .. } => "llm_call",
             AgentEventType::MemoryInjected { .. } => "memory_injected",
+            AgentEventType::WorkflowPaused { .. } => "workflow_paused",
+            AgentEventType::StepOp { .. } => "step_op",
         }
     }
 }

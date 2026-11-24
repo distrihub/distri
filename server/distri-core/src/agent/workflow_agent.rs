@@ -27,6 +27,10 @@ pub struct WorkflowInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_point: Option<String>,
 
+    /// Run-level breakpoints: the run pauses before each of these steps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub breakpoints: Vec<String>,
+
     /// All remaining fields are forwarded as workflow user input.
     #[serde(flatten)]
     pub data: serde_json::Value,
@@ -180,6 +184,15 @@ impl BaseAgent for WorkflowAgent {
                 )
             {
                 context.update_status(distri_types::TaskStatus::Failed).await;
+                if let Some(store) = context
+                    .orchestrator
+                    .as_ref()
+                    .and_then(|o| o.workflow_store.clone())
+                {
+                    let _ = store
+                        .set_run_status(&context.task_id, &distri_types::TaskStatus::Failed)
+                        .await;
+                }
                 context
                     .emit(distri_types::AgentEventType::RunError {
                         message: e.to_string(),
@@ -294,18 +307,64 @@ pub(crate) fn context_to_keep(context: &serde_json::Value) -> serde_json::Value 
 /// flips the parked run back) and each `step_run` is populated from
 /// the corresponding stored `WorkflowStepState` by `step_id`. Steps
 /// with no stored row are left at their fresh defaults (`Pending`).
-fn hydrate_run(state: WorkflowExecutionState, step_states: Vec<WorkflowStepState>) -> WorkflowRun {
+///
+/// The step rows are the truth for step outputs: `context.steps.<id>` is rebuilt from them,
+/// so an output set by an operation (`complete`), a skip (`null`) or a reset (`rerun`, the
+/// entry removed) reaches the steps after it.
+pub(crate) fn hydrate_run(
+    state: WorkflowExecutionState,
+    step_states: Vec<WorkflowStepState>,
+) -> WorkflowRun {
     let mut run = WorkflowRun::new(state.definition);
     run.context = state.context;
     run.status = distri_types::TaskStatus::Running;
+    if !run.context.is_object() {
+        run.context = serde_json::json!({});
+    }
     for (i, step) in run.definition.steps.iter().enumerate() {
-        if let Some(saved) = step_states.iter().find(|s| s.step_id == step.id) {
-            run.step_runs[i].status = saved.status.clone();
-            run.step_runs[i].result = saved.result.clone();
-            run.step_runs[i].error = saved.error.clone();
-            run.step_runs[i].started_at = saved.started_at;
-            run.step_runs[i].completed_at = saved.completed_at;
-            run.step_runs[i].input = saved.input.clone();
+        let Some(saved) = step_states.iter().find(|s| s.step_id == step.id) else {
+            continue;
+        };
+        let sr = &mut run.step_runs[i];
+        sr.status = saved.status.clone();
+        sr.result = saved.result.clone();
+        sr.error = saved.error.clone();
+        sr.started_at = saved.started_at;
+        sr.completed_at = saved.completed_at;
+        sr.input = saved.input.clone();
+        sr.mark = saved.mark;
+        sr.attempt = saved.attempt;
+        sr.child_task_id = saved.child_task_id.clone();
+        sr.input_override = saved.input_override.clone();
+        sr.released = saved.released;
+
+        let steps = run
+            .context
+            .as_object_mut()
+            .expect("context is an object")
+            .entry("steps")
+            .or_insert(serde_json::json!({}));
+        if !steps.is_object() {
+            *steps = serde_json::json!({});
+        }
+        let steps = steps.as_object_mut().expect("steps is an object");
+        match (&saved.status, saved.mark) {
+            (_, Some(StepMark::Skipped)) => {
+                steps.insert(step.id.clone(), serde_json::Value::Null);
+            }
+            (distri_types::TaskStatus::Completed, _) => {
+                steps.insert(
+                    step.id.clone(),
+                    saved.result.clone().unwrap_or(serde_json::Value::Null),
+                );
+            }
+            // Skipped by a branch, `when` or the entry point: whatever the context had (a
+            // preset result) stays.
+            (distri_types::TaskStatus::Canceled, _) => {}
+            // Not done (pending after a reset, running, paused, failed): no output.
+            _ => {
+                steps.remove(&step.id);
+            }
         }
     }
     run
@@ -378,6 +437,7 @@ impl WorkflowAgent {
                 .unwrap_or_default();
 
             let entry_point_for_record = workflow_input.entry_point.clone();
+            let breakpoints_for_record = workflow_input.breakpoints.clone();
             let input_for_record = workflow_input.data.clone();
 
             let mut run = WorkflowRun::new(definition);
@@ -407,6 +467,7 @@ impl WorkflowAgent {
                 )
                 .with_workspace_id(context.workspace_id.clone())
                 .with_entry_point(entry_point_for_record)
+                .with_breakpoints(breakpoints_for_record)
                 .with_input(input_for_record)
                 .with_context(context_to_keep(&run.context));
                 if let Err(e) = store.create_run(state).await {
@@ -420,6 +481,12 @@ impl WorkflowAgent {
 
             run
         };
+
+        if let Some(store) = workflow_store.as_ref() {
+            let _ = store
+                .set_run_status(&context.task_id, &distri_types::TaskStatus::Running)
+                .await;
+        }
 
         // Refresh env namespace from current executor context — fresh
         // values on every invocation (resume picks up any new env
@@ -479,6 +546,11 @@ impl WorkflowAgent {
         // its newest task's): Completed / Failed, or InputRequired when it
         // parked on a wait step. Nothing else settles a workflow run.
         context.update_status(status.clone()).await;
+        if let Some(store) = workflow_store.as_ref() {
+            if let Err(e) = store.set_run_status(&context.task_id, &status).await {
+                tracing::warn!(error = %e, task_id = %context.task_id, "workflow_store set_run_status failed");
+            }
+        }
 
         // Persist the final accumulated context back so the workflow
         // store reflects the terminal state (useful for debugging +
@@ -523,6 +595,69 @@ impl WorkflowAgent {
 /// Convert the concatenated text output of a tool call into a structured JSON value.
 ///
 /// If `result_text` is valid JSON it is returned as-is (preserving structured MCP
+#[cfg(test)]
+mod hydrate_tests {
+    use super::*;
+    use distri_types::TaskStatus;
+
+    fn def() -> WorkflowDefinition {
+        serde_json::from_value(serde_json::json!({
+            "id": "d",
+            "steps": [
+                {"id": "x", "label": "X", "kind": {"type": "checkpoint", "message": "x"}},
+                {"id": "y", "label": "Y", "depends_on": ["x"],
+                 "kind": {"type": "set_state", "values": {"got": "{steps.x.value}"}}},
+                {"id": "z", "label": "Z", "kind": {"type": "checkpoint", "message": "z"}},
+                {"id": "w", "label": "W", "kind": {"type": "checkpoint", "message": "w"}}
+            ]
+        }))
+        .unwrap()
+    }
+
+    /// U4: an output set on a step row (by `complete`) reaches `context.steps.<id>` on resume,
+    /// whatever the saved context said; a skipped step reads `null`; a reset step has none.
+    #[test]
+    fn u4_hydrate_rebuilds_context_steps_from_rows() {
+        let state = WorkflowExecutionState::new("run", "agent", "thread", "user", def())
+            .with_context(serde_json::json!({
+                "steps": {"x": {"value": "stale"}, "z": {"old": true}, "w": "kept"}
+            }));
+        let rows = vec![
+            WorkflowStepState {
+                step_id: "x".into(),
+                status: TaskStatus::Completed,
+                result: Some(serde_json::json!({"value": "given"})),
+                ..Default::default()
+            },
+            WorkflowStepState {
+                step_id: "z".into(),
+                status: TaskStatus::Pending,
+                attempt: 2,
+                ..Default::default()
+            },
+            WorkflowStepState {
+                step_id: "w".into(),
+                status: TaskStatus::Canceled,
+                mark: Some(StepMark::Skipped),
+                ..Default::default()
+            },
+        ];
+        let run = hydrate_run(state, rows);
+        assert_eq!(run.context["steps"]["x"]["value"], "given");
+        assert!(run.context["steps"].get("z").is_none());
+        assert!(run.context["steps"]["w"].is_null());
+        assert_eq!(run.step_runs[2].attempt, 2);
+        // A later step reads it.
+        let y = &run.definition.steps[1];
+        let resolved = distri_workflow::resolve::resolve_value(
+            &serde_json::to_value(&y.kind).unwrap(),
+            &run.context,
+        );
+        assert_eq!(resolved["values"]["got"], "given");
+        assert_eq!(run.runnable_steps().len(), 2); // y (x done) and z (reset)
+    }
+}
+
 #[cfg(test)]
 mod reply_step_tests {
     use super::*;

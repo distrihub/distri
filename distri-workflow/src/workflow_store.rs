@@ -26,7 +26,7 @@
 //! (a Redis impl typically uses `wf:run:{id}` JSON + `wf:steps:{id}`
 //! HASH for cheap per-step updates); the trait keeps that invisible.
 
-use crate::types::WorkflowDefinition;
+use crate::types::{StepMark, WorkflowDefinition};
 use chrono::{DateTime, Utc};
 use distri_types::TaskStatus;
 use serde::{Deserialize, Serialize};
@@ -60,6 +60,58 @@ pub struct WorkflowExecutionState {
     pub context: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Where the run is paused, while it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused: Option<PauseInfo>,
+    /// Run-level breakpoints (step ids) given when the run started.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub breakpoints: Vec<String>,
+    /// `POST …/pause` arrived: the driver parks before its next step.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pause_requested: bool,
+}
+
+/// Why a run paused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PauseReason {
+    /// The step failed under `on_failure: pause`.
+    Failed,
+    /// `pause_before` on the step, or a run-level breakpoint.
+    Breakpoint,
+    /// `POST …/pause`.
+    Requested,
+}
+
+impl PauseReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PauseReason::Failed => "failed",
+            PauseReason::Breakpoint => "breakpoint",
+            PauseReason::Requested => "requested",
+        }
+    }
+}
+
+/// A paused run: the step, why, and the pending call that resolves it (first writer wins).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PauseInfo {
+    pub step_id: String,
+    pub reason: PauseReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub pending_call_id: String,
+    pub at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<DateTime<Utc>>,
+    /// Who the step was handed to (`attach`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached: Option<distri_types::workflow_ops::AttachTarget>,
+    /// The attached agent's task and thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_thread_id: Option<String>,
 }
 
 impl WorkflowExecutionState {
@@ -83,7 +135,15 @@ impl WorkflowExecutionState {
             context: serde_json::json!({}),
             created_at: now,
             updated_at: now,
+            paused: None,
+            breakpoints: vec![],
+            pause_requested: false,
         }
+    }
+
+    pub fn with_breakpoints(mut self, breakpoints: Vec<String>) -> Self {
+        self.breakpoints = breakpoints;
+        self
     }
 
     pub fn with_workspace_id(mut self, workspace_id: Option<String>) -> Self {
@@ -136,6 +196,29 @@ pub struct WorkflowStepState {
     /// references are left as written so connection tokens never land here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<serde_json::Value>,
+    /// `paused`, `completed_with_error` or `skipped`: what `status` alone does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<StepMark>,
+    /// 1 on the first run, +1 on each rerun.
+    #[serde(default)]
+    pub attempt: u32,
+    /// The agent step's own task (parent = the run's task).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_task_id: Option<String>,
+    /// The input context a `rerun {input}` gave the step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_override: Option<serde_json::Value>,
+    /// A breakpoint on this step was passed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub released: bool,
+}
+
+impl WorkflowStepState {
+    /// The status a list or view shows: `paused`, `completed_with_error`, `skipped`, else the
+    /// `TaskStatus` name.
+    pub fn display_status(&self) -> &'static str {
+        crate::types::step_display_status(&self.status, self.mark)
+    }
 }
 
 /// Persist and load workflow execution state. One trait, both
@@ -179,6 +262,38 @@ pub trait WorkflowStore: Send + Sync {
 
     /// List all step states for a run, in insertion order.
     async fn list_steps(&self, run_task_id: &str) -> anyhow::Result<Vec<WorkflowStepState>>;
+
+    /// Set or clear where the run is paused.
+    async fn set_paused(&self, run_task_id: &str, paused: Option<PauseInfo>) -> anyhow::Result<()> {
+        let mut state = self
+            .get_run(run_task_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("workflow run not found: {run_task_id}"))?;
+        state.paused = paused;
+        state.updated_at = Utc::now();
+        self.create_run(state).await
+    }
+
+    /// Ask the driver to park before its next step (or withdraw the ask).
+    async fn set_pause_requested(&self, run_task_id: &str, requested: bool) -> anyhow::Result<()> {
+        let mut state = self
+            .get_run(run_task_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("workflow run not found: {run_task_id}"))?;
+        state.pause_requested = requested;
+        state.updated_at = Utc::now();
+        self.create_run(state).await
+    }
+
+    /// The run's task status changed (`running`, `input_required`, `completed`, …). Stores that
+    /// keep a listable status (Postgres) record it; the default does nothing.
+    async fn set_run_status(
+        &self,
+        _run_task_id: &str,
+        _status: &TaskStatus,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// In-memory [`WorkflowStore`] for tests and the standalone OSS
