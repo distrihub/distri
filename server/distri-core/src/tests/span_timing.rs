@@ -104,7 +104,10 @@ async fn slow_stream_model() -> String {
                 });
                 let rest = format!(
                     "{}{}data: {usage}\n\ndata: [DONE]\n\n",
-                    chunk(serde_json::json!({"content": "lo"}), serde_json::Value::Null),
+                    chunk(
+                        serde_json::json!({"content": "lo"}),
+                        serde_json::Value::Null
+                    ),
                     chunk(serde_json::json!({}), serde_json::json!("stop")),
                 );
                 let _ = sock.write_all(rest.as_bytes()).await;

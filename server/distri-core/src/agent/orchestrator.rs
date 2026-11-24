@@ -510,7 +510,10 @@ impl AgentOrchestratorBuilder {
     }
 
     /// Tell `hook` when a workflow run pauses (and when a paused step is handed to a person).
-    pub fn with_workflow_run_hook(mut self, hook: Arc<dyn distri_workflow::WorkflowRunHook>) -> Self {
+    pub fn with_workflow_run_hook(
+        mut self,
+        hook: Arc<dyn distri_workflow::WorkflowRunHook>,
+    ) -> Self {
         self.workflow_run_hook = Some(hook);
         self
     }
@@ -2748,7 +2751,10 @@ impl AgentOrchestrator {
     /// `register_task` + `spawn_task_relay` + `spawn_background_execution`
     /// pipeline so the rest of the system sees this exactly like an
     /// A2A `message/send` continuation.
-    pub(crate) async fn resume_workflow_run(self: Arc<Self>, run_task_id: String) -> Result<(), String> {
+    pub(crate) async fn resume_workflow_run(
+        self: Arc<Self>,
+        run_task_id: String,
+    ) -> Result<(), String> {
         let workflow_store = self
             .workflow_store
             .as_ref()

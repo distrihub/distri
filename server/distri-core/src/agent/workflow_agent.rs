@@ -183,7 +183,9 @@ impl BaseAgent for WorkflowAgent {
                     Some(distri_types::TaskStatus::Canceled)
                 )
             {
-                context.update_status(distri_types::TaskStatus::Failed).await;
+                context
+                    .update_status(distri_types::TaskStatus::Failed)
+                    .await;
                 if let Some(store) = context
                     .orchestrator
                     .as_ref()

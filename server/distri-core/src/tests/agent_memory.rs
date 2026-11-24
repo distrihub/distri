@@ -282,7 +282,11 @@ async fn e1_memory_carries_between_runs() {
         .expect("run 1 wrote the item");
     assert_eq!(item.agent.as_deref(), Some("writer"));
     // The model's own `run:1` is replaced by the real run id the tool knows.
-    let runs: Vec<&String> = item.evidence.iter().filter(|e| e.starts_with("run:")).collect();
+    let runs: Vec<&String> = item
+        .evidence
+        .iter()
+        .filter(|e| e.starts_with("run:"))
+        .collect();
     assert_eq!(runs.len(), 1, "one run evidence: {:?}", item.evidence);
     assert_ne!(runs[0], "run:1", "the model's made-up run id is dropped");
 

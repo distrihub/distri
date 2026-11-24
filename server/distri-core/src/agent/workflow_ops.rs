@@ -322,7 +322,10 @@ impl AgentOrchestrator {
             }
             other => return Err(StepOpError::Invalid(format!("unknown op `{other}`"))),
         }
-        store.upsert_step(run, row.clone()).await.map_err(internal)?;
+        store
+            .upsert_step(run, row.clone())
+            .await
+            .map_err(internal)?;
         store.set_paused(run, None).await.map_err(internal)?;
         if state.pause_requested {
             let _ = store.set_pause_requested(run, false).await;
@@ -381,9 +384,10 @@ impl AgentOrchestrator {
         };
         match op {
             StepOp::Complete => {
-                outcome.output = Some(req.output.clone().ok_or_else(|| {
-                    StepOpError::Invalid("complete needs an `output`".into())
-                })?);
+                outcome.output =
+                    Some(req.output.clone().ok_or_else(|| {
+                        StepOpError::Invalid("complete needs an `output`".into())
+                    })?);
             }
             StepOp::Rerun => {
                 if !req.force && !step.is_replay_safe() {
@@ -586,7 +590,10 @@ impl AgentOrchestrator {
                             }
                         }
                     }
-                    store.set_paused(run_task_id, None).await.map_err(internal)?;
+                    store
+                        .set_paused(run_task_id, None)
+                        .await
+                        .map_err(internal)?;
                     self.set_workflow_status(run_task_id, TaskStatus::Canceled)
                         .await;
                 } else {
@@ -711,8 +718,15 @@ impl AgentOrchestrator {
                         force_allowed: req.force,
                     },
                 );
-                self.spawn_debugger(state.clone(), pause.clone(), agent.clone(), thread_id, task_id, brief)
-                    .await;
+                self.spawn_debugger(
+                    state.clone(),
+                    pause.clone(),
+                    agent.clone(),
+                    thread_id,
+                    task_id,
+                    brief,
+                )
+                .await;
             }
             AttachTarget::User { .. } | AttachTarget::Owner { .. } => {
                 store
@@ -749,97 +763,107 @@ impl AgentOrchestrator {
             .as_deref()
             .and_then(|w| uuid::Uuid::parse_str(w).ok());
         let user_id = state.user_id.clone();
-        tokio::spawn(distri_types::context::with_user_and_workspace(
-            user_id.clone(),
+        // Both task-locals: the engine's (distri_types) and the one multi-tenant stores read
+        // (distri_auth, e.g. the cloud task store), as the durable worker and invoke do.
+        let auth_user = user_id.clone();
+        tokio::spawn(distri_auth::context::with_user_and_workspace(
+            auth_user,
             workspace_uuid,
-            async move {
-                let run = state.run_task_id.clone();
-                if let Ok(None) = me.stores.thread_store.get_thread(&thread_id).await {
-                    let _ = me
+            distri_types::context::with_user_and_workspace(
+                user_id.clone(),
+                workspace_uuid,
+                async move {
+                    let run = state.run_task_id.clone();
+                    if let Ok(None) = me.stores.thread_store.get_thread(&thread_id).await {
+                        let _ = me
+                            .stores
+                            .thread_store
+                            .create_thread(distri_types::CreateThreadRequest {
+                                agent_id: agent.clone(),
+                                title: Some(format!(
+                                    "Debug {} · {}",
+                                    state.agent_id, pause.step_id
+                                )),
+                                thread_id: Some(thread_id.clone()),
+                                attributes: Some(json!({
+                                    "workflow_run": run,
+                                    "workflow": state.agent_id,
+                                    "step": pause.step_id,
+                                })),
+                                user_id: Some(user_id.clone()),
+                                external_id: None,
+                                channel_id: None,
+                            })
+                            .await;
+                    }
+                    if let Err(e) = me
                         .stores
-                        .thread_store
-                        .create_thread(distri_types::CreateThreadRequest {
-                            agent_id: agent.clone(),
-                            title: Some(format!("Debug {} · {}", state.agent_id, pause.step_id)),
-                            thread_id: Some(thread_id.clone()),
-                            attributes: Some(json!({
-                                "workflow_run": run,
-                                "workflow": state.agent_id,
-                                "step": pause.step_id,
-                            })),
-                            user_id: Some(user_id.clone()),
-                            external_id: None,
-                            channel_id: None,
-                        })
-                        .await;
-                }
-                if let Err(e) = me
-                    .stores
-                    .task_store
-                    .create_task(
-                        distri_types::stores::CreateTaskInput::local(&thread_id)
-                            .with_id(&task_id)
-                            .with_status(TaskStatus::Running)
-                            .with_parent(&run),
-                    )
-                    .await
-                {
-                    tracing::warn!(error = %e, "workflow debugger task create failed");
-                }
-                let ctx = ExecutorContext {
-                    thread_id: thread_id.clone(),
-                    task_id: task_id.clone(),
-                    run_id: uuid::Uuid::new_v4().to_string(),
-                    agent_id: agent.clone(),
-                    user_id: user_id.clone(),
-                    workspace_id: state.workspace_id.clone(),
-                    session_id: thread_id.clone(),
-                    parent_task_id: Some(run.clone()),
-                    orchestrator: Some(me.clone()),
-                    stores: Some(me.stores.clone()),
-                    ..Default::default()
-                };
-                let ctx = Arc::new(me.with_own_event_topic(ctx));
-                let message = distri_types::Message {
-                    role: distri_types::MessageRole::User,
-                    parts: vec![Part::Text(brief)],
-                    ..Default::default()
-                };
-                let result = me.execute_stream(&agent, message, ctx, None).await;
-                me.workflow_debug_bindings.remove(&task_id);
-                let text = match &result {
-                    Ok(r) => r.content.clone().unwrap_or_default(),
-                    Err(e) => format!("the debugger failed: {e}"),
-                };
-                // Still paused on the same pause: the agent did not resolve it.
-                let still = me
-                    .workflow_store
-                    .as_ref()
-                    .map(|s| s.clone())
-                    .map(|s| async move { s.get_run(&run).await.ok().flatten() });
-                let still = match still {
-                    Some(f) => f.await,
-                    None => None,
-                };
-                if let Some(current) = still {
-                    if current
-                        .paused
-                        .as_ref()
-                        .is_some_and(|p| p.pending_call_id == pause.pending_call_id)
+                        .task_store
+                        .create_task(
+                            distri_types::stores::CreateTaskInput::local(&thread_id)
+                                .with_id(&task_id)
+                                .with_status(TaskStatus::Running)
+                                .with_parent(&run),
+                        )
+                        .await
                     {
-                        tracing::info!(
-                            target: "workflow.debug",
-                            run_task_id = %current.run_task_id,
-                            agent = %agent,
-                            "attached agent ended without resolving the step"
-                        );
-                        if let Some(hook) = me.workflow_run_hook.clone() {
-                            hook.on_debug_unresolved(&current, &pause, &agent, &text)
-                                .await;
+                        tracing::warn!(error = %e, "workflow debugger task create failed");
+                    }
+                    let ctx = ExecutorContext {
+                        thread_id: thread_id.clone(),
+                        task_id: task_id.clone(),
+                        run_id: uuid::Uuid::new_v4().to_string(),
+                        agent_id: agent.clone(),
+                        user_id: user_id.clone(),
+                        workspace_id: state.workspace_id.clone(),
+                        session_id: thread_id.clone(),
+                        parent_task_id: Some(run.clone()),
+                        orchestrator: Some(me.clone()),
+                        stores: Some(me.stores.clone()),
+                        ..Default::default()
+                    };
+                    let ctx = Arc::new(me.with_own_event_topic(ctx));
+                    let message = distri_types::Message {
+                        role: distri_types::MessageRole::User,
+                        parts: vec![Part::Text(brief)],
+                        ..Default::default()
+                    };
+                    let result = me.execute_stream(&agent, message, ctx, None).await;
+                    me.workflow_debug_bindings.remove(&task_id);
+                    let text = match &result {
+                        Ok(r) => r.content.clone().unwrap_or_default(),
+                        Err(e) => format!("the debugger failed: {e}"),
+                    };
+                    // Still paused on the same pause: the agent did not resolve it.
+                    let still = me
+                        .workflow_store
+                        .as_ref()
+                        .map(|s| s.clone())
+                        .map(|s| async move { s.get_run(&run).await.ok().flatten() });
+                    let still = match still {
+                        Some(f) => f.await,
+                        None => None,
+                    };
+                    if let Some(current) = still {
+                        if current
+                            .paused
+                            .as_ref()
+                            .is_some_and(|p| p.pending_call_id == pause.pending_call_id)
+                        {
+                            tracing::info!(
+                                target: "workflow.debug",
+                                run_task_id = %current.run_task_id,
+                                agent = %agent,
+                                "attached agent ended without resolving the step"
+                            );
+                            if let Some(hook) = me.workflow_run_hook.clone() {
+                                hook.on_debug_unresolved(&current, &pause, &agent, &text)
+                                    .await;
+                            }
                         }
                     }
-                }
-            },
+                },
+            ),
         ));
     }
 }
@@ -891,7 +915,11 @@ async fn debug_brief(
                 .ok()
                 .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(String::from))
                 .unwrap_or_default();
-            let marker = if s.id == pause.step_id { "  <== PAUSED HERE" } else { "" };
+            let marker = if s.id == pause.step_id {
+                "  <== PAUSED HERE"
+            } else {
+                ""
+            };
             format!(
                 "- {} ({kind}, replay_safe: {}){}",
                 s.id,
@@ -996,7 +1024,9 @@ fn terr(msg: impl Into<String>) -> AgentError {
     AgentError::ToolExecution(msg.into())
 }
 
-fn binding(ctx: &ExecutorContext) -> Result<(Arc<AgentOrchestrator>, WorkflowDebugBinding), AgentError> {
+fn binding(
+    ctx: &ExecutorContext,
+) -> Result<(Arc<AgentOrchestrator>, WorkflowDebugBinding), AgentError> {
     let orch = ctx
         .orchestrator
         .clone()
