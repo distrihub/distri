@@ -4,8 +4,8 @@ pub mod a2a {
 }
 pub mod blueprint;
 pub mod memory;
-pub mod workflow_services;
 pub mod workflow_ops;
+pub mod workflow_services;
 pub mod workflow_triggers;
 pub use memory::{
     AgentMemoryStore, InMemoryAgentMemoryStore, MemoryAuthor, MemoryChange, MemoryConfig,
