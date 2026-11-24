@@ -832,8 +832,18 @@ impl AgentOrchestrator {
                     me.workflow_debug_bindings.remove(&task_id);
                     let text = match &result {
                         Ok(r) => r.content.clone().unwrap_or_default(),
-                        Err(e) => format!("the debugger failed: {e}"),
+                        Err(e) => {
+                            tracing::warn!(target: "workflow.debug", error = %e, run_task_id = %run, agent = %agent, "workflow debugger run failed");
+                            format!("the debugger failed: {e}")
+                        }
                     };
+                    // The debug task ends with the agent's run: never left Running.
+                    let end = if result.is_ok() {
+                        TaskStatus::Completed
+                    } else {
+                        TaskStatus::Failed
+                    };
+                    let _ = me.stores.task_store.update_task_status(&task_id, end).await;
                     // Still paused on the same pause: the agent did not resolve it.
                     let still = me
                         .workflow_store
