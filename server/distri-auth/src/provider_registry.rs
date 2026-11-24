@@ -71,6 +71,12 @@ pub struct ProviderOAuthFields {
     /// provider (e.g. Slack's `team` workspace-id input).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_params_schema: Option<serde_json::Value>,
+    /// See `OAuthProviderConfig::client_id_param` (TikTok: `client_key`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id_param: Option<String>,
+    /// See `OAuthProviderConfig::scope_separator` (TikTok: `,`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_separator: Option<String>,
 }
 
 /// Catalog entry as serialized in `additional_providers.json` /
@@ -161,6 +167,8 @@ impl ProviderConfig {
             env_client_id: f.env_vars.get("client_id").cloned(),
             env_client_secret: f.env_vars.get("client_secret").cloned(),
             icon_url: None,
+            client_id_param: f.client_id_param.clone(),
+            scope_separator: f.scope_separator.clone(),
         }
     }
 

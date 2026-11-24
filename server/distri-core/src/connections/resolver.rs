@@ -695,6 +695,8 @@ mod tests {
             env_client_id: None,
             env_client_secret: None,
             icon_url: None,
+            client_id_param: None,
+            scope_separator: None,
         }
     }
 

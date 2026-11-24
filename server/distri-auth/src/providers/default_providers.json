@@ -17,7 +17,10 @@
         "https://www.googleapis.com/auth/drive.readonly",
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/spreadsheets.readonly"
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/youtube.upload",
+        "https://www.googleapis.com/auth/youtube.readonly",
+        "https://www.googleapis.com/auth/youtube.force-ssl"
       ],
       "default_scopes": [
         "email",
@@ -38,7 +41,11 @@
         "spreadsheets": "https://www.googleapis.com/auth/spreadsheets",
         "spreadsheets.readonly": "https://www.googleapis.com/auth/spreadsheets.readonly",
         "sheets": "https://www.googleapis.com/auth/spreadsheets",
-        "sheets.readonly": "https://www.googleapis.com/auth/spreadsheets.readonly"
+        "sheets.readonly": "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "youtube": "https://www.googleapis.com/auth/youtube.upload",
+        "youtube.upload": "https://www.googleapis.com/auth/youtube.upload",
+        "youtube.readonly": "https://www.googleapis.com/auth/youtube.readonly",
+        "youtube.force-ssl": "https://www.googleapis.com/auth/youtube.force-ssl"
       },
       "env_vars": {
         "client_id": "GOOGLE_CLIENT_ID",
@@ -207,7 +214,9 @@
         "tweet.write",
         "users.read",
         "follows.read",
-        "follows.write"
+        "follows.write",
+        "media.write",
+        "offline.access"
       ],
       "default_scopes": [
         "users.read"
@@ -219,7 +228,11 @@
         "tweets.read": "tweet.read",
         "tweets.write": "tweet.write",
         "users": "users.read",
-        "follows": "follows.read"
+        "follows": "follows.read",
+        "media": "media.write",
+        "media.write": "media.write",
+        "offline": "offline.access",
+        "offline.access": "offline.access"
       },
       "env_vars": {
         "client_id": "TWITTER_CLIENT_ID",
