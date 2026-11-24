@@ -248,13 +248,18 @@ impl AgentMemoryStore for InMemoryAgentMemoryStore {
         Ok(())
     }
 
-    async fn restore(&self, ws: &str, change_id: &str) -> anyhow::Result<MemoryChange> {
+    async fn restore(
+        &self,
+        ws: &str,
+        space: &str,
+        change_id: &str,
+    ) -> anyhow::Result<MemoryChange> {
         let now = now_ms();
         let mut st = self.state.lock().unwrap();
         let change = st
             .changes
             .iter()
-            .find(|c| c.id == change_id && c.workspace_id == ws)
+            .find(|c| c.id == change_id && c.workspace_id == ws && c.uri.space == space)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("not_found: change {change_id}"))?;
         let key = (ws.to_string(), change.uri.to_string());
@@ -294,9 +299,12 @@ impl AgentMemoryStore for InMemoryAgentMemoryStore {
     }
 
     async fn bulk_insert_signals(&self, items: Vec<MemorySignal>) -> anyhow::Result<usize> {
+        for sig in &items {
+            super::guard::check_signal(sig).map_err(anyhow::Error::msg)?;
+        }
         let mut st = self.state.lock().unwrap();
         let mut n = 0;
-        for sig in items {
+        for sig in items.into_iter().map(super::guard::scrub_signal) {
             if st.signals.iter().any(|s| s.id == sig.id) {
                 continue;
             }

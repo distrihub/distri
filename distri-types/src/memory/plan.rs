@@ -161,6 +161,26 @@ fn snapshot(item: &MemoryItem) -> serde_json::Value {
     serde_json::to_value(item).unwrap_or_default()
 }
 
+fn check_body(uri: &MemoryUri, body: &str) -> Result<(), String> {
+    if body.len() > super::guard::MAX_BODY_BYTES {
+        return Err(format!(
+            "too_large: {uri}: the body is {} bytes (at most {})",
+            body.len(),
+            super::guard::MAX_BODY_BYTES
+        ));
+    }
+    Ok(())
+}
+
+/// The item's stored text with token-like values removed.
+fn scrubbed(mut item: MemoryItem) -> MemoryItem {
+    use super::guard::scrub_secrets;
+    item.l0 = scrub_secrets(&item.l0);
+    item.l1 = item.l1.map(|t| scrub_secrets(&t));
+    item.body = scrub_secrets(&item.body);
+    item
+}
+
 fn check_text(uri: &MemoryUri, l0: &str, l1: Option<&str>) -> Result<(), String> {
     if l0.trim().is_empty() {
         return Err(format!("invalid: {uri}: l0 is empty"));
@@ -246,6 +266,7 @@ pub fn apply_op(
                 return Err(format!("forbidden: {uri}: only the owner pins"));
             }
             check_text(uri, l0, l1.as_deref())?;
+            check_body(uri, body)?;
             (
                 MemoryItem {
                     id: existing
@@ -304,6 +325,7 @@ pub fn apply_op(
                 next.l0 = l0.trim().to_string();
             }
             check_text(uri, &next.l0, next.l1.as_deref())?;
+            check_body(uri, &next.body)?;
             next.evidence = merge_evidence(&cur.evidence, evidence);
             next.agent = agent;
             next.author = author.clone();
@@ -326,6 +348,7 @@ pub fn apply_op(
                 return Err(format!("forbidden: {uri}: only the owner pins"));
             }
             check_text(uri, l0, l1.as_deref())?;
+            check_body(uri, body)?;
             let mut next = cur.clone();
             next.l0 = l0.trim().to_string();
             next.l1 = default_l1(l1, body);
@@ -353,6 +376,7 @@ pub fn apply_op(
             (next, Some(reason.clone()).filter(|r| !r.trim().is_empty()))
         }
     };
+    let item = scrubbed(item);
     let change = MemoryChange {
         id: uuid::Uuid::new_v4().to_string(),
         workspace_id: ws.to_string(),

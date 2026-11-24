@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub mod guard;
 pub mod in_memory;
 pub mod inject;
 pub mod plan;
@@ -101,6 +102,10 @@ pub struct MemoryConfig {
     pub approve_new_rules: bool,
     /// Gets `memory_read` / `memory_search` only.
     pub read_only: bool,
+    /// Whether an end user (an embed visitor, an end-user token, a channel user) may write
+    /// memory. Default false: those callers get `memory_read`/`memory_search` only, and even
+    /// when true they write only into their own `user:<id>` scope.
+    pub end_users_write: bool,
     /// Hard rules, rendered above memory and never written by it.
     pub rules: Vec<String>,
 }
@@ -118,6 +123,7 @@ impl Default for MemoryConfig {
             reflect_after: None,
             approve_new_rules: false,
             read_only: false,
+            end_users_write: false,
             rules: Vec::new(),
         }
     }
@@ -682,7 +688,9 @@ pub trait AgentMemoryStore: Send + Sync {
     /// Count a use (injected or read) of each item.
     async fn mark_used(&self, ws: &str, uris: &[MemoryUri]) -> anyhow::Result<()>;
     /// Undo one change; records the undo as a change of its own.
-    async fn restore(&self, ws: &str, change_id: &str) -> anyhow::Result<MemoryChange>;
+    /// Refused (`not_found`) when the change is not in `space`, before anything is written.
+    async fn restore(&self, ws: &str, space: &str, change_id: &str)
+    -> anyhow::Result<MemoryChange>;
     /// The change log of a space, newest first; `before` is a `created_at` cursor.
     async fn changes(
         &self,
