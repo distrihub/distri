@@ -49,6 +49,27 @@ pub struct WorkflowDefinition {
     /// Named entry points for multi-entry workflows.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entry_points: Vec<EntryPoint>,
+    /// What happens to a paused run when nobody resolves it in time. `None` (default): it waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_deadline: Option<PauseDeadline>,
+    /// Whether an agent attached to a paused step may change the workflow's state
+    /// (`workflow_state_set`). Off by default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub debug_can_set_state: bool,
+}
+
+/// A paused run's deadline: after `after_secs`, the paused step is skipped or the run fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PauseDeadline {
+    pub after_secs: u64,
+    pub then: PauseDeadlineAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PauseDeadlineAction {
+    Skip,
+    Fail,
 }
 
 /// Built-in channel commands a workflow may not shadow. Mirrors
@@ -103,12 +124,19 @@ impl WorkflowDefinition {
             input_schema: None,
             checkpoint: CheckpointStrategy::default(),
             entry_points: vec![],
+            pause_deadline: None,
+            debug_can_set_state: false,
         }
     }
 
     pub fn with_id(mut self, id: &str) -> Self {
         self.id = id.to_string();
         self
+    }
+
+    /// The ids of `step_id` and every step downstream of it (following `depends_on` forward).
+    pub fn downstream_of(&self, step_id: &str) -> std::collections::HashSet<String> {
+        self.reachable_from(step_id)
     }
 
     pub fn with_checkpoint(mut self, strategy: CheckpointStrategy) -> Self {
@@ -367,6 +395,68 @@ pub struct WorkflowStepRun {
     /// `WorkflowStepState::input`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<serde_json::Value>,
+    /// See `WorkflowStepState::mark`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<StepMark>,
+    /// 1 on the first run, +1 on each rerun (0: never started).
+    #[serde(default)]
+    pub attempt: u32,
+    /// The agent step's own task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_task_id: Option<String>,
+    /// The input context a `rerun {input}` gave this step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_override: Option<serde_json::Value>,
+    /// A breakpoint on this step was already passed (resumed).
+    #[serde(default)]
+    pub released: bool,
+}
+
+/// What a step's `TaskStatus` does not say on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepMark {
+    /// The run is paused at this step (`status = input_required`).
+    Paused,
+    /// The step finished with `ok: false` in its output (`status = completed`).
+    CompletedWithError,
+    /// Skipped by an operator (`status = canceled`).
+    Skipped,
+}
+
+impl StepMark {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StepMark::Paused => "paused",
+            StepMark::CompletedWithError => "completed_with_error",
+            StepMark::Skipped => "skipped",
+        }
+    }
+}
+
+/// The status a list or a view shows for a step: the mark when there is one, else the
+/// `TaskStatus` name.
+pub fn step_display_status(status: &TaskStatus, mark: Option<StepMark>) -> &'static str {
+    if let Some(m) = mark {
+        return m.as_str();
+    }
+    match status {
+        TaskStatus::Pending => "pending",
+        TaskStatus::Running => "running",
+        TaskStatus::InputRequired => "input_required",
+        TaskStatus::Completed => "completed",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Canceled => "canceled",
+    }
+}
+
+/// Whether a step output says it failed (`ok: false`), as `on_failure: continue` writes it.
+pub fn output_reports_error(output: Option<&serde_json::Value>) -> bool {
+    output
+        .and_then(|o| o.get("ok"))
+        .and_then(|v| v.as_bool())
+        .map(|ok| !ok)
+        .unwrap_or(false)
 }
 
 impl WorkflowRun {
@@ -755,6 +845,12 @@ pub struct WorkflowStep {
     /// `continue` records `{ok: false, error}` as the step's result and carries on.
     #[serde(default, skip_serializing_if = "OnFailure::is_fail")]
     pub on_failure: OnFailure,
+    /// Pause the run before this step runs (a breakpoint in the definition).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pause_before: bool,
+    /// Whether the step may be re-run without `force`. `None`: by kind (see `is_replay_safe`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_safe: Option<bool>,
 }
 
 /// What a step's failure does to the run.
@@ -764,6 +860,8 @@ pub enum OnFailure {
     #[default]
     Fail,
     Continue,
+    /// Park the run at the failed step until someone (an agent or a person) resolves it.
+    Pause,
 }
 
 impl OnFailure {
@@ -785,7 +883,43 @@ impl WorkflowStep {
             skip_if: None,
             when: None,
             on_failure: OnFailure::Fail,
+            pause_before: false,
+            replay_safe: None,
         }
+    }
+
+    /// Whether re-running this step has no side effects worth asking about (A3): the step's own
+    /// `replay_safe`, else by kind. `agent_run`, `code`, `condition`, `set_state`, `checkpoint`,
+    /// `wait_for_input` and a `GET` `api_call` are safe; `notify`, `reply`, `tool_call`,
+    /// `script`, `memory` and other calls are not.
+    pub fn is_replay_safe(&self) -> bool {
+        if let Some(v) = self.replay_safe {
+            return v;
+        }
+        match &self.kind {
+            StepKind::AgentRun { .. }
+            | StepKind::Code { .. }
+            | StepKind::Condition { .. }
+            | StepKind::SetState { .. }
+            | StepKind::Checkpoint { .. }
+            | StepKind::WaitForInput { .. } => true,
+            StepKind::ApiCall { method, .. } => method.eq_ignore_ascii_case("GET"),
+            StepKind::Notify { .. }
+            | StepKind::Reply { .. }
+            | StepKind::ToolCall { .. }
+            | StepKind::Script { .. }
+            | StepKind::Memory { .. } => false,
+        }
+    }
+
+    pub fn pause_on_failure(mut self) -> Self {
+        self.on_failure = OnFailure::Pause;
+        self
+    }
+
+    pub fn with_pause_before(mut self) -> Self {
+        self.pause_before = true;
+        self
     }
 
     pub fn api_call(id: &str, label: &str, method: &str, url: &str) -> Self {

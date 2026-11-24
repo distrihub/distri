@@ -39,7 +39,8 @@ pub use trigger_registry::{
 };
 pub use types::*;
 pub use workflow_store::{
-    InMemoryWorkflowStore, WorkflowExecutionState, WorkflowStepState, WorkflowStore,
+    InMemoryWorkflowStore, PauseInfo, PauseReason, WorkflowExecutionState, WorkflowStepState,
+    WorkflowStore,
 };
 
 #[cfg(test)]
