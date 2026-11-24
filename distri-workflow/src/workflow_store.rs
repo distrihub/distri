@@ -81,6 +81,8 @@ pub enum PauseReason {
     Breakpoint,
     /// `POST …/pause`.
     Requested,
+    /// A `person` step asks someone and waits for the answer.
+    Person,
 }
 
 impl PauseReason {
@@ -89,6 +91,7 @@ impl PauseReason {
             PauseReason::Failed => "failed",
             PauseReason::Breakpoint => "breakpoint",
             PauseReason::Requested => "requested",
+            PauseReason::Person => "person",
         }
     }
 }
@@ -112,6 +115,9 @@ pub struct PauseInfo {
     pub debug_task_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug_thread_id: Option<String>,
+    /// A `person` pause's question: `{text, to, buttons, input_schema}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<serde_json::Value>,
 }
 
 impl WorkflowExecutionState {
@@ -211,6 +217,12 @@ pub struct WorkflowStepState {
     /// A breakpoint on this step was passed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub released: bool,
+    /// A `for_each` step's items (status, result or error per item).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items: Option<Vec<crate::types::ForEachItem>>,
+    /// What a `code` step's script asked of the run (`@distri/runtime`), in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub script_calls: Vec<distri_types::script_sdk::ScriptCallRecord>,
 }
 
 impl WorkflowStepState {

@@ -4,6 +4,7 @@ pub mod a2a {
 }
 pub mod blueprint;
 pub mod memory;
+pub mod script_sdk;
 pub mod workflow_ops;
 pub mod workflow_services;
 pub mod workflow_triggers;

@@ -26,6 +26,9 @@ pub fn build_execution_context(
     })
 }
 
+/// The context key holding names a step brings into scope (a `for_each` item's `as` name).
+pub const LOCALS_KEY: &str = "__locals";
+
 /// Resolve a dotted path like `steps.fetch_doc.content` against a JSON value.
 fn resolve_path(root: &Value, path: &str) -> Option<Value> {
     let mut current = root;
@@ -33,6 +36,10 @@ fn resolve_path(root: &Value, path: &str) -> Option<Value> {
         match current {
             Value::Object(map) => {
                 current = map.get(segment)?;
+            }
+            // `{steps.x.0.name}`: a numeric segment indexes an array.
+            Value::Array(items) => {
+                current = items.get(segment.parse::<usize>().ok()?)?;
             }
             _ => return None,
         }
@@ -85,7 +92,7 @@ fn resolve_reference(reference: &str, context: &Value) -> Option<Value> {
     let path = parts.get(1).copied();
 
     match namespace {
-        "input" | "steps" | "env" | "item" | "state" => {
+        "input" | "steps" | "env" | "item" | "state" | "index" => {
             let ns_value = context.get(namespace)?;
             match path {
                 Some(p) => resolve_path(ns_value, p),
@@ -107,7 +114,14 @@ fn resolve_reference(reference: &str, context: &Value) -> Option<Value> {
             // Legacy flat context fallback
             resolve_path(context, p)
         }
-        _ => None,
+        // A `for_each` item under its own name (`as`): kept in `__locals`.
+        other => {
+            let ns_value = context.get(LOCALS_KEY)?.get(other)?;
+            match path {
+                Some(p) => resolve_path(ns_value, p),
+                None => Some(ns_value.clone()),
+            }
+        }
     }
 }
 
