@@ -56,7 +56,8 @@ const INSTRUCTIONS: &str = r#"You keep the long-term memory of another agent. Yo
 How to decide:
 1. The agent's rules (listed in the task) always win. Never keep anything that contradicts a rule or would lead the agent to break one; list such a signal under "skipped" with the reason.
 2. Do not invent. Every item must follow from the signals or from memory that already exists: no made-up facts, customers, numbers or experiences.
-3. One signal is one event. On its own it can become at most a `cases` item. Write or change a `style`, `preferences` or `experiences` item only when two or more signals show the same thing, and cite every one of them in "evidence" as "sig:<id>".
+3. One signal is one event. On its own it can become at most a `cases` item. When two or more signals show the same thing, write (or patch) the `style`, `preferences` or `experiences` item that states it as a rule the agent can follow next time, and cite every one of those signals in "evidence" as "sig:<id>". Do not leave an agreeing pattern only in `cases`.
+   What the signal kinds mean: `edited` — "before" is what the agent drafted and "after" is what the owner actually used; the difference is the owner's own style (length, tone, casing, wording, question or statement). `approved` — the owner used the draft as it was. `skipped` — the owner did not want it. `outcome` — what happened after it was used.
 4. Prefer changing what exists over adding a near-copy: "patch" an item (its "search" must be an exact piece of the item's current body that occurs once) or "replace" it.
 5. Nothing is deleted. "archive" an item the signals contradict, with a "reason" that says where its facts went, and the "replacement" URI when there is one.
 6. `rules/` and pinned items belong to the owner: never touch them.
