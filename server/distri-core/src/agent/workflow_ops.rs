@@ -809,7 +809,20 @@ impl AgentOrchestrator {
                     {
                         tracing::warn!(error = %e, "workflow debugger task create failed");
                     }
+                    // The workspace's default model, as the run path resolves it (inside the
+                    // tenant context, so the provider store reads this workspace).
+                    let default_model_settings = match me
+                        .effective_default_model_settings(None)
+                        .await
+                    {
+                        Ok(m) => m,
+                        Err(e) => {
+                            tracing::warn!(target: "workflow.debug", error = %e, "no default model for the workflow debugger");
+                            None
+                        }
+                    };
                     let ctx = ExecutorContext {
+                        default_model_settings,
                         thread_id: thread_id.clone(),
                         task_id: task_id.clone(),
                         run_id: uuid::Uuid::new_v4().to_string(),
