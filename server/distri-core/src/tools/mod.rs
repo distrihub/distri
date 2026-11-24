@@ -145,6 +145,15 @@ pub fn cast_to_executor_context_tool(
         // Inter-agent communication
         "send_message" => Ok(Box::new(SendMessageTool)),
         "notify" => Ok(Box::new(notify::NotifyTool)),
+        // Agent memory (added when the agent has `[memory]`).
+        "memory_read" => Ok(Box::new(crate::agent::agent_memory::tools::MemoryReadTool)),
+        "memory_search" => Ok(Box::new(
+            crate::agent::agent_memory::tools::MemorySearchTool,
+        )),
+        "memory_write" => Ok(Box::new(crate::agent::agent_memory::tools::MemoryWriteTool)),
+        "memory_forget" => Ok(Box::new(
+            crate::agent::agent_memory::tools::MemoryForgetTool,
+        )),
         _ => Err(AgentError::ToolExecution(format!(
             "Tool '{}' cannot be cast to ExecutorContextTool",
             tool_name

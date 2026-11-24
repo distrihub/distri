@@ -84,7 +84,10 @@ pub async fn init_orchestrator(
         .with_prompt_registry(prompt_registry)
         .with_store_config(store_config)
         .with_session_storage_path(workspace_path.join(".distri/session_storage"))
-        .with_workspace_filesystem(workspace_fs);
+        .with_workspace_filesystem(workspace_fs)
+        // The person running this server owns the machine: workflow `script` steps may run
+        // a shell here (the cloud never allows it).
+        .with_allow_host_shell(true);
     // Workflow `code` steps run with this machine's Deno (the person running the server owns it).
     match distri_core::code_runner::LocalDenoRunner::detect() {
         Some(runner) => builder = builder.with_code_runner(Arc::new(runner)),

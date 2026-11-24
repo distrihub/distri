@@ -57,6 +57,9 @@ async fn emit_text(context: &Arc<ExecutorContext>, text: &str) {
         .await;
 }
 
+/// Why a `script` step fails on a host that has not opted in to running shells.
+pub const HOST_SHELL_DISABLED: &str = "host shell steps are disabled on this server";
+
 pub(crate) async fn execute_step(
     step: &WorkflowStep,
     wf_context: &serde_json::Value,
@@ -259,6 +262,14 @@ pub(crate) async fn execute_step(
             shell,
             ..
         } => {
+            if !context
+                .orchestrator
+                .as_ref()
+                .map(|o| o.allow_host_shell)
+                .unwrap_or(false)
+            {
+                return Ok(StepResult::failed(HOST_SHELL_DISABLED));
+            }
             let resolved_command = resolve_template(command, wf_context);
             let resolved_args: Vec<String> = args
                 .iter()
@@ -510,6 +521,10 @@ pub(crate) async fn execute_step(
                 )),
                 Err(e) => Ok(StepResult::failed(&format!("set_state: {e}"))),
             }
+        }
+
+        StepKind::Memory { .. } => {
+            crate::agent::agent_memory::step::execute_memory_step(step, wf_context, &context).await
         }
 
         StepKind::WaitForInput { message, schema } => {
