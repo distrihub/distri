@@ -122,6 +122,11 @@ pub fn cast_to_executor_context_tool(
         return Ok(Box::new(wf_tool.clone()));
     }
 
+    // The tools of an agent attached to a paused workflow step.
+    if let Some(t) = crate::agent::workflow_ops::debug_tool_by_name(&tool_name) {
+        return Ok(t);
+    }
+
     // Check hardcoded tool names
     match tool_name.as_str() {
         "final" => Ok(Box::new(FinalTool)),

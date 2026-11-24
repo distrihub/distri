@@ -65,6 +65,17 @@ pub(crate) async fn execute_step(
     wf_context: &serde_json::Value,
     context: Arc<ExecutorContext>,
 ) -> Result<StepResult, String> {
+    execute_step_as(step, wf_context, context, None).await
+}
+
+/// [`execute_step`], with the task id an `agent_run` step runs in (a child of the run's task;
+/// a fresh id when `None`).
+pub(crate) async fn execute_step_as(
+    step: &WorkflowStep,
+    wf_context: &serde_json::Value,
+    context: Arc<ExecutorContext>,
+    child_task_id: Option<String>,
+) -> Result<StepResult, String> {
     match &step.kind {
         StepKind::ApiCall {
             method,
@@ -370,20 +381,35 @@ pub(crate) async fn execute_step(
                 ));
             };
 
-            // Sub-agent gets its own event channel so its stream doesn't
-            // interleave with the workflow's.
-            let (tx, mut rx) = tokio::sync::mpsc::channel(10000);
-            let sub_ctx = Arc::new(context.clone_with_tx(tx));
-            let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+            // The agent step runs in its own task (parent = the run's task, same thread), so
+            // its events and messages are kept, a hand-off can attach to it, and two agent
+            // steps of one run never share a scratchpad. Its events go to its own topic, not
+            // into the workflow's stream.
+            let mut child = context.new_task(agent_id).await;
+            if let Some(id) = child_task_id {
+                child.task_id = id;
+            }
+            child.run_id = uuid::Uuid::new_v4().to_string();
+            child.event_tx = None;
+            let child = orchestrator.with_own_event_topic(child);
+            if let Err(e) = orchestrator
+                .stores
+                .task_store
+                .create_task(
+                    distri_types::stores::CreateTaskInput::local(&child.thread_id)
+                        .with_id(&child.task_id)
+                        .with_status(TaskStatus::Running)
+                        .with_parent(&context.task_id),
+                )
+                .await
+            {
+                tracing::warn!(error = %e, step = %step.id, "agent step: child task create failed");
+            }
+            let sub_ctx = Arc::new(child);
 
             let result = orchestrator
                 .execute_stream(agent_id, sub_message, sub_ctx, None)
                 .await;
-            // The sub-agent's events are discarded. Stop the drain instead of
-            // waiting for every sender to drop: something spawned by the run
-            // can keep a context clone (and its sender) alive, which used to
-            // park the workflow here forever.
-            drain.abort();
 
             match result {
                 Ok(invoke_result) => {

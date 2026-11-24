@@ -126,6 +126,15 @@ pub struct AgentOrchestrator {
     /// Builds the planning LLM executor instead of the provider factory
     /// (tests, hosts with their own LLM routing). `None`: the provider's.
     pub llm_executor_factory: Option<Arc<dyn crate::llm::LlmExecutorFactory>>,
+    /// What the host hears about a workflow run's pauses (the cloud's bot message).
+    pub workflow_run_hook: Option<Arc<dyn distri_workflow::WorkflowRunHook>>,
+    /// Where a paused workflow step's pending call lives: the host's store, else the durable
+    /// runtime's, else an in-memory one (see `workflow_pending_calls`).
+    pub workflow_pending_calls: Arc<dyn distri_types::PendingCallStore>,
+    /// Agents attached to a paused workflow step, by the attached agent's task id: their
+    /// `workflow_step_*` tools act on this run and step.
+    pub workflow_debug_bindings:
+        Arc<dashmap::DashMap<String, crate::agent::workflow_ops::WorkflowDebugBinding>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -267,6 +276,8 @@ pub struct AgentOrchestratorBuilder {
     durable_runs: bool,
     durable_runtime: Option<crate::durable::DurableRuntime>,
     llm_executor_factory: Option<Arc<dyn crate::llm::LlmExecutorFactory>>,
+    workflow_run_hook: Option<Arc<dyn distri_workflow::WorkflowRunHook>>,
+    workflow_pending_calls: Option<Arc<dyn distri_types::PendingCallStore>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -498,6 +509,22 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Tell `hook` when a workflow run pauses (and when a paused step is handed to a person).
+    pub fn with_workflow_run_hook(mut self, hook: Arc<dyn distri_workflow::WorkflowRunHook>) -> Self {
+        self.workflow_run_hook = Some(hook);
+        self
+    }
+
+    /// Keep paused workflow steps' pending calls in `store` (default: the durable runtime's,
+    /// else in memory). A host with several servers gives a shared one.
+    pub fn with_workflow_pending_calls(
+        mut self,
+        store: Arc<dyn distri_types::PendingCallStore>,
+    ) -> Self {
+        self.workflow_pending_calls = Some(store);
+        self
+    }
+
     /// Attach the workflow trigger registry — the routing index from
     /// declared triggers (webhook path / cron / event topic / tool
     /// name) back to `(agent_id, entry_point_id)`. The cloud builds
@@ -566,6 +593,18 @@ impl AgentOrchestratorBuilder {
             ))
         });
 
+        let durable = if self.durable_runs {
+            Some(Arc::new(
+                self.durable_runtime
+                    .unwrap_or_else(crate::durable::DurableRuntime::in_memory),
+            ))
+        } else {
+            None
+        };
+        let workflow_pending_calls: Arc<dyn distri_types::PendingCallStore> = self
+            .workflow_pending_calls
+            .or_else(|| durable.as_ref().map(|d| d.pending_calls.clone()))
+            .unwrap_or_else(|| distri_stores::DurableStores::in_memory().pending_calls);
         let orchestrator = AgentOrchestrator {
             mcp_registry: registry,
             session_filesystem_root: session_filesystem,
@@ -598,15 +637,11 @@ impl AgentOrchestratorBuilder {
                 .agent_memory_store
                 .unwrap_or_else(|| Arc::new(distri_types::InMemoryAgentMemoryStore::default())),
             allow_host_shell: self.allow_host_shell,
-            durable: if self.durable_runs {
-                Some(Arc::new(
-                    self.durable_runtime
-                        .unwrap_or_else(crate::durable::DurableRuntime::in_memory),
-                ))
-            } else {
-                None
-            },
+            durable,
             llm_executor_factory: self.llm_executor_factory,
+            workflow_run_hook: self.workflow_run_hook,
+            workflow_pending_calls,
+            workflow_debug_bindings: Arc::new(dashmap::DashMap::new()),
         };
 
         // Sync system prompts to the store
@@ -1302,6 +1337,26 @@ impl AgentOrchestrator {
                         context.extend_tools(memory_tools).await;
                     }
                     None => crate::agent::agent_memory::set_session(&context, None).await,
+                }
+
+                // An agent attached to a paused workflow step gets the step's tools.
+                if let Some(binding) = self
+                    .workflow_debug_bindings
+                    .get(&context.task_id)
+                    .map(|b| b.clone())
+                {
+                    let have: std::collections::HashSet<String> = context
+                        .get_tools()
+                        .await
+                        .iter()
+                        .map(|t| t.get_name())
+                        .collect();
+                    let debug_tools: Vec<Arc<dyn Tool>> =
+                        crate::agent::workflow_ops::debug_tools(binding.can_set_state)
+                            .into_iter()
+                            .filter(|t| !have.contains(&t.get_name()))
+                            .collect();
+                    context.extend_tools(debug_tools).await;
                 }
 
                 let tools = context.get_tools().await;
@@ -2639,14 +2694,12 @@ impl AgentOrchestrator {
         let result = serde_json::to_value(&tool_response).map_err(|e| e.to_string())?;
         let now = chrono::Utc::now();
         let updated = distri_workflow::WorkflowStepState {
-            step_id: step.step_id.clone(),
             status: distri_types::TaskStatus::Completed,
             result: Some(result),
             error: None,
-            started_at: step.started_at,
             completed_at: Some(now),
-            wait_task_id: step.wait_task_id.clone(),
-            input: step.input.clone(),
+            mark: None,
+            ..step.clone()
         };
         workflow_store
             .upsert_step(run_task_id, updated)
@@ -2695,7 +2748,7 @@ impl AgentOrchestrator {
     /// `register_task` + `spawn_task_relay` + `spawn_background_execution`
     /// pipeline so the rest of the system sees this exactly like an
     /// A2A `message/send` continuation.
-    async fn resume_workflow_run(self: Arc<Self>, run_task_id: String) -> Result<(), String> {
+    pub(crate) async fn resume_workflow_run(self: Arc<Self>, run_task_id: String) -> Result<(), String> {
         let workflow_store = self
             .workflow_store
             .as_ref()

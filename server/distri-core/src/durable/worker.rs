@@ -115,6 +115,16 @@ impl RunWorker {
     /// Expire due pending calls and reap expired leases; wake their tasks.
     pub async fn tick(&self, now: DateTime<Utc>) -> anyhow::Result<TickReport> {
         let expired = self.runtime.pending_calls.expire_due(now).await?;
+        // A paused workflow step's deadline: skip it or fail the run (its pending call is not a
+        // durable task's, so the wake below does nothing for it).
+        if let Some(orch) = self.orchestrator.upgrade() {
+            for call in expired
+                .iter()
+                .filter(|c| c.kind == distri_types::PendingCallKind::WorkflowStep)
+            {
+                orch.on_workflow_pause_expired(call).await;
+            }
+        }
         let reaped = self.runtime.run_queue.reap(now).await?;
         let mut woken: Vec<String> = expired.iter().map(|c| c.task_id.clone()).collect();
         woken.extend(reaped.iter().cloned());
