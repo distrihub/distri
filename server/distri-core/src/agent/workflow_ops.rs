@@ -101,6 +101,38 @@ fn outcome_of_call(call: &PendingCall, run_task_id: &str) -> StepOpOutcome {
     }
 }
 
+/// A person's answer as the step's output: an object keeps its fields and gains `by`; anything
+/// else becomes `{answer, by}`. With an input schema, the answer (`answer`, else the whole
+/// output) must match it.
+pub fn person_answer(
+    output: serde_json::Value,
+    actor: &str,
+    input_schema: Option<&serde_json::Value>,
+) -> Result<serde_json::Value, StepOpError> {
+    let mut obj = match output {
+        serde_json::Value::Object(o) if o.contains_key("answer") => o,
+        other => {
+            let mut o = serde_json::Map::new();
+            o.insert("answer".into(), other);
+            o
+        }
+    };
+    if let Some(schema) = input_schema.filter(|s| !s.is_null()) {
+        let answer = obj.get("answer").cloned().unwrap_or_default();
+        let validator = jsonschema::validator_for(schema)
+            .map_err(|e| StepOpError::Invalid(format!("the step's input_schema: {e}")))?;
+        let errors: Vec<String> = validator.iter_errors(&answer).map(|e| e.to_string()).collect();
+        if !errors.is_empty() {
+            return Err(StepOpError::Invalid(format!(
+                "the answer does not match the step's input_schema: {}",
+                errors.join("; ")
+            )));
+        }
+    }
+    obj.insert("by".into(), json!(actor));
+    Ok(serde_json::Value::Object(obj))
+}
+
 /// A small view of a step row for `step_op` events (`before` / `after`).
 fn row_summary(row: &WorkflowStepState) -> serde_json::Value {
     json!({
@@ -309,6 +341,8 @@ impl AgentOrchestrator {
                 row.error = None;
                 row.started_at = None;
                 row.completed_at = None;
+                row.items = None;
+                row.script_calls = vec![];
             }
             "resume" => {
                 row.status = TaskStatus::Pending;
@@ -384,13 +418,28 @@ impl AgentOrchestrator {
         };
         match op {
             StepOp::Complete => {
-                outcome.output =
-                    Some(req.output.clone().ok_or_else(|| {
-                        StepOpError::Invalid("complete needs an `output`".into())
-                    })?);
+                let output = req.output.clone().ok_or_else(|| {
+                    StepOpError::Invalid("complete needs an `output`".into())
+                })?;
+                // A person's answer: `{answer, by}`, checked against the step's input schema.
+                let person_pause = state
+                    .paused
+                    .as_ref()
+                    .is_some_and(|p| p.step_id == step_id && p.reason == PauseReason::Person);
+                outcome.output = Some(match (&step.kind, person_pause) {
+                    (distri_workflow::StepKind::Person { input_schema, .. }, true) => {
+                        person_answer(output, actor, input_schema.as_ref())?
+                    }
+                    _ => output,
+                });
             }
             StepOp::Rerun => {
-                if !req.force && !step.is_replay_safe() {
+                let calls = rows
+                    .iter()
+                    .find(|r| r.step_id == step_id)
+                    .map(|r| r.script_calls.as_slice())
+                    .unwrap_or(&[]);
+                if !req.force && !step.is_replay_safe_after(calls) {
                     return Err(StepOpError::NotReplaySafe(step_id.to_string()));
                 }
                 outcome.input = req.input.clone();
@@ -547,7 +596,7 @@ impl AgentOrchestrator {
             }
             RunOp::Resume => {
                 let pause = state.paused.clone().ok_or(StepOpError::NotPaused)?;
-                if pause.reason == PauseReason::Failed {
+                if matches!(pause.reason, PauseReason::Failed | PauseReason::Person) {
                     return Err(StepOpError::StepUnresolved);
                 }
                 let outcome = outcome_for(&pause.step_id, "resume", req.note.clone());

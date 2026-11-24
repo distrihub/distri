@@ -26,8 +26,8 @@ use crate::types::AgentEventType;
 use chrono::Utc;
 use distri_types::TaskStatus;
 use distri_workflow::{
-    resolve, OnFailure, PauseInfo, PauseReason, StepExecution, StepKind, StepMark, StepRequirement,
-    StepResult, WorkflowRun, WorkflowStep, WorkflowStepState, WorkflowStore,
+    resolve, ForEachItem, OnFailure, PauseInfo, PauseReason, StepExecution, StepKind, StepMark,
+    StepRequirement, StepResult, WorkflowRun, WorkflowStep, WorkflowStepState, WorkflowStore,
 };
 use std::sync::Arc;
 
@@ -44,6 +44,12 @@ async fn build_step_context(
         .step_run_by_id(&step.id)
         .and_then(|sr| sr.input_override.clone());
     let mut ctx = step_input_context(step, &run.context, override_input.as_ref());
+    add_env(&mut ctx, context).await;
+    ctx
+}
+
+/// Add the `env` namespace (connection tokens) to a step's context.
+async fn add_env(ctx: &mut serde_json::Value, context: &Arc<ExecutorContext>) {
     let env_vars = context.env_vars.read().await;
     if !env_vars.is_empty() {
         if let Some(obj) = ctx.as_object_mut() {
@@ -54,7 +60,71 @@ async fn build_step_context(
             obj.insert("env".to_string(), serde_json::Value::Object(env_obj));
         }
     }
+}
+
+/// The run context with a `for_each` item in scope: `{item}` (and its `as` name) and `{index}`.
+fn with_item(
+    run_context: &serde_json::Value,
+    as_name: &str,
+    item: &serde_json::Value,
+    index: usize,
+) -> serde_json::Value {
+    let mut ctx = run_context.clone();
+    if !ctx.is_object() {
+        ctx = serde_json::json!({});
+    }
+    add_item(&mut ctx, as_name, item, index);
     ctx
+}
+
+fn add_item(ctx: &mut serde_json::Value, as_name: &str, item: &serde_json::Value, index: usize) {
+    let Some(obj) = ctx.as_object_mut() else {
+        return;
+    };
+    obj.insert("item".into(), item.clone());
+    obj.insert("index".into(), serde_json::json!(index));
+    if as_name != "item" {
+        let locals = obj
+            .entry(resolve::LOCALS_KEY)
+            .or_insert_with(|| serde_json::json!({}));
+        if let Some(l) = locals.as_object_mut() {
+            l.insert(as_name.to_string(), item.clone());
+        }
+    }
+}
+
+/// The elements a `for_each` runs over: the expression resolved against the run context (an
+/// array, or a JSON string holding one).
+pub(crate) fn for_each_items(
+    expr: &str,
+    run_context: &serde_json::Value,
+) -> Result<Vec<serde_json::Value>, String> {
+    let v = resolve::resolve_value(&serde_json::Value::String(expr.to_string()), run_context);
+    let v = match v {
+        serde_json::Value::String(s) => match serde_json::from_str::<serde_json::Value>(&s) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                return Err(format!(
+                    "for_each: `{expr}` did not resolve to a list (got the text {:?})",
+                    s.chars().take(80).collect::<String>()
+                ))
+            }
+        },
+        other => other,
+    };
+    match v {
+        serde_json::Value::Array(items) => Ok(items),
+        serde_json::Value::Null => Err(format!("for_each: `{expr}` is empty (null)")),
+        other => Err(format!(
+            "for_each: `{expr}` is not a list (it is {})",
+            match other {
+                serde_json::Value::Object(_) => "an object",
+                serde_json::Value::Bool(_) => "a boolean",
+                serde_json::Value::Number(_) => "a number",
+                _ => "text",
+            }
+        )),
+    }
 }
 
 /// The context a step's templates resolve against: its `input` mapping resolved over the run
@@ -210,6 +280,8 @@ pub(crate) fn row_of(run: &WorkflowRun, idx: usize) -> WorkflowStepState {
         child_task_id: sr.child_task_id.clone(),
         input_override: sr.input_override.clone(),
         released: sr.released,
+        items: sr.items.clone(),
+        script_calls: sr.script_calls.clone(),
     }
 }
 
@@ -233,6 +305,10 @@ async fn commit_step(
 ) -> Committed {
     let step_id = run.definition.steps[idx].id.clone();
     let now = Utc::now();
+
+    if !result.script_calls.is_empty() {
+        run.step_runs[idx].script_calls = result.script_calls.clone();
+    }
 
     // `on_failure: pause`: the run parks at this step (when the host can park it); the
     // caller writes the pause.
@@ -274,6 +350,7 @@ async fn commit_step(
             result: Some(serde_json::Value::Object(obj)),
             error: Some(error),
             context_updates: result.context_updates,
+            script_calls: result.script_calls,
         };
     }
 
@@ -283,8 +360,12 @@ async fn commit_step(
         TaskStatus::Completed
     };
     // A step that finished with `ok: false` in its output shows as `completed_with_error`.
+    let item_failed = run.step_runs[idx]
+        .items
+        .as_ref()
+        .is_some_and(|items| items.iter().any(|i| i.status == "failed"));
     let mark = if new_status == TaskStatus::Completed
-        && distri_workflow::output_reports_error(result.result.as_ref())
+        && (distri_workflow::output_reports_error(result.result.as_ref()) || item_failed)
     {
         Some(StepMark::CompletedWithError)
     } else {
@@ -428,15 +509,50 @@ async fn park_at(
     reason: PauseReason,
     error: Option<String>,
 ) -> Result<TaskStatus, String> {
+    park_at_with(
+        run,
+        context,
+        workflow_store,
+        run_task_id,
+        idx,
+        reason,
+        error,
+        ParkExtra::default(),
+    )
+    .await
+}
+
+/// What a person pause adds to a park.
+#[derive(Default)]
+struct ParkExtra {
+    /// `{text, to, buttons, input_schema}`.
+    ask: Option<serde_json::Value>,
+    /// Overrides the workflow's `pause_deadline.after_secs`.
+    deadline_secs: Option<u64>,
+    attached: Option<distri_types::workflow_ops::AttachTarget>,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn park_at_with(
+    run: &mut WorkflowRun,
+    context: &Arc<ExecutorContext>,
+    workflow_store: &Option<Arc<dyn WorkflowStore>>,
+    run_task_id: &str,
+    idx: usize,
+    reason: PauseReason,
+    error: Option<String>,
+    extra: ParkExtra,
+) -> Result<TaskStatus, String> {
     let (Some(store), Some(orch)) = (workflow_store.as_ref(), context.orchestrator.as_ref()) else {
         return Err("this run cannot pause: no workflow store".into());
     };
     let step_id = run.definition.steps[idx].id.clone();
     let now = Utc::now();
-    let deadline = run
-        .definition
-        .pause_deadline
-        .map(|d| now + chrono::Duration::seconds(d.after_secs.min(i64::MAX as u64) as i64));
+    let after_secs = extra
+        .deadline_secs
+        .or(run.definition.pause_deadline.map(|d| d.after_secs));
+    let deadline =
+        after_secs.map(|s| now + chrono::Duration::seconds(s.min(i64::MAX as u64) as i64));
     let pending_call_id = uuid::Uuid::new_v4().to_string();
     let attempt = run.step_runs[idx].attempt;
     orch.workflow_pending_calls
@@ -452,6 +568,7 @@ async fn park_at(
                 "reason": reason.as_str(),
                 "error": error,
                 "attempt": attempt,
+                "ask": extra.ask,
             }),
             deadline,
         })
@@ -484,9 +601,10 @@ async fn park_at(
         pending_call_id: pending_call_id.clone(),
         at: now,
         deadline,
-        attached: None,
+        attached: extra.attached,
         debug_task_id: None,
         debug_thread_id: None,
+        ask: extra.ask,
     };
     // Kept context first (the run resumes from it), then the pause.
     let _ = store
@@ -562,12 +680,216 @@ fn start_step(run: &mut WorkflowRun, idx: usize) {
     sr.mark = None;
     sr.error = None;
     sr.result = None;
+    sr.items = None;
+    sr.script_calls = vec![];
     if sr.attempt == 0 {
         sr.attempt = 1;
     }
-    if matches!(step.kind, StepKind::AgentRun { .. }) {
+    if step.for_each.is_none()
+        && matches!(step.kind, StepKind::AgentRun { .. } | StepKind::Llm { .. })
+    {
         sr.child_task_id = Some(uuid::Uuid::new_v4().to_string());
     }
+}
+
+/// Run step `idx` (started): once, or once per item of its `for_each`.
+async fn execute_started(
+    run: &mut WorkflowRun,
+    idx: usize,
+    step: &WorkflowStep,
+    context: &Arc<ExecutorContext>,
+    workflow_store: &Option<Arc<dyn WorkflowStore>>,
+    run_task_id: &str,
+) -> StepResult {
+    if step.for_each.is_some() {
+        return run_for_each(run, idx, step, context, workflow_store, run_task_id).await;
+    }
+    let step_context = build_step_context(step, run, context).await;
+    crate::agent::workflow_step_exec::execute_step_as(
+        step,
+        &step_context,
+        context.clone(),
+        run.step_runs[idx].child_task_id.clone(),
+    )
+    .await
+    .unwrap_or_else(|e| StepResult::failed(&e))
+}
+
+fn item_state(index: usize) -> ForEachItem {
+    ForEachItem {
+        index,
+        status: "pending".into(),
+        result: None,
+        error: None,
+        child_task_id: None,
+    }
+}
+
+/// A `for_each` step: the step's kind once per item, `concurrency` at a time, in order. The
+/// result is the array of per-item results. A failing item follows the step's `on_failure`:
+/// `continue` keeps `{ok: false, error}` in its slot; `pause` and `fail` stop at it (the step
+/// fails with `item <k>: …`, which parks the run under `pause`). The items' progress is kept on
+/// the step row.
+async fn run_for_each(
+    run: &mut WorkflowRun,
+    idx: usize,
+    step: &WorkflowStep,
+    context: &Arc<ExecutorContext>,
+    workflow_store: &Option<Arc<dyn WorkflowStore>>,
+    run_task_id: &str,
+) -> StepResult {
+    let Some(fe) = step.for_each.clone() else {
+        return StepResult::failed("not a for_each step");
+    };
+    if let Some(kind) = step.for_each_refused() {
+        return StepResult::failed(&format!("for_each is not supported on {kind} steps"));
+    }
+    let items = match for_each_items(fe.items_expr(), &run.context) {
+        Ok(items) => items,
+        Err(e) => return StepResult::failed(&e),
+    };
+    if items.len() > fe.max() {
+        return StepResult::failed(&format!(
+            "for_each: {} items is more than its max of {}",
+            items.len(),
+            fe.max()
+        ));
+    }
+    let n = items.len();
+    let as_name = fe.as_name().to_string();
+    let override_input = run.step_runs[idx].input_override.clone();
+    let mut states: Vec<ForEachItem> = (0..n).map(item_state).collect();
+    let mut slots = vec![serde_json::Value::Null; n];
+    let mut calls = Vec::new();
+    run.step_runs[idx].items = Some(states.clone());
+    upsert_step_state(workflow_store, run_task_id, row_of(run, idx)).await;
+
+    let needs_child = matches!(step.kind, StepKind::AgentRun { .. } | StepKind::Llm { .. });
+    let mut start = 0;
+    while start < n {
+        let end = (start + fe.concurrency()).min(n);
+        let mut contexts = Vec::with_capacity(end - start);
+        let mut children = Vec::with_capacity(end - start);
+        for k in start..end {
+            let item_run_ctx = with_item(&run.context, &as_name, &items[k], k);
+            let mut ctx = step_input_context(step, &item_run_ctx, override_input.as_ref());
+            // `{item}` and `{index}` resolve in the kind's templates also when the step maps
+            // its input.
+            add_item(&mut ctx, &as_name, &items[k], k);
+            add_env(&mut ctx, context).await;
+            contexts.push(ctx);
+            let child = needs_child.then(|| uuid::Uuid::new_v4().to_string());
+            states[k].status = "running".into();
+            states[k].child_task_id = child.clone();
+            children.push(child);
+        }
+        run.step_runs[idx].items = Some(states.clone());
+        upsert_step_state(workflow_store, run_task_id, row_of(run, idx)).await;
+
+        let results = futures::future::join_all(contexts.iter().zip(children).map(|(ctx, child)| {
+            crate::agent::workflow_step_exec::execute_step_as(step, ctx, context.clone(), child)
+        }))
+        .await;
+
+        let mut stop: Option<(usize, String)> = None;
+        for (k, r) in (start..end).zip(results) {
+            let r = r.unwrap_or_else(|e| StepResult::failed(&e));
+            calls.extend(r.script_calls.iter().cloned());
+            if r.status == TaskStatus::Failed {
+                let error = r.error.clone().unwrap_or_else(|| "failed".to_string());
+                states[k].error = Some(error.clone());
+                match step.on_failure {
+                    OnFailure::Continue => {
+                        let mut obj = r
+                            .result
+                            .and_then(|v| v.as_object().cloned())
+                            .unwrap_or_default();
+                        obj.insert("ok".into(), serde_json::Value::Bool(false));
+                        obj.insert("error".into(), serde_json::Value::String(error));
+                        let slot = serde_json::Value::Object(obj);
+                        states[k].status = "failed".into();
+                        states[k].result = Some(slot.clone());
+                        slots[k] = slot;
+                    }
+                    OnFailure::Pause if can_pause(context, workflow_store) => {
+                        states[k].status = "paused".into();
+                        stop = stop.or(Some((k, error)));
+                    }
+                    _ => {
+                        states[k].status = "failed".into();
+                        stop = stop.or(Some((k, error)));
+                    }
+                }
+            } else {
+                let value = r.result.unwrap_or(serde_json::Value::Null);
+                states[k].status = "completed".into();
+                states[k].result = Some(value.clone());
+                slots[k] = value;
+            }
+        }
+        run.step_runs[idx].items = Some(states.clone());
+        upsert_step_state(workflow_store, run_task_id, row_of(run, idx)).await;
+        if let Some((k, error)) = stop {
+            let mut failed = StepResult::failed(&format!("item {k}: {error}"));
+            failed.script_calls = calls;
+            return failed;
+        }
+        start = end;
+    }
+    let mut done = StepResult::done(serde_json::Value::Array(slots));
+    done.script_calls = calls;
+    done
+}
+
+/// Park the run at the person step `idx` (started): the question goes to the host's hook.
+async fn ask_person(
+    run: &mut WorkflowRun,
+    context: &Arc<ExecutorContext>,
+    workflow_store: &Option<Arc<dyn WorkflowStore>>,
+    run_task_id: &str,
+    idx: usize,
+) -> Result<TaskStatus, String> {
+    let step = run.definition.steps[idx].clone();
+    let StepKind::Person {
+        to, deadline_secs, ..
+    } = &step.kind
+    else {
+        return Err("not a person step".into());
+    };
+    let input = run.step_runs[idx].input.clone().unwrap_or_default();
+    let to_text = input
+        .get("to")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| to.clone())
+        .unwrap_or_else(|| "owner".to_string());
+    let attached = match to_text.trim().strip_prefix("user:") {
+        Some(user) if !user.trim().is_empty() => distri_types::workflow_ops::AttachTarget::User {
+            user: user.trim().to_string(),
+        },
+        _ => distri_types::workflow_ops::AttachTarget::Owner { owner: true },
+    };
+    let ask = serde_json::json!({
+        "text": input.get("ask").cloned().unwrap_or_default(),
+        "to": to_text,
+        "buttons": input.get("buttons").cloned().unwrap_or(serde_json::json!([])),
+        "input_schema": input.get("input_schema").cloned().unwrap_or_default(),
+    });
+    park_at_with(
+        run,
+        context,
+        workflow_store,
+        run_task_id,
+        idx,
+        PauseReason::Person,
+        None,
+        ParkExtra {
+            ask: Some(ask),
+            deadline_secs: *deadline_secs,
+            attached: Some(attached),
+        },
+    )
+    .await
 }
 
 /// Drive a `WorkflowRun` to its next terminal or parked state.
@@ -694,6 +1016,43 @@ where
             }
         }
 
+        // A person step parks the run until someone answers (a pause with reason `person`).
+        if let Some((idx, step_id, _, step)) = executable
+            .iter()
+            .find(|(_, _, _, s)| matches!(s.kind, StepKind::Person { .. }))
+            .cloned()
+        {
+            start_step(run, idx);
+            run.status = TaskStatus::Running;
+            run.current_step = idx;
+            upsert_step_state(workflow_store, run_task_id, row_of(run, idx)).await;
+            emit_step_started(context, &step_id, idx).await;
+            let refusal = if step.for_each.is_some() {
+                Some("for_each is not supported on person steps".to_string())
+            } else if !can_pause(context, workflow_store) {
+                Some("person steps need a run store to wait for the answer".to_string())
+            } else {
+                None
+            };
+            if let Some(error) = refusal {
+                commit_step(
+                    run,
+                    workflow_store,
+                    run_task_id,
+                    context,
+                    idx,
+                    StepResult::failed(&error),
+                )
+                .await;
+                if run.has_failed() {
+                    run.status = TaskStatus::Failed;
+                    return Ok(TaskStatus::Failed);
+                }
+                continue;
+            }
+            return ask_person(run, context, workflow_store, run_task_id, idx).await;
+        }
+
         // Wait-style steps park the run. Pick the first one (parallel
         // execution of wait steps would race the parking semantics).
         let (wait_steps, non_wait): (Vec<_>, Vec<_>) = executable
@@ -749,15 +1108,8 @@ where
                 run.status = TaskStatus::Running;
                 upsert_step_state(workflow_store, run_task_id, row_of(run, *idx)).await;
                 emit_step_started(context, step_id, *idx).await;
-                let step_context = build_step_context(step, run, context).await;
-                let result = crate::agent::workflow_step_exec::execute_step_as(
-                    step,
-                    &step_context,
-                    context.clone(),
-                    run.step_runs[*idx].child_task_id.clone(),
-                )
-                .await;
-                let resolved = result.unwrap_or_else(|e| StepResult::failed(&e));
+                let resolved =
+                    execute_started(run, *idx, step, context, workflow_store, run_task_id).await;
                 if let Committed::Pause(error) =
                     commit_step(run, workflow_store, run_task_id, context, *idx, resolved).await
                 {
@@ -783,15 +1135,8 @@ where
             run.current_step = idx;
             upsert_step_state(workflow_store, run_task_id, row_of(run, idx)).await;
             emit_step_started(context, &step_id, idx).await;
-            let step_context = build_step_context(&step, run, context).await;
-            let result = crate::agent::workflow_step_exec::execute_step_as(
-                &step,
-                &step_context,
-                context.clone(),
-                run.step_runs[idx].child_task_id.clone(),
-            )
-            .await;
-            let resolved = result.unwrap_or_else(|e| StepResult::failed(&e));
+            let resolved =
+                execute_started(run, idx, &step, context, workflow_store, run_task_id).await;
             if let Committed::Pause(error) =
                 commit_step(run, workflow_store, run_task_id, context, idx, resolved).await
             {

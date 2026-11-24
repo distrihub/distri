@@ -339,6 +339,8 @@ pub(crate) fn hydrate_run(
         sr.child_task_id = saved.child_task_id.clone();
         sr.input_override = saved.input_override.clone();
         sr.released = saved.released;
+        sr.items = saved.items.clone();
+        sr.script_calls = saved.script_calls.clone();
 
         let steps = run
             .context
