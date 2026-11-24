@@ -237,6 +237,8 @@ pub async fn discover_for_mcp_url(mcp_url: &str) -> Result<OAuthProviderConfig, 
         icon_url: None,
         client_id_param: None,
         scope_separator: None,
+        token_auth_method: None,
+        long_lived_token_url: None,
     })
 }
 

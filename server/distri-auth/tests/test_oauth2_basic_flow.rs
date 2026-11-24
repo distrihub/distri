@@ -15,8 +15,9 @@ use std::collections::HashMap;
 use distri_auth::providers::OAuth2Provider;
 use distri_types::auth::{AuthProvider, AuthType, OAuth2FlowType};
 use distri_types::connections::OAuthProviderConfig;
+use distri_types::connections::TokenAuthMethod;
 use serde_json::json;
-use wiremock::matchers::{body_string_contains, method, path};
+use wiremock::matchers::{body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn cfg(server_uri: &str) -> OAuthProviderConfig {
@@ -37,6 +38,8 @@ fn cfg(server_uri: &str) -> OAuthProviderConfig {
         icon_url: None,
         client_id_param: None,
         scope_separator: None,
+        token_auth_method: None,
+        long_lived_token_url: None,
     }
 }
 
@@ -166,4 +169,202 @@ async fn refresh_token_carries_over_original_refresh_when_omitted() {
         Some("old-refresh"),
         "expected the original refresh token to carry over when the server doesn't rotate"
     );
+}
+
+// ── token_auth_method ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn exchange_code_sends_client_credentials_as_basic_by_default() {
+    let server = MockServer::start().await;
+    // base64("cid:csec")
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .and(header("Authorization", "Basic Y2lkOmNzZWM="))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "tok-basic",
+            "token_type": "bearer",
+            "expires_in": 3600,
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = OAuth2Provider::new(
+        cfg(&server.uri()),
+        "cid".into(),
+        "csec".into(),
+        "https://distri.test/cb".into(),
+    );
+    let at = auth_type(&provider.config);
+    let session = provider
+        .exchange_code("the-code", None, &at, None)
+        .await
+        .expect("exchange_code with Basic");
+    assert_eq!(session.access_token, "tok-basic");
+}
+
+#[tokio::test]
+async fn exchange_code_sends_client_credentials_in_the_body_when_asked() {
+    let server = MockServer::start().await;
+    // LinkedIn and Meta: the secret must be a form field; a Basic header
+    // alone is refused. The mock answers only when the body carries both.
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .and(body_string_contains("client_id=cid"))
+        .and(body_string_contains("client_secret=csec"))
+        .and(body_string_contains("grant_type=authorization_code"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "tok-body",
+            "token_type": "bearer",
+            "expires_in": 5184000,
+            "scope": "w_member_social",
+        })))
+        .mount(&server)
+        .await;
+
+    let mut config = cfg(&server.uri());
+    config.token_auth_method = Some(TokenAuthMethod::Body);
+    let provider = OAuth2Provider::new(
+        config,
+        "cid".into(),
+        "csec".into(),
+        "https://distri.test/cb".into(),
+    );
+    let at = auth_type(&provider.config);
+    let session = provider
+        .exchange_code("the-code", None, &at, None)
+        .await
+        .expect("exchange_code with body credentials");
+    assert_eq!(session.access_token, "tok-body");
+    assert_eq!(session.scopes, vec!["w_member_social".to_string()]);
+
+    // The same provider with the default (Basic) does not satisfy the mock.
+    let basic = OAuth2Provider::new(
+        cfg(&server.uri()),
+        "cid".into(),
+        "csec".into(),
+        "https://distri.test/cb".into(),
+    );
+    assert!(
+        basic
+            .exchange_code("the-code", None, &at, None)
+            .await
+            .is_err(),
+        "Basic auth must not put the secret in the body"
+    );
+}
+
+// ── long_lived_token_url (Meta's fb_exchange_token) ─────────────────
+
+fn meta_cfg(server_uri: &str) -> OAuthProviderConfig {
+    let mut config = cfg(server_uri);
+    config.token_auth_method = Some(TokenAuthMethod::Body);
+    config.long_lived_token_url = Some(format!("{server_uri}/oauth/access_token"));
+    config
+}
+
+async fn mount_short_lived_exchange(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .and(body_string_contains("grant_type=authorization_code"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "tok-short",
+            "token_type": "bearer",
+            "expires_in": 5183,
+        })))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn exchange_code_swaps_for_a_long_lived_token_when_configured() {
+    let server = MockServer::start().await;
+    mount_short_lived_exchange(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/oauth/access_token"))
+        .and(query_param("grant_type", "fb_exchange_token"))
+        .and(query_param("client_id", "cid"))
+        .and(query_param("client_secret", "csec"))
+        .and(query_param("fb_exchange_token", "tok-short"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "tok-long",
+            "token_type": "bearer",
+            "expires_in": 5184000,
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = OAuth2Provider::new(
+        meta_cfg(&server.uri()),
+        "cid".into(),
+        "csec".into(),
+        "https://distri.test/cb".into(),
+    );
+    let at = auth_type(&provider.config);
+    let session = provider
+        .exchange_code("the-code", None, &at, None)
+        .await
+        .expect("exchange_code with long-lived swap");
+    assert_eq!(session.access_token, "tok-long");
+    let expires_at = session.expires_at.expect("long-lived expiry");
+    let in_50_days = chrono::Utc::now() + chrono::Duration::days(50);
+    assert!(
+        expires_at > in_50_days,
+        "expected the long-lived expiry, got {expires_at}"
+    );
+    // The requested scopes still fill in when neither answer lists any.
+    assert_eq!(session.scopes, vec!["read".to_string()]);
+}
+
+#[tokio::test]
+async fn long_lived_swap_refusal_is_an_error_with_metas_message() {
+    let server = MockServer::start().await;
+    mount_short_lived_exchange(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/oauth/access_token"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": {
+                "message": "Error validating client secret.",
+                "type": "OAuthException",
+                "code": 1
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = OAuth2Provider::new(
+        meta_cfg(&server.uri()),
+        "cid".into(),
+        "csec".into(),
+        "https://distri.test/cb".into(),
+    );
+    let at = auth_type(&provider.config);
+    let err = provider
+        .exchange_code("the-code", None, &at, None)
+        .await
+        .expect_err("a refused swap must not keep the short-lived token");
+    let text = err.to_string();
+    assert!(
+        text.contains("Error validating client secret."),
+        "expected Meta's message in the error, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn no_long_lived_url_keeps_the_exchanged_token() {
+    let server = MockServer::start().await;
+    mount_short_lived_exchange(&server).await;
+    let mut config = cfg(&server.uri());
+    config.token_auth_method = Some(TokenAuthMethod::Body);
+    let provider = OAuth2Provider::new(
+        config,
+        "cid".into(),
+        "csec".into(),
+        "https://distri.test/cb".into(),
+    );
+    let at = auth_type(&provider.config);
+    let session = provider
+        .exchange_code("the-code", None, &at, None)
+        .await
+        .expect("exchange_code");
+    assert_eq!(session.access_token, "tok-short");
 }

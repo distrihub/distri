@@ -19,7 +19,7 @@ use oauth2::{
 };
 
 use distri_types::auth::{AuthError, AuthProvider, AuthSession, AuthType};
-use distri_types::connections::OAuthProviderConfig;
+use distri_types::connections::{OAuthProviderConfig, TokenAuthMethod};
 
 /// Aliases for the fully-configured `BasicClient` after we set auth/token
 /// URLs and redirect URI. Required because `oauth2::Client`'s endpoint
@@ -78,6 +78,12 @@ impl OAuth2Provider {
                 RedirectUrl::new(self.redirect_uri.clone())
                     .map_err(|e| AuthError::InvalidConfig(format!("redirect_uri: {e}")))?,
             );
+        // RFC 6749 §2.3.1 Basic is the crate's default; LinkedIn and Meta
+        // take the client credentials only as form fields.
+        let client = match self.config.token_auth_method {
+            Some(TokenAuthMethod::Body) => client.set_auth_type(oauth2::AuthType::RequestBody),
+            _ => client,
+        };
         Ok(client)
     }
 
@@ -127,7 +133,10 @@ impl OAuth2Provider {
         {
             let mut q = url.query_pairs_mut();
             q.append_pair("response_type", "code");
-            q.append_pair(self.client_id_param().unwrap_or("client_id"), &self.client_id);
+            q.append_pair(
+                self.client_id_param().unwrap_or("client_id"),
+                &self.client_id,
+            );
             q.append_pair("redirect_uri", &self.redirect_uri);
             q.append_pair("state", state);
             if !scopes.is_empty() {
@@ -193,6 +202,72 @@ impl OAuth2Provider {
             scopes,
         ))
     }
+
+    /// Swap the short-lived token the code exchange returned for a
+    /// long-lived one when the provider has such an endpoint (Meta's
+    /// `fb_exchange_token`: 60 days instead of an hour). Only the access
+    /// token and its expiry change; the refresh token and scopes stay.
+    async fn exchange_long_lived(&self, session: AuthSession) -> Result<AuthSession, AuthError> {
+        let Some(url) = self
+            .config
+            .long_lived_token_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+        else {
+            return Ok(session);
+        };
+        let failure = |why: String| AuthError::OAuth2Flow(format!("long-lived token: {why}"));
+        let response = self
+            .http_client
+            .get(url)
+            .query(&[
+                ("grant_type", "fb_exchange_token"),
+                ("client_id", self.client_id.as_str()),
+                ("client_secret", self.client_secret.as_str()),
+                ("fb_exchange_token", session.access_token.as_str()),
+            ])
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| failure(format!("request: {e}")))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| failure(format!("response: {e}")))?;
+        let token: LongLivedTokenResponse = serde_json::from_str(&body)
+            .map_err(|e| failure(format!("response ({status}): {e}")))?;
+        let Some(access_token) = token.access_token.filter(|t| !t.is_empty()) else {
+            let why = token
+                .error
+                .map(|e| {
+                    e.get("message")
+                        .and_then(|m| m.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| e.to_string())
+                })
+                .unwrap_or_else(|| format!("HTTP {status}, no access_token"));
+            return Err(failure(why));
+        };
+        Ok(AuthSession::new(
+            access_token,
+            token.token_type.or(Some(session.token_type)),
+            token.expires_in,
+            session.refresh_token,
+            session.scopes,
+        ))
+    }
+}
+
+/// Meta's long-lived token answer: `access_token`, `token_type`,
+/// `expires_in`; a refusal is `{"error": {"message": …, "code": …}}`.
+#[derive(Debug, serde::Deserialize)]
+struct LongLivedTokenResponse {
+    access_token: Option<String>,
+    token_type: Option<String>,
+    expires_in: Option<i64>,
+    error: Option<serde_json::Value>,
 }
 
 /// The token endpoint's JSON for the hand-built flow (RFC 6749 §5.1 and
@@ -253,7 +328,7 @@ impl AuthProvider for OAuth2Provider {
                     session.scopes = scopes.clone();
                 }
             }
-            return Ok(session);
+            return self.exchange_long_lived(session).await;
         }
         let client = self.build_basic_client()?;
         let mut req = client.exchange_code(AuthorizationCode::new(code.to_string()));
@@ -273,7 +348,7 @@ impl AuthProvider for OAuth2Provider {
                 session.scopes = scopes.clone();
             }
         }
-        Ok(session)
+        self.exchange_long_lived(session).await
     }
 
     async fn refresh_token(
@@ -465,11 +540,18 @@ mod custom_flow_tests {
             icon_url: None,
             client_id_param: client_id_param.map(str::to_string),
             scope_separator: scope_separator.map(str::to_string),
+            token_auth_method: None,
+            long_lived_token_url: None,
         }
     }
 
     fn provider(cfg: OAuthProviderConfig) -> OAuth2Provider {
-        OAuth2Provider::new(cfg, "key123".into(), "secret".into(), "https://app/cb".into())
+        OAuth2Provider::new(
+            cfg,
+            "key123".into(),
+            "secret".into(),
+            "https://app/cb".into(),
+        )
     }
 
     fn auth_type() -> AuthType {
@@ -497,9 +579,15 @@ mod custom_flow_tests {
         let q: HashMap<String, String> = parsed.query_pairs().into_owned().collect();
         assert_eq!(q.get("client_key").map(String::as_str), Some("key123"));
         assert!(!q.contains_key("client_id"), "{url}");
-        assert_eq!(q.get("scope").map(String::as_str), Some("user.info.basic,video.publish"));
+        assert_eq!(
+            q.get("scope").map(String::as_str),
+            Some("user.info.basic,video.publish")
+        );
         assert_eq!(q.get("response_type").map(String::as_str), Some("code"));
-        assert_eq!(q.get("redirect_uri").map(String::as_str), Some("https://app/cb"));
+        assert_eq!(
+            q.get("redirect_uri").map(String::as_str),
+            Some("https://app/cb")
+        );
         assert_eq!(q.get("state").map(String::as_str), Some("st4te"));
         assert_eq!(q.get("prompt").map(String::as_str), Some("consent"));
     }

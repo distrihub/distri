@@ -27,7 +27,9 @@ use crate::providers::OAuth2Provider;
 use distri_types::auth::{
     AuthProvider, AuthType, OAuth2FlowType, ProviderRegistry as BaseProviderRegistry,
 };
-use distri_types::connections::{CatalogProvider, OAuthProviderConfig, ProviderGroup};
+use distri_types::connections::{
+    CatalogProvider, OAuthProviderConfig, ProviderGroup, TokenAuthMethod,
+};
 
 /// Common OAuth fields shared by both REST and MCP catalog entries.
 /// Lifted to its own struct + composed via newtype variants on
@@ -77,6 +79,12 @@ pub struct ProviderOAuthFields {
     /// See `OAuthProviderConfig::scope_separator` (TikTok: `,`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_separator: Option<String>,
+    /// See `OAuthProviderConfig::token_auth_method` (LinkedIn, Meta: `body`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_auth_method: Option<TokenAuthMethod>,
+    /// See `OAuthProviderConfig::long_lived_token_url` (Meta).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_lived_token_url: Option<String>,
 }
 
 /// Catalog entry as serialized in `additional_providers.json` /
@@ -169,6 +177,8 @@ impl ProviderConfig {
             icon_url: None,
             client_id_param: f.client_id_param.clone(),
             scope_separator: f.scope_separator.clone(),
+            token_auth_method: f.token_auth_method,
+            long_lived_token_url: f.long_lived_token_url.clone(),
         }
     }
 

@@ -190,6 +190,26 @@ pub struct OAuthProviderConfig {
     /// not take the RFC 6749 space (TikTok: `,`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_separator: Option<String>,
+    /// Where the token endpoint reads the client credentials: the HTTP
+    /// Basic header (RFC 6749 §2.3.1, the default) or the form body.
+    /// LinkedIn and Meta take them only in the body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_auth_method: Option<TokenAuthMethod>,
+    /// An endpoint that swaps the short-lived access token the code
+    /// exchange returns for a long-lived one. Called right after the
+    /// exchange with `grant_type=fb_exchange_token` (Meta: 60 days).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_lived_token_url: Option<String>,
+}
+
+/// Where a provider's token endpoint reads the client credentials.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenAuthMethod {
+    /// `Authorization: Basic base64(client_id:client_secret)` (RFC 6749 §2.3.1).
+    Basic,
+    /// `client_id` and `client_secret` as fields of the form body.
+    Body,
 }
 
 /// Directory tile wire shape served by `GET /v1/connections/providers`.

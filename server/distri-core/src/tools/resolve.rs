@@ -204,6 +204,8 @@ mod tests {
                     icon_url: None,
                     client_id_param: None,
                     scope_separator: None,
+                    token_auth_method: None,
+                    long_lived_token_url: None,
                 },
                 scopes: vec![],
             },
