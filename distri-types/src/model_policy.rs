@@ -16,4 +16,15 @@ pub trait ModelPolicy: Send + Sync + 'static {
     /// `model` is `"provider/model"` (for example `azure_openai/gpt-4.1-mini`).
     /// `Err` refuses the run with that user-facing message.
     async fn check_model(&self, workspace_id: Option<&str>, model: &str) -> Result<(), String>;
+
+    /// The workspace's default model, for runs the engine starts by itself (an attached
+    /// workflow debugger, background work) where no request injected one. `None`: the host
+    /// keeps no per-workspace default here, and the engine's own server settings apply.
+    async fn default_model(
+        &self,
+        _workspace_id: &str,
+        _secret_store: Option<&dyn crate::stores::SecretStore>,
+    ) -> Option<crate::ModelSettings> {
+        None
+    }
 }

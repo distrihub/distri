@@ -394,19 +394,22 @@ impl Blueprint {
             }
         }
         if let Some(e) = &self.embed
-            && !agents.contains(&e.agent) && !is_template(&e.agent) {
-                return Err(BlueprintError::Invalid(format!(
-                    "embed.agent '{}' is not one of the blueprint's agents",
-                    e.agent
-                )));
-            }
+            && !agents.contains(&e.agent)
+            && !is_template(&e.agent)
+        {
+            return Err(BlueprintError::Invalid(format!(
+                "embed.agent '{}' is not one of the blueprint's agents",
+                e.agent
+            )));
+        }
         if let Some(t) = &self.test
-            && !workflows.contains(&t.workflow) {
-                return Err(BlueprintError::Invalid(format!(
-                    "test.workflow '{}' is not one of the blueprint's workflows",
-                    t.workflow
-                )));
-            }
+            && !workflows.contains(&t.workflow)
+        {
+            return Err(BlueprintError::Invalid(format!(
+                "test.workflow '{}' is not one of the blueprint's workflows",
+                t.workflow
+            )));
+        }
         Ok(())
     }
 
@@ -483,9 +486,10 @@ impl Blueprint {
             c.agent = sub(&c.agent);
         }
         if let Some(t) = &mut out.test
-            && let Ok(s) = serde_json::to_string(&t.input) {
-                t.input = serde_json::from_str(&sub(&s)).unwrap_or(t.input.clone());
-            }
+            && let Ok(s) = serde_json::to_string(&t.input)
+        {
+            t.input = serde_json::from_str(&sub(&s)).unwrap_or(t.input.clone());
+        }
         out.validate()?;
         Ok(out)
     }
@@ -511,9 +515,9 @@ pub fn render_template(s: &str, values: &BTreeMap<String, String>) -> String {
         // Only `{{params.<name>}}` is a placeholder. Any other `{{` (code in an inlined module,
         // a `{{` in prose) is text: keep it and look again right after it, so it cannot swallow
         // the placeholders that follow up to the next `}}`.
-        let is_placeholder = key
-            .strip_prefix("params.")
-            .is_some_and(|k| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+        let is_placeholder = key.strip_prefix("params.").is_some_and(|k| {
+            !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
         if !is_placeholder {
             out.push_str("{{");
             rest = after;
@@ -796,10 +800,7 @@ expect = "a test alert arrives on Telegram"
         );
 
         let mut given = BTreeMap::new();
-        given.insert(
-            "health_url".to_string(),
-            "https://x.dev/health".to_string(),
-        );
+        given.insert("health_url".to_string(), "https://x.dev/health".to_string());
         let r = bp.render(&given).unwrap();
         assert!(r.agents[0].content.ends_with("Watch https://x.dev/health"));
         assert!(r.workflows[0].content.contains("https://x.dev/health"));

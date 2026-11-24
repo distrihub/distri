@@ -2143,6 +2143,18 @@ impl AgentOrchestrator {
         if injected.is_some() {
             return Ok(injected);
         }
+        // A multi-tenant host keeps the default per workspace (its model policy knows it).
+        if let (Some(policy), Some(ws)) = (
+            self.model_policy.as_ref(),
+            distri_auth::context::current_workspace_id(),
+        ) {
+            if let Some(m) = policy
+                .default_model(&ws.to_string(), self.stores.secret_store.as_deref())
+                .await
+            {
+                return Ok(Some(m));
+            }
+        }
         let (Some(provider_store), Some(secret_store)) = (
             self.stores.provider_store.as_ref(),
             self.stores.secret_store.as_ref(),

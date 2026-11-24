@@ -204,15 +204,12 @@ impl std::fmt::Display for StepOpError {
                 f,
                 "the run is paused on a failed step: complete, rerun or skip it"
             ),
-            StepOpError::AlreadyResolved(o) => write!(
-                f,
-                "already resolved: {} by {} at {}",
-                o.op, o.actor, o.at
-            ),
-            StepOpError::NotReplaySafe(s) => write!(
-                f,
-                "step `{s}` has side effects; rerun it with force"
-            ),
+            StepOpError::AlreadyResolved(o) => {
+                write!(f, "already resolved: {} by {} at {}", o.op, o.actor, o.at)
+            }
+            StepOpError::NotReplaySafe(s) => {
+                write!(f, "step `{s}` has side effects; rerun it with force")
+            }
             StepOpError::Invalid(m) => write!(f, "{m}"),
             StepOpError::Internal(m) => write!(f, "{m}"),
         }
