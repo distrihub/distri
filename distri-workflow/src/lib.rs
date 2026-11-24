@@ -26,6 +26,7 @@
 //!   `WorkflowStore` triple.
 
 pub mod resolve;
+pub mod run_hook;
 pub mod trigger_registry;
 pub mod types;
 pub mod workflow_store;
@@ -34,6 +35,7 @@ pub use resolve::{
     build_execution_context, evaluate_expression, evaluate_skip_condition, resolve_step_input,
     resolve_template, resolve_value,
 };
+pub use run_hook::WorkflowRunHook;
 pub use trigger_registry::{
     InMemoryWorkflowTriggerRegistry, TriggerBinding, WorkflowTriggerRegistry,
 };
