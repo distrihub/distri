@@ -932,6 +932,11 @@ pub struct ForEachSpec {
 pub const FOR_EACH_DEFAULT_MAX: usize = 50;
 /// The most items a `for_each` runs at once.
 pub const FOR_EACH_MAX_CONCURRENCY: usize = 10;
+/// The ceiling on a `for_each`'s `max`: a larger `max` is clamped to it.
+pub const FOR_EACH_HARD_MAX: usize = 500;
+/// The most bytes of one item's result a step row keeps in `items` (the step's output keeps
+/// the whole result).
+pub const FOR_EACH_ITEM_RESULT_MAX_BYTES: usize = 2048;
 
 impl ForEach {
     pub fn items_expr(&self) -> &str {
@@ -950,7 +955,7 @@ impl ForEach {
     }
     pub fn max(&self) -> usize {
         match self {
-            ForEach::Spec(ForEachSpec { max: Some(m), .. }) => *m,
+            ForEach::Spec(ForEachSpec { max: Some(m), .. }) => (*m).min(FOR_EACH_HARD_MAX),
             _ => FOR_EACH_DEFAULT_MAX,
         }
     }

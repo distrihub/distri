@@ -827,3 +827,93 @@ async fn without_an_sdk_url_code_steps_get_no_token() {
         .unwrap()
         .contains("no SDK offered"));
 }
+
+// ── security review: caps, memory scope, reserved buttons, item size ────────
+
+#[tokio::test]
+async fn sdk_calls_are_capped_and_scoped() {
+    let h = harness().await;
+    let mut calls: Vec<serde_json::Value> = (0..25)
+        .map(|i| json!({"op": "notify", "text": format!("n{i}")}))
+        .collect();
+    calls.push(json!({"op": "memory_signal", "signal": {"kind": "note", "space": "someone_else", "scope": "user:x"}}));
+    calls.push(json!({"op": "state_set", "patch": {"ok": 1}}));
+    register(
+        &h.orch,
+        "capped",
+        json!({"id": "capped", "steps": [
+            {"id": "c", "label": "Code", "kind": {"type": "code",
+             "source": format!("// sdk calls\n{}", serde_json::Value::Array(calls))}}
+        ]}),
+    )
+    .await;
+    let task = run(&h.orch, "capped", json!({})).await;
+    let row = step(&h, &task, "c").await;
+    let answers = row.result.as_ref().unwrap()["answers"].as_array().unwrap().clone();
+    // 20 notify calls go through; the 21st..25th are refused and not recorded.
+    assert_eq!(h.notes.0.lock().unwrap().len(), 20);
+    assert!(answers[20]["error"].as_str().unwrap().contains("at most 20 `notify` calls"), "{}", answers[20]);
+    // A script's signal cannot name a space or a scope.
+    assert!(answers[25]["error"].as_str().unwrap().contains("`scope` is not allowed")
+        || answers[25]["error"].as_str().unwrap().contains("`space` is not allowed"), "{}", answers[25]);
+    assert_eq!(answers[26]["ok"], true);
+    let notify_records = row.script_calls.iter().filter(|c| c.op == "notify").count();
+    assert_eq!(notify_records, 20);
+    assert_eq!(row.script_calls.len(), 22, "20 notify + the refused signal + state_set");
+}
+
+#[tokio::test]
+async fn sdk_total_cap_and_reserved_button_prefixes() {
+    let h = harness().await;
+    let mut calls: Vec<serde_json::Value> = vec![json!({"op": "notify", "text": "x",
+        "buttons": [[{"kind": "callback", "label": "Go", "callback_data": "wfo:abc"}]]})];
+    calls.extend((0..205).map(|_| json!({"op": "state_get"})));
+    register(
+        &h.orch,
+        "many",
+        json!({"id": "many", "steps": [
+            {"id": "c", "label": "Code", "kind": {"type": "code",
+             "source": format!("// sdk calls\n{}", serde_json::Value::Array(calls))}}
+        ]}),
+    )
+    .await;
+    let task = run(&h.orch, "many", json!({})).await;
+    let row = step(&h, &task, "c").await;
+    let answers = row.result.as_ref().unwrap()["answers"].as_array().unwrap().clone();
+    assert!(answers[0]["error"].as_str().unwrap().contains("reserved prefix wfo:"), "{}", answers[0]);
+    assert!(h.notes.0.lock().unwrap().is_empty());
+    assert_eq!(answers[199]["ok"], true);
+    assert!(answers[200]["error"].as_str().unwrap().contains("at most 200 calls"), "{}", answers[200]);
+    assert_eq!(row.script_calls.len(), 200);
+}
+
+#[tokio::test]
+async fn for_each_items_keep_a_capped_result_and_max_is_clamped() {
+    let h = harness().await;
+    let big = "y".repeat(5000);
+    register(
+        &h.orch,
+        "big",
+        json!({"id": "big", "steps": [
+            {"id": "each", "label": "Each", "for_each": {"in": "{input.items}", "max": 1000000},
+             "kind": {"type": "checkpoint", "message": "{item}"}}
+        ]}),
+    )
+    .await;
+    let task = run(&h.orch, "big", json!({"items": [big.clone(), "small"]})).await;
+    assert_eq!(status(&h.orch, &task).await, TaskStatus::Completed);
+    let row = step(&h, &task, "each").await;
+    // The output keeps the whole result; the row's items keep a preview of the big one.
+    assert_eq!(row.result.as_ref().unwrap()[0]["message"].as_str().unwrap().len(), 5000);
+    let items = row.items.unwrap();
+    assert_eq!(items[0].result.as_ref().unwrap()["truncated"], true);
+    assert_eq!(items[1].result, Some(json!({"message": "small"})));
+
+    let many: Vec<usize> = (0..501).collect();
+    let task = run(&h.orch, "big", json!({"items": many})).await;
+    assert!(step(&h, &task, "each")
+        .await
+        .error
+        .unwrap()
+        .contains("more than its max of 500"));
+}

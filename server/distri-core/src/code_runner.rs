@@ -44,8 +44,13 @@ pub const HARNESS: &[(&str, &str)] = &[
 /// input document.
 pub const SDK_TOKEN_LINE: &str = "__distri_sdk_token__ ";
 
-/// What a run writes to the harness's stdin: the run token line when the step has the script
-/// SDK, then the input document.
+/// The harness's third argument for a step whose SDK calls are relayed by the host (stdio).
+pub const SDK_RELAY: &str = "relay";
+/// The stderr line prefix of a relayed SDK call (`__distri_sdk_call__ {"id", "call"}`).
+pub const SDK_CALL_LINE: &str = "__distri_sdk_call__ ";
+
+/// What a run writes to the harness's stdin when the script reaches the SDK over the network
+/// (the cloud sandbox, `http` mode): the run token line, then the input document.
 pub fn code_stdin(request: &CodeRunRequest) -> Vec<u8> {
     let mut out = Vec::new();
     if let Some(sdk) = &request.sdk {
@@ -57,8 +62,9 @@ pub fn code_stdin(request: &CodeRunRequest) -> Vec<u8> {
     out
 }
 
-/// The hosts a run may reach: the module's declared hosts, plus the SDK's host when it has the
-/// script SDK.
+/// The hosts a run may reach when the script reaches the SDK over the network (the cloud
+/// sandbox): the module's declared hosts plus the SDK's `host:port`. A runner that relays SDK
+/// calls ([`LocalDenoRunner`]) grants the declared hosts only.
 pub fn code_net(request: &CodeRunRequest) -> Vec<String> {
     let mut net: Vec<String> = request.permissions.net.iter().cloned().collect();
     if let Some(host) = request.sdk.as_ref().and_then(|s| s.net_host()) {
@@ -250,7 +256,10 @@ impl CodeRunner for LocalDenoRunner {
         let script = run_dir.join("module.ts");
         std::fs::write(&script, &request.source).map_err(|e| format!("code runner: {e}"))?;
 
-        let net = code_net(&request);
+        // Only the module's declared hosts: SDK calls are relayed through stdio by this process,
+        // so the script never gets network access to the host (on the OSS server, a local API
+        // that may have no auth) and never sees the run token.
+        let net: Vec<String> = request.permissions.net.iter().cloned().collect();
         let mut cmd = tokio::process::Command::new(&self.binary);
         cmd.env_clear()
             .env("DENO_DIR", self.root.join("deno_dir"))
@@ -263,7 +272,7 @@ impl CodeRunner for LocalDenoRunner {
                 &script,
                 &run_dir,
                 &net,
-                request.sdk.as_ref().map(|s| s.url.as_str()),
+                request.sdk.as_ref().map(|_| SDK_RELAY),
             ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -278,15 +287,13 @@ impl CodeRunner for LocalDenoRunner {
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("code runner: start deno: {e}"))?;
-        let input = code_stdin(&request);
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(&input).await;
-            drop(stdin);
-        }
         let timeout = Duration::from_secs(request.timeout_secs.max(1));
-        let output = tokio::time::timeout(timeout, child.wait_with_output()).await;
+        let outcome = tokio::time::timeout(timeout, drive(&mut child, &request)).await;
+        if outcome.is_err() {
+            let _ = child.kill().await;
+        }
         let _ = std::fs::remove_dir_all(&run_dir);
-        let output = match output {
+        let (status, stdout, stderr) = match outcome {
             Ok(Ok(o)) => o,
             Ok(Err(e)) => return Err(format!("code '{}' failed to run: {e}", request.name)),
             Err(_) => {
@@ -299,13 +306,106 @@ impl CodeRunner for LocalDenoRunner {
         };
         parse_code_output(
             &request.name,
-            output.status.success(),
-            output.status.code().unwrap_or(-1) as i64,
-            &String::from_utf8_lossy(&output.stdout),
-            &String::from_utf8_lossy(&output.stderr),
+            status.success(),
+            status.code().unwrap_or(-1) as i64,
+            &stdout,
+            &stderr,
             started.elapsed().as_millis() as u64,
         )
     }
+}
+
+/// Feed the input, relay SDK calls (when the step has the SDK) and collect stdout and stderr
+/// (without the relay's call lines) until the process exits.
+async fn drive(
+    child: &mut tokio::process::Child,
+    request: &CodeRunRequest,
+) -> std::io::Result<(std::process::ExitStatus, String, String)> {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+    let mut stdin = child.stdin.take();
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+
+    let input = serde_json::to_vec(&request.input).unwrap_or_else(|_| b"null".to_vec());
+    if let Some(w) = stdin.as_mut() {
+        let _ = w.write_all(&input).await;
+        if request.sdk.is_some() {
+            // Relay mode: the input is the first line; answers follow on stdin.
+            let _ = w.write_all(b"\n").await;
+            let _ = w.flush().await;
+        }
+    }
+    if request.sdk.is_none() {
+        drop(stdin.take());
+    }
+
+    let out_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf).await;
+        String::from_utf8_lossy(&buf).to_string()
+    });
+
+    let sdk = request.sdk.clone();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(request.timeout_secs.max(1) + 30))
+        .no_proxy()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    let mut logs = String::new();
+    let mut lines = BufReader::new(stderr).lines();
+    while let Some(line) = lines.next_line().await? {
+        let Some(rest) = line.strip_prefix(SDK_CALL_LINE) else {
+            logs.push_str(&line);
+            logs.push('\n');
+            continue;
+        };
+        let (Some(sdk), Some(w)) = (sdk.as_ref(), stdin.as_mut()) else {
+            continue;
+        };
+        let answer = relay_call(&client, sdk, rest).await;
+        let mut line = serde_json::to_vec(&answer).unwrap_or_default();
+        line.push(b'\n');
+        let _ = w.write_all(&line).await;
+        let _ = w.flush().await;
+    }
+    drop(stdin);
+    let status = child.wait().await?;
+    let stdout = out_task.await.unwrap_or_default();
+    Ok((status, stdout, logs))
+}
+
+/// One relayed SDK call: `{"id", "call"}` from the script, answered as `{"id", "ok", …}` from
+/// the host's SDK route (the run token is added here; the script never has it).
+async fn relay_call(
+    client: &reqwest::Client,
+    sdk: &distri_types::script_sdk::CodeSdkAccess,
+    raw: &str,
+) -> serde_json::Value {
+    let msg: serde_json::Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(e) => {
+            return serde_json::json!({"id": null, "ok": false, "code": "invalid", "error": format!("bad call line: {e}")})
+        }
+    };
+    let id = msg.get("id").cloned().unwrap_or(serde_json::Value::Null);
+    let call = msg.get("call").cloned().unwrap_or(serde_json::Value::Null);
+    let res = client
+        .post(format!("{}/call", sdk.url.trim_end_matches('/')))
+        .bearer_auth(&sdk.token)
+        .json(&call)
+        .send()
+        .await;
+    let mut answer = match res {
+        Ok(r) => r.json::<serde_json::Value>().await.unwrap_or_else(|e| {
+            serde_json::json!({"ok": false, "code": "failed", "error": format!("the SDK answered no JSON: {e}")})
+        }),
+        Err(e) => serde_json::json!({"ok": false, "code": "failed",
+            "error": distri_types::script_sdk::clean_error(&format!("the SDK is unreachable: {e}"))}),
+    };
+    if let Some(obj) = answer.as_object_mut() {
+        obj.insert("id".into(), id);
+    }
+    answer
 }
 
 #[cfg(test)]
@@ -470,6 +570,12 @@ mod tests {
             "__distri_sdk_token__ dsr_t\n{\"n\":2}"
         );
         assert_eq!(code_net(&r), vec!["127.0.0.1:9".to_string()]);
+        let mut https = r.clone();
+        https.sdk = Some(distri_types::script_sdk::CodeSdkAccess {
+            url: "https://api.distri.dev/v1/workflows/sdk".into(),
+            token: "t".into(),
+        });
+        assert_eq!(code_net(&https), vec!["api.distri.dev:443".to_string()]);
         let argv = deno_code_argv_sdk(
             Path::new("/m"), Path::new("/h"), Path::new("/s"), Path::new("/c"),
             &code_net(&r), Some("http://127.0.0.1:9/v1/workflows/sdk"),
@@ -491,7 +597,7 @@ mod tests {
             r#"import { distri } from "@distri/runtime";
 export default async function (input: { n: number }) {
   const s = await distri.state.set({ n: input.n });
-  const m = await distri.notify("hello", [[{ type: "url", label: "Open", url: "https://distri.dev" }]]);
+  const m = await distri.notify("hello", [[{ kind: "url", label: "Open", url: "https://distri.dev" }]]);
   return { s, m };
 }"#,
         );
@@ -504,6 +610,33 @@ export default async function (input: { n: number }) {
         assert_eq!(seen[0].0, "Bearer dsr_test_token");
         assert_eq!(seen[0].1, serde_json::json!({"op": "state_set", "patch": {"n": 2}}));
         assert_eq!(seen[1].1["text"], "hello");
+
+        // The script itself cannot reach the SDK's host (calls are relayed by this process),
+        // and the token is nowhere in its reach.
+        let (url2, seen2) = sdk_server().await;
+        let mut probe = request(&format!(
+            r#"import {{ distri }} from "@distri/runtime";
+export default async function () {{
+  let direct = "reached";
+  try {{ await fetch("{url2}/call", {{ method: "POST", body: "{{}}" }}); }} catch (e) {{ direct = String(e); }}
+  const args = JSON.stringify(Deno.args);
+  const keys = JSON.stringify(Object.getOwnPropertyNames(globalThis).filter((k) => k.includes("distri")));
+  const s = await distri.state.get();
+  return {{ direct, args, keys, s }};
+}}"#
+        ));
+        probe.sdk = Some(distri_types::script_sdk::CodeSdkAccess {
+            url: url2,
+            token: "dsr_secret_probe".into(),
+        });
+        let out = runner.run_code(probe).await.unwrap();
+        let direct = out.value["direct"].as_str().unwrap_or_default();
+        assert!(direct.contains("NotCapable") || direct.contains("net"), "{direct}");
+        assert!(!out.value.to_string().contains("dsr_secret_probe"), "{}", out.value);
+        assert_eq!(out.value["s"]["echo"], "state_get");
+        let seen2 = seen2.lock().unwrap().clone();
+        assert_eq!(seen2.len(), 1, "only the relayed call reached the host");
+        assert_eq!(seen2[0].0, "Bearer dsr_secret_probe");
 
         // Without the SDK, a call throws a clear error.
         let err = runner

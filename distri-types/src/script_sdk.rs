@@ -13,6 +13,37 @@ use serde::{Deserialize, Serialize};
 /// Prefix of a run token.
 pub const RUN_TOKEN_PREFIX: &str = "dsr_";
 
+/// The most calls one run token (one step's script) may make.
+pub const MAX_CALLS_PER_TOKEN: usize = 200;
+/// The most `agent` calls one script may make.
+pub const MAX_AGENT_CALLS_PER_TOKEN: usize = 10;
+/// The most `notify` calls one script may make.
+pub const MAX_NOTIFY_CALLS_PER_TOKEN: usize = 20;
+/// The most characters of an error a record or a response carries.
+pub const MAX_ERROR_CHARS: usize = 300;
+/// Callback-data prefixes a script's buttons may not use: the bot's run-operation buttons.
+pub const RESERVED_CALLBACK_PREFIXES: &[&str] = &["wf:op:", "wfo:"];
+
+/// An error as a record or a response shows it: token-like values redacted, at most
+/// [`MAX_ERROR_CHARS`] characters.
+pub fn clean_error(text: &str) -> String {
+    let scrubbed = crate::memory::guard::scrub_secrets(text.trim());
+    if scrubbed.chars().count() <= MAX_ERROR_CHARS {
+        return scrubbed;
+    }
+    let cut: String = scrubbed.chars().take(MAX_ERROR_CHARS - 1).collect();
+    format!("{cut}…")
+}
+
+/// The per-op cap for `op`, when it has one below [`MAX_CALLS_PER_TOKEN`].
+pub fn op_cap(op: &str) -> Option<usize> {
+    match op {
+        "agent" => Some(MAX_AGENT_CALLS_PER_TOKEN),
+        "notify" => Some(MAX_NOTIFY_CALLS_PER_TOKEN),
+        _ => None,
+    }
+}
+
 /// Where a sandboxed script reaches its run, and with what token. Passed to the code runner in
 /// [`crate::CodeRunRequest::sdk`]; the runner adds the URL's host to the script's net allow-list.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,15 +64,25 @@ impl std::fmt::Debug for CodeSdkAccess {
 }
 
 impl CodeSdkAccess {
-    /// `host` or `host:port` of [`Self::url`], for `--allow-net`.
+    /// `host:port` of [`Self::url`], for `--allow-net`: always with the port (the scheme's
+    /// default when the URL has none), so Deno allows that one port and not every port of the
+    /// host.
     pub fn net_host(&self) -> Option<String> {
-        let rest = self
-            .url
-            .split_once("://")
-            .map(|(_, r)| r)
-            .unwrap_or(&self.url);
+        let (scheme, rest) = self.url.split_once("://").unwrap_or(("https", &self.url));
         let host = rest.split(['/', '?', '#']).next()?.rsplit('@').next()?;
-        (!host.is_empty()).then(|| host.to_string())
+        if host.is_empty() {
+            return None;
+        }
+        let has_port = match host.rsplit_once(':') {
+            // `[::1]:8080` has a port; `[::1]` does not.
+            Some((h, p)) => !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) && !h.is_empty(),
+            None => false,
+        };
+        if has_port {
+            return Some(host.to_string());
+        }
+        let port = if scheme.eq_ignore_ascii_case("http") { 80 } else { 443 };
+        Some(format!("{host}:{port}"))
     }
 }
 
@@ -161,6 +202,9 @@ pub enum ScriptCallError {
     /// The call ran and failed.
     #[error("{0}")]
     Failed(String),
+    /// The script made more calls than its step allows (see [`MAX_CALLS_PER_TOKEN`]).
+    #[error("too many calls: {0}")]
+    TooMany(String),
 }
 
 impl ScriptCallError {
@@ -169,6 +213,7 @@ impl ScriptCallError {
             ScriptCallError::Unauthorized => "unauthorized",
             ScriptCallError::Invalid(_) => "invalid",
             ScriptCallError::Failed(_) => "failed",
+            ScriptCallError::TooMany(_) => "too_many_calls",
         }
     }
     /// The HTTP status a host answers with.
@@ -177,6 +222,7 @@ impl ScriptCallError {
             ScriptCallError::Unauthorized => 401,
             ScriptCallError::Invalid(_) => 422,
             ScriptCallError::Failed(_) => 200,
+            ScriptCallError::TooMany(_) => 429,
         }
     }
 }
@@ -207,12 +253,28 @@ mod tests {
             url: "https://api.distri.dev/v1/workflows/sdk".into(),
             token: "dsr_secret".into(),
         };
-        assert_eq!(a.net_host().as_deref(), Some("api.distri.dev"));
+        assert_eq!(a.net_host().as_deref(), Some("api.distri.dev:443"));
         assert!(!format!("{a:?}").contains("dsr_secret"));
         let b = CodeSdkAccess {
             url: "http://127.0.0.1:8080/v1/workflows/sdk".into(),
             token: String::new(),
         };
         assert_eq!(b.net_host().as_deref(), Some("127.0.0.1:8080"));
+        let c = CodeSdkAccess {
+            url: "http://localhost/v1/workflows/sdk".into(),
+            token: String::new(),
+        };
+        assert_eq!(c.net_host().as_deref(), Some("localhost:80"));
+    }
+
+    #[test]
+    fn errors_are_scrubbed_and_cut() {
+        let e = clean_error("upstream said: Bearer abcdefghijklmnopqrstuvwxyz0123456789 refused");
+        assert!(!e.contains("abcdefghij"), "{e}");
+        assert!(e.contains("[redacted]"), "{e}");
+        let long = clean_error(&"x".repeat(1000));
+        assert_eq!(long.chars().count(), MAX_ERROR_CHARS);
+        assert_eq!(ScriptCallError::TooMany("x".into()).http_status(), 429);
+        assert_eq!(op_cap("notify"), Some(MAX_NOTIFY_CALLS_PER_TOKEN));
     }
 }

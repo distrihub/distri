@@ -18,7 +18,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use distri_types::script_sdk::{ScriptCall, ScriptCallError, ScriptCallRecord, RUN_TOKEN_PREFIX};
+use distri_types::script_sdk::{
+    clean_error, op_cap, ScriptCall, ScriptCallError, ScriptCallRecord, MAX_CALLS_PER_TOKEN,
+    RESERVED_CALLBACK_PREFIXES, RUN_TOKEN_PREFIX,
+};
 use serde_json::{json, Value};
 
 use crate::agent::{AgentOrchestrator, ExecutorContext};
@@ -36,6 +39,8 @@ pub struct ScriptSdkBinding {
     pub context: Arc<ExecutorContext>,
     pub expires_at: Instant,
     calls: Mutex<Vec<ScriptCallRecord>>,
+    /// Calls admitted so far, in total and per op (the caps).
+    admitted: Mutex<std::collections::HashMap<String, usize>>,
 }
 
 impl ScriptSdkBinding {
@@ -49,7 +54,34 @@ impl ScriptSdkBinding {
             context,
             expires_at: Instant::now() + ttl,
             calls: Mutex::new(Vec::new()),
+            admitted: Mutex::new(std::collections::HashMap::new()),
         }
+    }
+
+    /// Count `op` against the caps: at most [`MAX_CALLS_PER_TOKEN`] calls, and fewer `agent`
+    /// and `notify` calls. A refused call is not recorded (so the record stays bounded).
+    fn admit(&self, op: &str) -> Result<(), ScriptCallError> {
+        let mut admitted = self
+            .admitted
+            .lock()
+            .map_err(|_| ScriptCallError::Failed("script call counter poisoned".into()))?;
+        let total = admitted.get("").copied().unwrap_or(0);
+        if total >= MAX_CALLS_PER_TOKEN {
+            return Err(ScriptCallError::TooMany(format!(
+                "a script may make at most {MAX_CALLS_PER_TOKEN} calls per step"
+            )));
+        }
+        let this = admitted.get(op).copied().unwrap_or(0);
+        if let Some(cap) = op_cap(op) {
+            if this >= cap {
+                return Err(ScriptCallError::TooMany(format!(
+                    "a script may make at most {cap} `{op}` calls per step"
+                )));
+            }
+        }
+        admitted.insert(String::new(), total + 1);
+        admitted.insert(op.to_string(), this + 1);
+        Ok(())
     }
 
     /// The calls made so far, in order.
@@ -151,6 +183,7 @@ impl AgentOrchestrator {
             .script_sdk
             .get(token)
             .ok_or(ScriptCallError::Unauthorized)?;
+        binding.admit(call.op())?;
         let me = self.clone();
         let b = binding.clone();
         let c = call.clone();
@@ -159,7 +192,12 @@ impl AgentOrchestrator {
             workspace_uuid(binding.workspace_id.as_deref()),
             async move { me.run_script_call(&b, c).await },
         )
-        .await;
+        .await
+        .map_err(|e| match e {
+            ScriptCallError::Failed(m) => ScriptCallError::Failed(clean_error(&m)),
+            ScriptCallError::Invalid(m) => ScriptCallError::Invalid(clean_error(&m)),
+            other => other,
+        });
 
         let record = {
             let mut calls = binding
@@ -215,10 +253,13 @@ impl AgentOrchestrator {
                         ..
                     } = b
                     {
-                        if callback_data.starts_with("wf:op:") {
-                            return Err(ScriptCallError::Invalid(
-                                "button callbacks may not use the reserved prefix wf:op:".into(),
-                            ));
+                        if let Some(p) = RESERVED_CALLBACK_PREFIXES
+                            .iter()
+                            .find(|p| callback_data.starts_with(**p))
+                        {
+                            return Err(ScriptCallError::Invalid(format!(
+                                "button callbacks may not use the reserved prefix {p}"
+                            )));
                         }
                     }
                 }
@@ -290,7 +331,15 @@ impl AgentOrchestrator {
                 step_result_value(r)
             }
             ScriptCall::MemorySignal { signal } => {
+                // A script records signals in its workflow's own memory space and default scope:
+                // only the signal's fields are taken, never a space, a scope or another op.
                 let mut obj = signal.as_object().cloned().unwrap_or_default();
+                if let Some(k) = obj.keys().find(|k| !SIGNAL_FIELDS.contains(&k.as_str())) {
+                    return Err(ScriptCallError::Invalid(format!(
+                        "memory.signal: `{k}` is not allowed (a script's signals go to its workflow's own memory space and scope; fields: {})",
+                        SIGNAL_FIELDS.join(", ")
+                    )));
+                }
                 obj.insert("type".into(), json!("memory"));
                 obj.insert("op".into(), json!("signal"));
                 let kind: distri_workflow::StepKind = serde_json::from_value(Value::Object(obj))
@@ -309,6 +358,9 @@ impl AgentOrchestrator {
         }
     }
 }
+
+/// The fields a script's `memory.signal` may set.
+const SIGNAL_FIELDS: &[&str] = &["kind", "subject", "before", "after", "context"];
 
 fn step_result_value(r: distri_workflow::StepResult) -> Result<Value, ScriptCallError> {
     if r.status == distri_types::TaskStatus::Failed {

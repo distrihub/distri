@@ -715,6 +715,20 @@ async fn execute_started(
     .unwrap_or_else(|e| StepResult::failed(&e))
 }
 
+/// An item's result as the step row's `items` keep it: whole when small, else
+/// `{truncated: true, bytes, preview}` (the step's output keeps the whole result).
+pub(crate) fn capped_item_result(v: &serde_json::Value) -> serde_json::Value {
+    let text = v.to_string();
+    if text.len() <= distri_workflow::FOR_EACH_ITEM_RESULT_MAX_BYTES {
+        return v.clone();
+    }
+    let mut cut = distri_workflow::FOR_EACH_ITEM_RESULT_MAX_BYTES / 2;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    serde_json::json!({"truncated": true, "bytes": text.len(), "preview": &text[..cut]})
+}
+
 fn item_state(index: usize) -> ForEachItem {
     ForEachItem {
         index,
@@ -808,7 +822,7 @@ async fn run_for_each(
                         obj.insert("error".into(), serde_json::Value::String(error));
                         let slot = serde_json::Value::Object(obj);
                         states[k].status = "failed".into();
-                        states[k].result = Some(slot.clone());
+                        states[k].result = Some(capped_item_result(&slot));
                         slots[k] = slot;
                     }
                     OnFailure::Pause if can_pause(context, workflow_store) => {
@@ -823,7 +837,7 @@ async fn run_for_each(
             } else {
                 let value = r.result.unwrap_or(serde_json::Value::Null);
                 states[k].status = "completed".into();
-                states[k].result = Some(value.clone());
+                states[k].result = Some(capped_item_result(&value));
                 slots[k] = value;
             }
         }

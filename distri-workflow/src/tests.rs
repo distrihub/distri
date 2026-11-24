@@ -262,6 +262,9 @@ mod tests {
         assert_eq!(fe.items_expr(), "{input.accounts}");
         assert_eq!(fe.as_name(), "account");
         assert_eq!(fe.max(), 3);
+        let huge: ForEach =
+            serde_json::from_value(serde_json::json!({"in": "{input.x}", "max": 100000})).unwrap();
+        assert_eq!(huge.max(), FOR_EACH_HARD_MAX);
         assert_eq!(fe.concurrency(), FOR_EACH_MAX_CONCURRENCY);
         let back = serde_json::to_value(&s).unwrap();
         assert_eq!(back["for_each"]["in"], "{input.accounts}");
