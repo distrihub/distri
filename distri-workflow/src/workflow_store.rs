@@ -69,6 +69,10 @@ pub struct WorkflowExecutionState {
     /// `POST …/pause` arrived: the driver parks before its next step.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pause_requested: bool,
+    /// What started the run (`{kind, detail?}`), as the host's entry path gave it in the
+    /// input's `_trigger` control field. `None` when the start said nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<serde_json::Value>,
 }
 
 /// Why a run paused.
@@ -138,7 +142,13 @@ impl WorkflowExecutionState {
             paused: None,
             breakpoints: vec![],
             pause_requested: false,
+            trigger: None,
         }
+    }
+
+    pub fn with_trigger(mut self, trigger: Option<serde_json::Value>) -> Self {
+        self.trigger = trigger;
+        self
     }
 
     pub fn with_breakpoints(mut self, breakpoints: Vec<String>) -> Self {
@@ -287,11 +297,7 @@ pub trait WorkflowStore: Send + Sync {
 
     /// The run's task status changed (`running`, `input_required`, `completed`, …). Stores that
     /// keep a listable status (Postgres) record it; the default does nothing.
-    async fn set_run_status(
-        &self,
-        _run_task_id: &str,
-        _status: &TaskStatus,
-    ) -> anyhow::Result<()> {
+    async fn set_run_status(&self, _run_task_id: &str, _status: &TaskStatus) -> anyhow::Result<()> {
         Ok(())
     }
 }
