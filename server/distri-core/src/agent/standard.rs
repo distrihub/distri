@@ -139,6 +139,15 @@ impl BaseAgent for StandardAgent {
             .before_execute(&mut message, context.clone())
             .await?;
 
+        // Memory: resolve the scope, reflect when due, inject the block, record what was shown.
+        if let Some(session) = crate::agent::agent_memory::session_of(&context).await {
+            if let Err(e) =
+                crate::agent::agent_memory::prepare_run(&session, &message, &context).await
+            {
+                tracing::warn!(agent = %self.definition.name, error = %e, "memory: not injected");
+            }
+        }
+
         // If OtelHooks (or any hook) set an agent span on the context, use it to
         // instrument the entire run so LLM and tool spans are correctly nested beneath it.
         use tracing::Instrument as _;

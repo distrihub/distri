@@ -94,6 +94,9 @@ pub struct WorkflowAgentDefinition {
     /// implied by its declared `connections` plus nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<crate::ToolsConfig>,
+    /// The workflow's memory (`[memory]`): what its `memory` steps write to by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<crate::memory::MemoryConfig>,
 }
 
 fn default_version() -> String {

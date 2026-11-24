@@ -1149,6 +1149,52 @@ pub enum StepKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         button_template: Option<distri_types::channel_commands::ReplyButtonSpec>,
     },
+
+    /// Write to agent memory with no LLM call: a **signal** (how an output was received:
+    /// `kind` = approved | edited | skipped | outcome | note, with `before`/`after`), an item
+    /// (**write**: `uri` as `mem://…` or `folder/slug`, `l0`, `body`, `l1`?, `evidence`?), or a
+    /// **forget** (`uri`, `reason`). The space defaults to the workflow's `[memory].space`, then
+    /// the workflow's name; the scope to the workflow's `[memory].scope` template, then `"_"`.
+    /// Every string field is templated (`{input.x}`, `{steps.id.x}`).
+    Memory {
+        op: MemoryStepOp,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        space: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
+        /// Signal kind.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subject: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uri: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        l0: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        l1: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        evidence: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+}
+
+/// What a `memory` step does.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryStepOp {
+    Signal,
+    Write,
+    Forget,
 }
 
 fn default_notify_to() -> String {

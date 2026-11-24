@@ -1,4 +1,5 @@
 pub mod agent_loop;
+pub mod agent_memory;
 pub mod compaction;
 pub mod context;
 pub mod context_size_manager;

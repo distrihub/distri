@@ -3,8 +3,14 @@ pub mod a2a {
     pub use distri_a2a::*;
 }
 pub mod blueprint;
+pub mod memory;
 pub mod workflow_services;
 pub mod workflow_triggers;
+pub use memory::{
+    AgentMemoryStore, InMemoryAgentMemoryStore, MemoryAuthor, MemoryChange, MemoryConfig,
+    MemoryFolder, MemoryItem, MemoryOp, MemoryPlan, MemorySignal, MemorySpaceSummary, MemoryStatus,
+    MemoryUri, ReflectMode, SignalKind, SkippedSignal,
+};
 pub use workflow_services::{
     CodePermissions, CodeRunOutput, CodeRunRequest, CodeRunner, InMemoryWorkflowStateStore,
     Notifier, NotifyOrigin, NotifyOutcome, NotifyRequest, NotifyTarget, WorkflowStateKey,

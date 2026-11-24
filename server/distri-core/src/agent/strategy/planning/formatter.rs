@@ -93,6 +93,12 @@ impl<'a> MessageFormatter<'a> {
             .remove("available_skills")
             .and_then(|v| v.as_str().map(|s| s.to_string()));
 
+        // The agent's memory block (rules first, then items by tier), injected at run start.
+        let memory_block = dynamic_values
+            .remove(crate::agent::agent_memory::MEMORY_BLOCK_KEY)
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .filter(|s| !s.is_empty());
+
         // Extract deferred_tools_listing injected by orchestrator
         let deferred_tools_listing = dynamic_values
             .remove("deferred_tools_listing")
@@ -143,6 +149,7 @@ impl<'a> MessageFormatter<'a> {
             tool_prompts: tool_prompts_concat,
             tool_prompt_list: tool_prompt_entries,
             deferred_tools_listing,
+            memory_block,
             channel_kind: context.channel_kind.clone(),
             runtime_mode: runtime_mode_name,
         };

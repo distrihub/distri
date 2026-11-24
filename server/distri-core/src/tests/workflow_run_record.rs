@@ -38,6 +38,7 @@ async fn register(orch: &Arc<AgentOrchestrator>, name: &str, definition: serde_j
         channels: None,
         connections: vec![],
         tools: None,
+        memory: None,
     };
     orch.stores
         .agent_store
@@ -141,7 +142,11 @@ async fn a_finished_run_is_completed_and_its_steps_keep_their_input() {
     // Nor does the run's context: a sync webhook answers with it and the run
     // page reads it, so the resolved `env` namespace is dropped before it is kept.
     let state = store.get_run(&task_id).await.unwrap().expect("run kept");
-    assert!(state.context.get("env").is_none(), "context keeps env: {}", state.context);
+    assert!(
+        state.context.get("env").is_none(),
+        "context keeps env: {}",
+        state.context
+    );
     assert!(!state.context.to_string().contains("s3cret"));
     assert_eq!(state.context["state"]["last"], 3);
 }

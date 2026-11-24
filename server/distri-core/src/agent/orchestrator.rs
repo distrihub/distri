@@ -108,6 +108,12 @@ pub struct AgentOrchestrator {
     /// Per-workflow state kept between runs (`{state.x}`, `set_state`). In memory unless the
     /// host gives a durable one.
     pub workflow_state_store: Arc<dyn distri_types::WorkflowStateStore>,
+    /// Agent memory (`[memory]` spaces, signals, the change log). In memory unless the host
+    /// gives a durable one (the cloud's Postgres store).
+    pub agent_memory_store: Arc<dyn distri_types::AgentMemoryStore>,
+    /// Whether workflow `script` steps may run a shell on this host. Off unless the host opts
+    /// in (the OSS server run by the machine's owner does; the cloud never does).
+    pub allow_host_shell: bool,
     /// Routing index from declared `WorkflowTrigger`s back to
     /// `(agent_id, entry_point_id)`. Built on boot from every
     /// `WorkflowAgentDefinition`; what the cloud's webhook route,
@@ -256,6 +262,8 @@ pub struct AgentOrchestratorBuilder {
     notifier: Option<Arc<dyn distri_types::Notifier>>,
     code_runner: Option<Arc<dyn distri_types::CodeRunner>>,
     workflow_state_store: Option<Arc<dyn distri_types::WorkflowStateStore>>,
+    agent_memory_store: Option<Arc<dyn distri_types::AgentMemoryStore>>,
+    allow_host_shell: bool,
     durable_runs: bool,
     durable_runtime: Option<crate::durable::DurableRuntime>,
     llm_executor_factory: Option<Arc<dyn crate::llm::LlmExecutorFactory>>,
@@ -469,6 +477,22 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Keep agent memory in `store` instead of process memory.
+    pub fn with_agent_memory_store(
+        mut self,
+        store: Arc<dyn distri_types::AgentMemoryStore>,
+    ) -> Self {
+        self.agent_memory_store = Some(store);
+        self
+    }
+
+    /// Let workflow `script` steps run a shell on this machine (default off). Only for a host
+    /// whose owner runs the workflows (the OSS server); never for a multi-tenant one.
+    pub fn with_allow_host_shell(mut self, allow: bool) -> Self {
+        self.allow_host_shell = allow;
+        self
+    }
+
     pub fn with_workflow_store(mut self, store: Arc<dyn distri_workflow::WorkflowStore>) -> Self {
         self.workflow_store = Some(store);
         self
@@ -570,6 +594,10 @@ impl AgentOrchestratorBuilder {
             workflow_state_store: self
                 .workflow_state_store
                 .unwrap_or_else(|| Arc::new(distri_types::InMemoryWorkflowStateStore::default())),
+            agent_memory_store: self
+                .agent_memory_store
+                .unwrap_or_else(|| Arc::new(distri_types::InMemoryAgentMemoryStore::default())),
+            allow_host_shell: self.allow_host_shell,
             durable: if self.durable_runs {
                 Some(Arc::new(
                     self.durable_runtime
@@ -1230,6 +1258,50 @@ impl AgentOrchestrator {
                             ..Default::default()
                         })
                         .await;
+                }
+
+                // Agent memory: a session for this run and its tools, or none (so an agent
+                // without `[memory]` never inherits another's on a shared context).
+                // End users are held to their own scope and read only unless the agent sets
+                // `end_users_write`; an end-user surface without a proven id gets no memory.
+                let memory_caller = crate::agent::agent_memory::memory_caller(&context);
+                let memory = definition.memory.clone().filter(|m| m.enabled);
+                if memory.is_some()
+                    && memory_caller == crate::agent::agent_memory::MemoryCaller::Unidentified
+                {
+                    tracing::warn!(
+                        agent = %definition.name,
+                        "memory: off for this run (an end-user caller without a proven id)"
+                    );
+                }
+                let memory = memory.filter(|_| {
+                    memory_caller != crate::agent::agent_memory::MemoryCaller::Unidentified
+                });
+                match memory {
+                    Some(memory) => {
+                        let session = crate::agent::agent_memory::MemorySession::new(
+                            crate::agent::agent_memory::workspace_key(&context),
+                            &definition.name,
+                            memory,
+                        )
+                        .for_caller(&memory_caller);
+                        let read_only = !session.can_write();
+                        let session = Arc::new(session);
+                        crate::agent::agent_memory::set_session(&context, Some(session)).await;
+                        let have: std::collections::HashSet<String> = context
+                            .get_tools()
+                            .await
+                            .iter()
+                            .map(|t| t.get_name())
+                            .collect();
+                        let memory_tools: Vec<Arc<dyn Tool>> =
+                            crate::agent::agent_memory::tools::memory_tools(read_only)
+                                .into_iter()
+                                .filter(|t| !have.contains(&t.get_name()))
+                                .collect();
+                        context.extend_tools(memory_tools).await;
+                    }
+                    None => crate::agent::agent_memory::set_session(&context, None).await,
                 }
 
                 let tools = context.get_tools().await;

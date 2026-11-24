@@ -425,3 +425,220 @@ async fn end_to_end_multi_turn_with_compaction() {
         "scratchpad should contain full skill content"
     );
 }
+
+// ── E3: memory and rules survive a long session through every compaction tier ──
+//
+// distrihub/distri-cloud#304. A run of an agent with `[memory]` gets its rules and memory block
+// in the system prompt (static prefix), not in the scratchpad that compaction trims,
+// summarises and resets. Sixty turns push the scratchpad through Trim, Summarize (0.8) and
+// Reset (0.95); after every compaction the prompt still carries the rules and the memory, the
+// scratchpad is back under the window, and each summarize/reset was queued for reflection.
+
+/// Varied text (not one repeated character) of roughly `tokens` tokens.
+fn turn_text(turn: usize, tokens: usize) -> String {
+    let words = [
+        "the",
+        "owner",
+        "edited",
+        "draft",
+        "into",
+        "lowercase",
+        "and",
+        "cut",
+        "the",
+        "sign-off",
+        "thread",
+        "reply",
+        "post",
+        "account",
+        "short",
+        "first-hand",
+    ];
+    let mut s = format!("turn {turn}: ");
+    let mut i = turn;
+    while s.len() < tokens * 4 {
+        s.push_str(words[i % words.len()]);
+        s.push(' ');
+        i += 7;
+    }
+    s
+}
+
+/// A summarizer that answers every call (the shared mock answers once).
+#[derive(Debug)]
+struct AlwaysSummary;
+
+#[async_trait::async_trait]
+impl crate::llm::LLMExecutorTrait for AlwaysSummary {
+    async fn execute(
+        &self,
+        _messages: &[distri_types::Message],
+    ) -> Result<crate::llm::LLMResponse, crate::AgentError> {
+        Ok(crate::llm::LLMResponse {
+            finish_reason: async_openai::types::chat::FinishReason::Stop,
+            tool_calls: vec![],
+            content:
+                "SUMMARY: the writer drafted replies; the owner kept editing them into lowercase."
+                    .into(),
+            usage: None,
+        })
+    }
+    async fn execute_stream(
+        &self,
+        messages: &[distri_types::Message],
+        _context: Arc<ExecutorContext>,
+    ) -> Result<crate::llm::StreamResult, crate::AgentError> {
+        let r = self.execute(messages).await?;
+        Ok(crate::llm::StreamResult {
+            finish_reason: r.finish_reason,
+            tool_calls: r.tool_calls,
+            content: r.content,
+        })
+    }
+}
+
+#[tokio::test]
+async fn e3_memory_and_rules_survive_every_compaction_tier() {
+    use crate::agent::agent_memory::{prepare_run, set_session, workspace_key, MemorySession};
+    use crate::agent::strategy::planning::UnifiedPlanner;
+    use distri_types::events::CompactionTier;
+    use distri_types::memory::{MemoryAuthor, MemoryConfig, MemoryOp, MemoryPlan, SignalKind};
+    use distri_types::{Message, MessageRole, StandardDefinition};
+
+    let ctx = make_test_context().await;
+    let orch = ctx.orchestrator.clone().unwrap();
+    *ctx.summary_executor.write().await = Some(Arc::new(AlwaysSummary));
+
+    let memory = MemoryConfig {
+        space: Some("outreach".into()),
+        rules: vec!["RULE-A: never claim to be a customer.".into()],
+        ..Default::default()
+    };
+    let def = StandardDefinition {
+        name: "outreach_writer".into(),
+        description: "writes replies".into(),
+        instructions: "WRITER: write the reply.".into(),
+        memory: Some(memory.clone()),
+        ..Default::default()
+    };
+    let ws = workspace_key(&ctx);
+    orch.agent_memory_store
+        .apply(
+            &ws,
+            &MemoryPlan {
+                ops: vec![MemoryOp::Create {
+                    uri: "mem://outreach/_/style/casing".parse().unwrap(),
+                    l0: "MEMORY-L0: writes in lowercase, no sign-off".into(),
+                    l1: None,
+                    body: "lowercase everywhere".into(),
+                    evidence: vec![],
+                    pinned: None,
+                }],
+                skipped: vec![],
+            },
+            &MemoryAuthor::User {
+                user_id: "owner".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let session = Arc::new(MemorySession::new(ws.clone(), &def.name, memory));
+    set_session(&ctx, Some(session.clone())).await;
+    let message = Message {
+        role: MessageRole::User,
+        parts: vec![Part::Text("write the next reply".into())],
+        ..Default::default()
+    };
+    prepare_run(&session, &message, &ctx).await.unwrap();
+    ctx.store_task(&message.parts).await;
+
+    let planner = UnifiedPlanner::new(def.clone(), def.strategy.clone().unwrap_or_default());
+    let window = 8000usize; // the scratchpad limit `run_compaction` uses
+    let manager = ContextSizeManager::with_max_tokens(window);
+    let check_prompt = |label: String| {
+        let planner = &planner;
+        let message = &message;
+        let ctx = ctx.clone();
+        async move {
+            let msgs = planner
+                .generate_prompt_for_display(message, &ctx)
+                .await
+                .unwrap();
+            let system = msgs
+                .iter()
+                .filter(|m| m.role == MessageRole::System)
+                .filter_map(|m| m.as_text())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                system.contains("RULE-A: never claim"),
+                "{label}: rules lost"
+            );
+            assert!(
+                system.contains("- mem://outreach/_/style/casing: MEMORY-L0"),
+                "{label}: memory lost"
+            );
+            let rules_at = system.find("RULE-A").unwrap();
+            let memory_at = system.find("# Memory: outreach").unwrap();
+            assert!(rules_at < memory_at, "{label}: rules first");
+        }
+    };
+    check_prompt("before any compaction".into()).await;
+
+    let mut seen: Vec<CompactionTier> = Vec::new();
+    let mut ts = 1_000i64;
+    for turn in 0..60usize {
+        // Most turns add a few hundred tokens; turn 40 pastes a huge tool output.
+        let tokens = if turn == 40 { window } else { 220 };
+        ts += 10;
+        store_execution(&ctx, ts, &turn_text(turn, tokens)).await;
+        if let Some(result) = ctx.evaluate_compaction().await.unwrap() {
+            let tier = result.tier.clone().expect("a tier");
+            check_prompt(format!("turn {turn} after {tier:?}")).await;
+            let after =
+                manager.estimate_scratchpad_tokens(&ctx.get_scratchpad_entries().await.unwrap());
+            assert!(
+                after < (window as f64 * 0.95) as usize,
+                "turn {turn}: the scratchpad is back under the window ({after})"
+            );
+            // The summarised turns live on as a summary entry. (Today's trim keeps entries up
+            // to the whole window, so a Summarize below it drops nothing and writes no
+            // summary: a known gap of `trim_scratchpad_entries`, outside memory.)
+            if tier == CompactionTier::Summarize && result.entries_affected > 0 {
+                let entries = ctx.get_scratchpad_entries().await.unwrap();
+                assert!(
+                    entries.iter().any(|e| matches!(
+                        &e.entry_type,
+                        ScratchpadEntryType::Summary(sum)
+                            if sum.summary_text.contains("SUMMARY: the writer drafted replies")
+                    )),
+                    "turn {turn}: a summary entry exists after Summarize"
+                );
+            }
+            seen.push(tier);
+        }
+    }
+    assert!(seen.contains(&CompactionTier::Trim) || seen.contains(&CompactionTier::Summarize));
+    assert!(
+        seen.contains(&CompactionTier::Summarize),
+        "the session crossed 0.8: {seen:?}"
+    );
+    assert!(
+        seen.contains(&CompactionTier::Reset),
+        "the session crossed 0.95: {seen:?}"
+    );
+
+    // Every summarize and reset was queued for the memory's reflection.
+    let queued = orch
+        .agent_memory_store
+        .list_signals(&ws, "outreach", Some("_"), true, 100)
+        .await
+        .unwrap();
+    let non_trim = seen.iter().filter(|t| **t != CompactionTier::Trim).count();
+    assert_eq!(queued.len(), non_trim, "one note per summarize/reset");
+    assert!(queued.iter().all(|s| s.kind == SignalKind::Note
+        && s.subject
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("compaction:")));
+}

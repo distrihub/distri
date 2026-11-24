@@ -94,6 +94,7 @@ async fn register(orch: &Arc<AgentOrchestrator>, name: &str, definition: serde_j
         channels: None,
         connections: vec![],
         tools: None,
+        memory: None,
     };
     orch.stores
         .agent_store
@@ -382,10 +383,7 @@ async fn sre_agent_sample_workflow_end_to_end() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/sre-agent");
     let bp = Blueprint::load_dir(&dir).unwrap();
     let mut params = BTreeMap::new();
-    params.insert(
-        "health_url".to_string(),
-        format!("{}/health", server.uri()),
-    );
+    params.insert("health_url".to_string(), format!("{}/health", server.uri()));
     params.insert("service_name".to_string(), "Acme API".to_string());
     let bp = bp.render(&params).unwrap();
     let wf: serde_json::Value = serde_json::from_str(&bp.workflows[0].content).unwrap();

@@ -51,6 +51,8 @@ pub struct HookPromptState {
     pub dynamic_sections: Vec<PromptSection>,
     pub dynamic_values: HashMap<String, serde_json::Value>,
     pub template_override: PromptTemplateOverride,
+    /// The running agent's memory session (`[memory]`); see `agent::agent_memory`.
+    pub memory: Option<Arc<crate::agent::agent_memory::MemorySession>>,
 }
 
 impl HookPromptState {
@@ -69,6 +71,9 @@ impl HookPromptState {
         }
         if other.template_override.user.is_some() {
             self.template_override.user = other.template_override.user;
+        }
+        if other.memory.is_some() {
+            self.memory = other.memory;
         }
     }
 }
@@ -1733,6 +1738,16 @@ impl ExecutorContext {
             };
 
             let duration_ms = start.elapsed().as_millis() as u64;
+
+            // A summarised or reset context is queued for the agent's memory reflection.
+            if !matches!(tier, distri_types::events::CompactionTier::Trim) {
+                crate::agent::agent_memory::reflect::queue_on_compaction(
+                    self,
+                    tier,
+                    summary_text.as_deref(),
+                )
+                .await;
+            }
 
             self.emit(AgentEventType::ContextCompaction {
                 tier: tier.clone(),
