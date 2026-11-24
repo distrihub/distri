@@ -127,7 +127,10 @@ impl OAuth2Provider {
         {
             let mut q = url.query_pairs_mut();
             q.append_pair("response_type", "code");
-            q.append_pair(self.client_id_param().unwrap_or("client_id"), &self.client_id);
+            q.append_pair(
+                self.client_id_param().unwrap_or("client_id"),
+                &self.client_id,
+            );
             q.append_pair("redirect_uri", &self.redirect_uri);
             q.append_pair("state", state);
             if !scopes.is_empty() {
@@ -469,7 +472,12 @@ mod custom_flow_tests {
     }
 
     fn provider(cfg: OAuthProviderConfig) -> OAuth2Provider {
-        OAuth2Provider::new(cfg, "key123".into(), "secret".into(), "https://app/cb".into())
+        OAuth2Provider::new(
+            cfg,
+            "key123".into(),
+            "secret".into(),
+            "https://app/cb".into(),
+        )
     }
 
     fn auth_type() -> AuthType {
@@ -497,9 +505,15 @@ mod custom_flow_tests {
         let q: HashMap<String, String> = parsed.query_pairs().into_owned().collect();
         assert_eq!(q.get("client_key").map(String::as_str), Some("key123"));
         assert!(!q.contains_key("client_id"), "{url}");
-        assert_eq!(q.get("scope").map(String::as_str), Some("user.info.basic,video.publish"));
+        assert_eq!(
+            q.get("scope").map(String::as_str),
+            Some("user.info.basic,video.publish")
+        );
         assert_eq!(q.get("response_type").map(String::as_str), Some("code"));
-        assert_eq!(q.get("redirect_uri").map(String::as_str), Some("https://app/cb"));
+        assert_eq!(
+            q.get("redirect_uri").map(String::as_str),
+            Some("https://app/cb")
+        );
         assert_eq!(q.get("state").map(String::as_str), Some("st4te"));
         assert_eq!(q.get("prompt").map(String::as_str), Some("consent"));
     }
