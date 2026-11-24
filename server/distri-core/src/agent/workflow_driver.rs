@@ -26,8 +26,8 @@ use crate::types::AgentEventType;
 use chrono::Utc;
 use distri_types::TaskStatus;
 use distri_workflow::{
-    resolve, OnFailure, PauseInfo, PauseReason, StepExecution, StepKind, StepMark,
-    StepRequirement, StepResult, WorkflowRun, WorkflowStep, WorkflowStepState, WorkflowStore,
+    resolve, OnFailure, PauseInfo, PauseReason, StepExecution, StepKind, StepMark, StepRequirement,
+    StepResult, WorkflowRun, WorkflowStep, WorkflowStepState, WorkflowStore,
 };
 use std::sync::Arc;
 
@@ -409,7 +409,10 @@ async fn mark_skipped(
 
 /// Whether this run can park on a pause: it needs a workflow store (the pause is kept there)
 /// and an orchestrator (the pending call).
-fn can_pause(context: &Arc<ExecutorContext>, workflow_store: &Option<Arc<dyn WorkflowStore>>) -> bool {
+fn can_pause(
+    context: &Arc<ExecutorContext>,
+    workflow_store: &Option<Arc<dyn WorkflowStore>>,
+) -> bool {
     workflow_store.is_some() && context.orchestrator.is_some()
 }
 
@@ -687,8 +690,7 @@ where
                 pause_before(run, *idx, &breakpoints, pause_requested).map(|r| (*idx, r))
             });
             if let Some((idx, reason)) = parked {
-                return park_at(run, context, workflow_store, run_task_id, idx, reason, None)
-                    .await;
+                return park_at(run, context, workflow_store, run_task_id, idx, reason, None).await;
             }
         }
 

@@ -17,9 +17,7 @@ use std::time::Duration;
 
 use distri_types::configuration::{AgentConfig, WorkflowAgentDefinition};
 use distri_types::stores::NewSecret;
-use distri_types::workflow_ops::{
-    AttachTarget, RunOp, StepOp, StepOpError, StepOpRequest,
-};
+use distri_types::workflow_ops::{AttachTarget, RunOp, StepOp, StepOpError, StepOpRequest};
 use distri_types::{Message, MessageRole, Part, PendingCallKind, TaskStatus, ToolCall};
 use distri_workflow::{InMemoryWorkflowStore, StepMark, WorkflowStore};
 use serde_json::json;
@@ -347,7 +345,14 @@ async fn u5_the_pause_deadline_delivers_skip() {
     register(&h.orch, "fetcher", def).await;
 
     let task = run(&h.orch, "fetcher", json!({"item": "bad"})).await;
-    let pause = h.store.get_run(&task).await.unwrap().unwrap().paused.unwrap();
+    let pause = h
+        .store
+        .get_run(&task)
+        .await
+        .unwrap()
+        .unwrap()
+        .paused
+        .unwrap();
     assert!(pause.deadline.is_some());
 
     // Before the deadline nothing expires.
@@ -370,7 +375,13 @@ async fn u5_the_pause_deadline_delivers_skip() {
     // A late operation hears who resolved it.
     let late = h
         .orch
-        .workflow_step_op(&task, "fetch", StepOp::Skip, StepOpRequest::default(), &user("u1"))
+        .workflow_step_op(
+            &task,
+            "fetch",
+            StepOp::Skip,
+            StepOpRequest::default(),
+            &user("u1"),
+        )
         .await;
     match late {
         Err(StepOpError::AlreadyResolved(o)) => assert_eq!(o.actor, "deadline"),
@@ -435,7 +446,11 @@ async fn e4_attached_debugger_reruns_with_a_fixed_input_and_the_run_completes() 
 
     // The debugger saw the brief (the paused step and its error).
     let calls = h.script.calls.lock().unwrap().clone();
-    assert!(calls[0].contains("paused at step `fetch`"), "brief: {}", calls[0]);
+    assert!(
+        calls[0].contains("paused at step `fetch`"),
+        "brief: {}",
+        calls[0]
+    );
     assert!(calls[0].contains("please fix it"));
 
     let row = h.store.get_step(&task, "fetch").await.unwrap().unwrap();
@@ -443,7 +458,12 @@ async fn e4_attached_debugger_reruns_with_a_fixed_input_and_the_run_completes() 
     assert_eq!(row.attempt, 2);
     assert_eq!(row.result.unwrap()["body"]["name"], "good item");
     assert_eq!(
-        h.store.get_step(&task, "after").await.unwrap().unwrap().status,
+        h.store
+            .get_step(&task, "after")
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
         TaskStatus::Completed
     );
     // The pause was resolved by the agent.
@@ -496,8 +516,14 @@ async fn e5_complete_and_skip_race_one_applies_the_other_is_already_resolved() {
         .await
     });
     let skip = tokio::spawn(async move {
-        o2.workflow_step_op(&t2, "fetch", StepOp::Skip, StepOpRequest::default(), "user:bob")
-            .await
+        o2.workflow_step_op(
+            &t2,
+            "fetch",
+            StepOp::Skip,
+            StepOpRequest::default(),
+            "user:bob",
+        )
+        .await
     });
     let (a, b) = (complete.await.unwrap(), skip.await.unwrap());
     let (won, lost) = match (&a, &b) {
@@ -526,7 +552,13 @@ async fn e5_complete_and_skip_race_one_applies_the_other_is_already_resolved() {
     // A third op after the run finished: already resolved, with the winner.
     match h
         .orch
-        .workflow_step_op(&task, "fetch", StepOp::Skip, StepOpRequest::default(), "user:carol")
+        .workflow_step_op(
+            &task,
+            "fetch",
+            StepOp::Skip,
+            StepOpRequest::default(),
+            "user:carol",
+        )
         .await
     {
         Err(StepOpError::AlreadyResolved(o)) => assert_eq!(o.actor, won.actor),
@@ -558,7 +590,13 @@ async fn e6_rerun_of_notify_needs_force_and_then_runs_once() {
 
     let refused = h
         .orch
-        .workflow_step_op(&task, "tell", StepOp::Rerun, StepOpRequest::default(), "user:u1")
+        .workflow_step_op(
+            &task,
+            "tell",
+            StepOp::Rerun,
+            StepOpRequest::default(),
+            "user:u1",
+        )
         .await;
     match refused {
         Err(e @ StepOpError::NotReplaySafe(_)) => {
@@ -585,7 +623,11 @@ async fn e6_rerun_of_notify_needs_force_and_then_runs_once() {
     assert_eq!(wait_settled(&h, &task).await, TaskStatus::Completed);
     // Give a stray second re-drive a chance to show up.
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(h.notifier.0.load(Ordering::SeqCst), 2, "the forced rerun ran once");
+    assert_eq!(
+        h.notifier.0.load(Ordering::SeqCst),
+        2,
+        "the forced rerun ran once"
+    );
     let row = h.store.get_step(&task, "tell").await.unwrap().unwrap();
     assert_eq!(row.attempt, 2);
 }
@@ -624,7 +666,13 @@ async fn e7_rerun_from_the_middle_resets_downstream_only() {
     let a_before = h.store.get_step(&task, "a").await.unwrap().unwrap();
 
     h.orch
-        .workflow_step_op(&task, "b", StepOp::Rerun, StepOpRequest::default(), "user:u1")
+        .workflow_step_op(
+            &task,
+            "b",
+            StepOp::Rerun,
+            StepOpRequest::default(),
+            "user:u1",
+        )
         .await
         .expect("rerun from b");
     assert_eq!(wait_settled(&h, &task).await, TaskStatus::Completed);
@@ -640,8 +688,14 @@ async fn e7_rerun_from_the_middle_resets_downstream_only() {
     let a_after = h.store.get_step(&task, "a").await.unwrap().unwrap();
     assert_eq!(a_after.completed_at, a_before.completed_at);
     assert_eq!(a_after.attempt, 1);
-    assert_eq!(h.store.get_step(&task, "b").await.unwrap().unwrap().attempt, 2);
-    assert_eq!(h.store.get_step(&task, "c").await.unwrap().unwrap().attempt, 1);
+    assert_eq!(
+        h.store.get_step(&task, "b").await.unwrap().unwrap().attempt,
+        2
+    );
+    assert_eq!(
+        h.store.get_step(&task, "c").await.unwrap().unwrap().attempt,
+        1
+    );
 }
 
 // ── breakpoints, requested pause, resume, cancel ─────────────────────────────────
@@ -663,7 +717,14 @@ async fn breakpoint_then_resume_runs_the_step() {
     )
     .await;
     let task = run(&h.orch, "bp", json!({})).await;
-    let pause = h.store.get_run(&task).await.unwrap().unwrap().paused.unwrap();
+    let pause = h
+        .store
+        .get_run(&task)
+        .await
+        .unwrap()
+        .unwrap()
+        .paused
+        .unwrap();
     assert_eq!(pause.step_id, "two");
     assert_eq!(pause.reason, distri_workflow::PauseReason::Breakpoint);
 
@@ -692,12 +753,23 @@ async fn resume_of_a_failed_pause_is_unresolved_and_cancel_ends_it() {
     assert!(matches!(r, Err(StepOpError::StepUnresolved)), "{r:?}");
     // A rerun without a fixed input is allowed (GET is replay-safe) and pauses again.
     h.orch
-        .workflow_step_op(&task, "fetch", StepOp::Rerun, StepOpRequest::default(), "user:u1")
+        .workflow_step_op(
+            &task,
+            "fetch",
+            StepOp::Rerun,
+            StepOpRequest::default(),
+            "user:u1",
+        )
         .await
         .unwrap();
     assert_eq!(wait_settled(&h, &task).await, TaskStatus::InputRequired);
     assert_eq!(
-        h.store.get_step(&task, "fetch").await.unwrap().unwrap().attempt,
+        h.store
+            .get_step(&task, "fetch")
+            .await
+            .unwrap()
+            .unwrap()
+            .attempt,
         2
     );
 
@@ -714,7 +786,14 @@ async fn resume_of_a_failed_pause_is_unresolved_and_cancel_ends_it() {
         .await
         .unwrap();
     assert_eq!(status(&h.orch, &task).await, TaskStatus::Canceled);
-    assert!(h.store.get_run(&task).await.unwrap().unwrap().paused.is_none());
+    assert!(h
+        .store
+        .get_run(&task)
+        .await
+        .unwrap()
+        .unwrap()
+        .paused
+        .is_none());
     let r = h
         .orch
         .workflow_run_op(&task, RunOp::Pause, StepOpRequest::default(), "user:u1")
@@ -727,7 +806,13 @@ async fn ops_on_unknown_runs_steps_and_unpaused_runs_are_refused() {
     let h = harness().await;
     let r = h
         .orch
-        .workflow_step_op("nope", "x", StepOp::Skip, StepOpRequest::default(), "user:u1")
+        .workflow_step_op(
+            "nope",
+            "x",
+            StepOp::Skip,
+            StepOpRequest::default(),
+            "user:u1",
+        )
         .await;
     assert!(matches!(r, Err(StepOpError::RunNotFound)), "{r:?}");
 
@@ -742,19 +827,40 @@ async fn ops_on_unknown_runs_steps_and_unpaused_runs_are_refused() {
     let task = run(&h.orch, "plain", json!({})).await;
     let r = h
         .orch
-        .workflow_step_op(&task, "ghost", StepOp::Skip, StepOpRequest::default(), "user:u1")
+        .workflow_step_op(
+            &task,
+            "ghost",
+            StepOp::Skip,
+            StepOpRequest::default(),
+            "user:u1",
+        )
         .await;
     assert!(matches!(r, Err(StepOpError::StepNotFound(_))), "{r:?}");
     let r = h
         .orch
-        .workflow_step_op(&task, "one", StepOp::Skip, StepOpRequest::default(), "user:u1")
+        .workflow_step_op(
+            &task,
+            "one",
+            StepOp::Skip,
+            StepOpRequest::default(),
+            "user:u1",
+        )
         .await;
     assert!(matches!(r, Err(StepOpError::NotPaused)), "{r:?}");
     let r = h
         .orch
-        .workflow_step_op(&task, "one", StepOp::Complete, StepOpRequest::default(), "user:u1")
+        .workflow_step_op(
+            &task,
+            "one",
+            StepOp::Complete,
+            StepOpRequest::default(),
+            "user:u1",
+        )
         .await;
-    assert!(matches!(r, Err(StepOpError::Invalid(_))), "complete needs output: {r:?}");
+    assert!(
+        matches!(r, Err(StepOpError::Invalid(_))),
+        "complete needs output: {r:?}"
+    );
 }
 
 #[tokio::test]
