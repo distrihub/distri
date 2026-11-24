@@ -90,6 +90,9 @@ pub const BUILTIN_CHANNEL_COMMANDS: &[&str] = &[
     "/workspace",
     "/context",
     "/ctx",
+    "/runs",
+    "/memory",
+    "/setoutput",
 ];
 
 impl WorkflowDefinition {
@@ -184,6 +187,11 @@ impl WorkflowDefinition {
         use distri_types::WorkflowTrigger;
         use std::collections::HashSet;
 
+        // `wf:op:<task>:<step>:<op>` is the bot's run-operation button (Retry · Skip · Ask
+        // agent): it goes to the run, never to an entry point, so a workflow's own buttons may
+        // not use it.
+        const RESERVED_CALLBACK_PREFIX: &str = "wf:op:";
+
         let step_ids: HashSet<&str> = self.steps.iter().map(|s| s.id.as_str()).collect();
         let mut slash_names: HashSet<String> = HashSet::new();
         let mut callback_ids: HashSet<String> = HashSet::new();
@@ -215,6 +223,14 @@ impl WorkflowDefinition {
                         }
                     }
                     WorkflowTrigger::Callback { id, .. } => {
+                        // `wf:<id>:…` is how the button reaches the entry point, so `op`
+                        // would read as the reserved `wf:op:` prefix.
+                        if id == "op" || id.starts_with("op:") {
+                            return Err(format!(
+                                "entry point '{}': callback id '{}' is reserved (wf:op: is the bot's run-operation prefix)",
+                                ep.id, id
+                            ));
+                        }
                         if !callback_ids.insert(id.clone()) {
                             return Err(format!(
                                 "entry point '{}': callback id '{}' is already declared",
@@ -236,6 +252,29 @@ impl WorkflowDefinition {
             ));
         }
         for step in &self.steps {
+            let (rows, template) = match &step.kind {
+                StepKind::Reply {
+                    buttons,
+                    button_template,
+                    ..
+                } => (buttons.as_slice(), button_template.as_ref()),
+                StepKind::Notify { buttons, .. } => (buttons.as_slice(), None),
+                _ => (&[][..], None),
+            };
+            for b in rows.iter().flatten().chain(template) {
+                if let distri_types::channel_commands::ReplyButtonSpec::Callback {
+                    callback_data,
+                    ..
+                } = b
+                {
+                    if callback_data.starts_with(RESERVED_CALLBACK_PREFIX) {
+                        return Err(format!(
+                            "step '{}': button callback '{}' uses the reserved prefix '{}'",
+                            step.id, callback_data, RESERVED_CALLBACK_PREFIX
+                        ));
+                    }
+                }
+            }
             if let StepKind::Reply {
                 buttons_from,
                 button_template,
