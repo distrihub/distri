@@ -152,7 +152,7 @@ executor_only_tool!(
             "l0": {"type": "string", "description": "One line, at most 200 characters"},
             "body": {"type": "string"},
             "l1": {"type": "string", "description": "Short overview (default: the body when short)"},
-            "evidence": {"type": "array", "items": {"type": "string"}, "description": "What this rests on: run:<task_id>, sig:<id>, mem://…"}
+            "evidence": {"type": "array", "items": {"type": "string"}, "description": "What this rests on: sig:<id>, mem://… (the current run is added for you)"}
         },
         "required": ["uri", "l0", "body"]
     })
@@ -311,13 +311,21 @@ impl ExecutorContextTool for MemoryWriteTool {
                 "read_first: {uri} exists; memory_read it in this run before changing it"
             )));
         }
+        // The run that wrote it is evidence the tool knows: record its real id, and drop
+        // `run:` entries the model made up (it has no way to know its own task id).
+        let mut evidence: Vec<String> = input
+            .evidence
+            .into_iter()
+            .filter(|e| !e.starts_with("run:"))
+            .collect();
+        evidence.push(format!("run:{}", ctx.task_id));
         let op = if live.is_some() {
             MemoryOp::Replace {
                 uri: uri.clone(),
                 l0: input.l0,
                 l1: input.l1,
                 body: input.body,
-                evidence: input.evidence,
+                evidence: evidence.clone(),
                 pinned: None,
             }
         } else {
@@ -326,7 +334,7 @@ impl ExecutorContextTool for MemoryWriteTool {
                 l0: input.l0,
                 l1: input.l1,
                 body: input.body,
-                evidence: input.evidence,
+                evidence,
                 pinned: None,
             }
         };
