@@ -389,6 +389,16 @@ pub enum AgentEventType {
     LlmCall {
         call: crate::llm_usage::LlmCallUsage,
     },
+
+    /// What memory a run was given at its start: the URIs, the tier each was shown at, and
+    /// the block's size. Answers "why did it write that?" on the run page.
+    MemoryInjected {
+        space: String,
+        scope: String,
+        uris: Vec<String>,
+        tiers: Vec<String>,
+        tokens: usize,
+    },
 }
 
 /// `RunError.code` of a run that needs the user to connect or authorize an
@@ -428,6 +438,7 @@ impl AgentEventType {
             AgentEventType::ContextBudgetUpdate { .. } => "context_budget_update",
             AgentEventType::ChannelReply { .. } => "channel_reply",
             AgentEventType::LlmCall { .. } => "llm_call",
+            AgentEventType::MemoryInjected { .. } => "memory_injected",
         }
     }
 }

@@ -622,6 +622,12 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionConfig>,
 
+    /// Agent memory (`[memory]`): a space of L0/L1/L2 items injected at run start, the
+    /// `memory_*` tools, and reflection over signals. None: no memory. See
+    /// [`crate::memory::MemoryConfig`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<crate::memory::MemoryConfig>,
+
     /// The one environment this agent belongs to: `web` (browser),
     /// `server` (cloud) or `cli`. See
     /// `docs/decisions/2026-10-14-one-environment-per-agent.md`.

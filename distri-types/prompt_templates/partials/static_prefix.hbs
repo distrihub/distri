@@ -9,6 +9,10 @@
 
 {{> communication}}
 
+{{!-- The agent's memory (rules first, then items by tier). Fixed for the length of a run,
+     so it stays inside the cached zone; it changes between runs. --}}
+{{> memory}}
+
 {{#if (eq execution_mode "tools")}}
 {{#if (eq tool_format "json")}}
 {{> tools_json}}

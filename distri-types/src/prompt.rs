@@ -73,6 +73,10 @@ pub struct TemplateData<'a> {
     /// it can use `tool_search` to fetch full schemas on demand.
     #[serde(default)]
     pub deferred_tools_listing: Option<String>,
+    /// The agent's memory block (rules first, then memory by tier), rendered by the
+    /// `memory` partial in the static prefix. None when the agent has no `[memory]`.
+    #[serde(default)]
+    pub memory_block: Option<String>,
     /// Channel/surface this conversation is happening on
     /// ("telegram", "whatsapp", "discord", "slack", "web"). Read by the
     /// `channel_formatting` partial in `dynamic_suffix.hbs` to give the
@@ -214,6 +218,10 @@ impl PromptRegistry {
             (
                 "channel_formatting",
                 include_str!("../prompt_templates/partials/channel_formatting.hbs"),
+            ),
+            (
+                "memory",
+                include_str!("../prompt_templates/partials/memory.hbs"),
             ),
         ];
 
@@ -902,6 +910,7 @@ mod tests {
             tool_prompts: String::new(),
             tool_prompt_list: vec![],
             deferred_tools_listing: None,
+            memory_block: None,
             channel_kind: None,
             runtime_mode: "",
         };
