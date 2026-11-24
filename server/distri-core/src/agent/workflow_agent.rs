@@ -31,6 +31,13 @@ pub struct WorkflowInput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub breakpoints: Vec<String>,
 
+    /// What started the run (`{kind, detail?}`, e.g. `{"kind": "schedule", "detail": "09:07"}`),
+    /// set by the host's entry paths. A control field like `entry_point`: it is kept on the run
+    /// state (`WorkflowExecutionState::trigger`), not in the workflow's input, so an
+    /// `input_schema` never sees it.
+    #[serde(rename = "_trigger", default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<serde_json::Value>,
+
     /// All remaining fields are forwarded as workflow user input.
     #[serde(flatten)]
     pub data: serde_json::Value,
@@ -442,6 +449,7 @@ impl WorkflowAgent {
 
             let entry_point_for_record = workflow_input.entry_point.clone();
             let breakpoints_for_record = workflow_input.breakpoints.clone();
+            let trigger_for_record = workflow_input.trigger.clone();
             let input_for_record = workflow_input.data.clone();
 
             let mut run = WorkflowRun::new(definition);
@@ -472,6 +480,7 @@ impl WorkflowAgent {
                 .with_workspace_id(context.workspace_id.clone())
                 .with_entry_point(entry_point_for_record)
                 .with_breakpoints(breakpoints_for_record)
+                .with_trigger(trigger_for_record)
                 .with_input(input_for_record)
                 .with_context(context_to_keep(&run.context));
                 if let Err(e) = store.create_run(state).await {
@@ -616,6 +625,27 @@ mod hydrate_tests {
             ]
         }))
         .unwrap()
+    }
+
+    /// `_trigger` is a control field: it is read off the input, never forwarded as data.
+    #[test]
+    fn trigger_is_a_control_field_not_input() {
+        let input: WorkflowInput = serde_json::from_str(
+            r#"{"entry_point":"go","_trigger":{"kind":"schedule","detail":"09:07"},"url":"x"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            input.trigger,
+            Some(serde_json::json!({"kind": "schedule", "detail": "09:07"}))
+        );
+        assert_eq!(input.data, serde_json::json!({"url": "x"}));
+        let none: WorkflowInput = serde_json::from_str(r#"{"url":"x"}"#).unwrap();
+        assert!(none.trigger.is_none());
+        let state = WorkflowExecutionState::new("run", "agent", "thread", "user", def())
+            .with_trigger(input.trigger);
+        let back: WorkflowExecutionState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(back.trigger.unwrap()["kind"], "schedule");
     }
 
     /// U4: an output set on a step row (by `complete`) reaches `context.steps.<id>` on resume,
