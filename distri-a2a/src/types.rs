@@ -378,6 +378,23 @@ mod ts_serde {
 // Message
 // ---------------------------------------------------------------------------
 
+/// The key a 0.4.x client's message-level string lands under.
+pub const MESSAGE_TYPE_KEY: &str = "message_type";
+
+/// `Message.metadata` on input: a map as it is; a string (a 0.4.x client's
+/// `MessageMetadata`) as `{"message_type": "<string>"}`; null, or any other
+/// shape, as none.
+fn message_metadata<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Metadata>, D::Error> {
+    Ok(match Option::<Value>::deserialize(d)? {
+        Some(Value::Object(m)) => Some(m),
+        Some(Value::String(s)) => Some(Metadata::from_iter([(
+            MESSAGE_TYPE_KEY.to_string(),
+            Value::String(s),
+        )])),
+        _ => None,
+    })
+}
+
 /// A single message between user and agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -389,7 +406,16 @@ pub struct Message {
     pub task_id: Option<String>,
     pub role: Role,
     pub parts: Vec<Part>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// A map on the wire. A 0.4.x Rust client (`distri` 0.4.4, the newest
+    /// on crates.io) sends the bare string its `MessageMetadata` enum
+    /// serializes to (`"text"`, `"tool_call"`, …); that is read as
+    /// `{"message_type": "<it>"}`, the key the 1.0 client and the server
+    /// use for the same value. Anything else that is not a map is dropped.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "message_metadata"
+    )]
     pub metadata: Option<Metadata>,
     /// Extension URIs this message uses (activates them for the request).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -736,4 +762,63 @@ pub struct ListTasksResponse {
     pub page_size: i32,
     #[serde(default)]
     pub total_size: i32,
+}
+
+#[cfg(test)]
+mod message_metadata_tests {
+    use super::*;
+
+    fn message(metadata: Value) -> Result<Message, serde_json::Error> {
+        serde_json::from_value(serde_json::json!({
+            "kind": "message",
+            "messageId": "m1",
+            "role": "user",
+            "parts": [{ "kind": "text", "text": "hi" }],
+            "metadata": metadata,
+        }))
+    }
+
+    /// `distri` 0.4.4 (`message/send`) puts `MessageMetadata::Text` on the
+    /// message as the string `"text"`; the server used to answer
+    /// `Invalid params: invalid type: string "text", expected a map`.
+    #[test]
+    fn a_0_4_client_string_becomes_message_type() {
+        let m = message(Value::String("text".into())).expect("a 0.4.x message decodes");
+        assert_eq!(
+            m.metadata,
+            Some(Metadata::from_iter([(
+                "message_type".to_string(),
+                Value::String("text".into())
+            )]))
+        );
+        assert_eq!(m.parts[0].as_text(), Some("hi"));
+    }
+
+    #[test]
+    fn a_map_stays_and_null_is_none() {
+        let m = message(serde_json::json!({ "message_type": "tool_call", "k": 1 })).unwrap();
+        assert_eq!(
+            m.metadata.as_ref().and_then(|m| m.get("k")),
+            Some(&Value::from(1))
+        );
+        assert_eq!(message(Value::Null).unwrap().metadata, None);
+        assert_eq!(message(Value::from(7)).unwrap().metadata, None);
+    }
+
+    #[test]
+    fn send_message_params_of_a_0_4_client_decode() {
+        let params: SendMessageRequest = serde_json::from_value(serde_json::json!({
+            "message": {
+                "kind": "message",
+                "messageId": "m1",
+                "role": "user",
+                "parts": [{ "kind": "text", "text": "hi" }],
+                "metadata": "text",
+            },
+            "configuration": { "acceptedOutputModes": [], "blocking": true },
+            "metadata": { "dynamic_sections": [] }
+        }))
+        .expect("0.4.x message/send params decode");
+        assert_eq!(params.message.parts[0].as_text(), Some("hi"));
+    }
 }
