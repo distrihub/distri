@@ -1,6 +1,6 @@
 [package]
 name = "distri-cli"
-version = "0.5.0"
+version = "0.5.1-rc.1"
 edition = "2021"
 description = "CLI for Distri, the open-source server to embed AI agents in your product: push, run and call agents over A2A"
 license = "MIT"

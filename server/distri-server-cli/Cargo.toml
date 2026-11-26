@@ -1,6 +1,6 @@
 [package]
 name = "distri-server-cli"
-version = "0.5.0"
+version = "0.5.1-rc.1"
 edition = "2021"
 license = "MIT"
 description = "Distri agent server: markdown agents on any model, each an A2A 1.0 endpoint"
