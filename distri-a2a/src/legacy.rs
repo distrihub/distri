@@ -5,8 +5,9 @@
 //! (`StreamResponse`, `SendMessageResponse`, `Task`, `Message`, …) into the
 //! shape those clients decode — `kind`-tagged objects and parts, kebab-case
 //! states, lower-case roles, `final` on status updates, and distri's typed
-//! parts wrapped as `{part_type, data}`. Input needs no help: every type in
-//! [`crate::types`] already decodes both shapes.
+//! parts wrapped as `{part_type, data}`. Input needs almost no help: every
+//! type in [`crate::types`] decodes both shapes, and a message's metadata
+//! sent as a bare string (the 0.4.x Rust client) is read as a map.
 
 use serde_json::{Map, Value};
 
