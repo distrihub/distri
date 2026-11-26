@@ -18,7 +18,58 @@
 
 <h3 align="center">Embed AI agents in your product.</h3>
 
-Distri is an open-source (MIT) agent server written in Rust. An agent is a markdown file; Distri runs it on any model, on your own server or on [Distri Cloud](https://app.distri.dev), and exposes it as an [A2A 1.0](https://a2a-protocol.org/) endpoint your product, your backend or a chat app can call.
+AI Agents that live natively in your product. Distri is an open-source (MIT) agent server written in Rust. An agent is a markdown file. Distri runs it on any model, on your own server or on [Distri Cloud](https://app.distri.dev), and serves it as an [A2A 1.0](https://a2a-protocol.org/) endpoint that your product, your backend or a chat app can call.
+
+## Quickstart
+
+```bash
+curl -fsSL https://distri.dev/install.sh | sh     # the distri CLI, macOS and Linux
+distri login                                       # opens Distri Cloud in your browser
+git clone --depth 1 https://github.com/distrihub/distri && cd distri
+distri apply samples/hello-world --set name=Ada --test
+distri run --agent hello --task "Say hello to Ada"
+```
+
+`distri apply` reads a folder (`blueprint.toml`, `agents/*.md`, `workflows/*.json`), creates what it describes in your workspace, and `--test` runs its test workflow:
+
+```
+QUICKSTART_OUTPUT
+```
+
+If your workspace has no model yet, `apply` says so and `--test` fails until you pick one:
+
+```
+To finish:
+  • Choose a default model
+    The agents answer with the workspace's default model.
+    https://app.distri.dev/gateway/models
+```
+
+Open the link, choose a model (or add a provider key there), and run `distri apply samples/hello-world --test` again.
+
+`distri run` streams the agent's reply. Next: [Getting started](https://distri.dev/docs/getting-started/) · [How Distri fits](https://distri.dev/docs/concepts/how-distri-fits/) · [Agent definition](https://distri.dev/docs/concepts/agent-definition/) · [CLI reference](https://distri.dev/docs/reference/cli-reference/).
+
+## Samples
+
+Each folder in [`samples/`](samples) is a blueprint you can apply as it is, with a `test/run.sh` that runs it end to end.
+
+| Sample | What it sets up | Apply it |
+|---|---|---|
+| [hello-world](samples/hello-world) | One agent and a one-step workflow | `distri apply samples/hello-world --test` |
+| [docs-agent](samples/docs-agent) | A React portal whose docs agent searches and opens its pages with tools that run in the browser | `distri apply samples/docs-agent` |
+| [customer-service](samples/customer-service) | Answers customer messages, sends you a gist of each on Telegram, escalates refunds and complaints there | `distri apply samples/customer-service --set business_name="Acme" --wait --test` |
+| [website-support](samples/website-support) | An agent on your site that answers from your docs and files Linear tickets | `distri apply samples/website-support` |
+| [sre-agent](samples/sre-agent) | Checks a health URL on a schedule, alerts you on Telegram and investigates | `distri apply samples/sre-agent --set health_url=…` |
+| [signal-digest](samples/signal-digest) | A weekday Telegram digest of Hacker News and Reddit posts on your topics | `distri apply samples/signal-digest` |
+
+## Docs
+
+| | |
+|---|---|
+| Start | [Getting started](https://distri.dev/docs/getting-started/) · [How Distri fits](https://distri.dev/docs/concepts/how-distri-fits/) |
+| Agents | [Agent definition](https://distri.dev/docs/concepts/agent-definition/) · [In-product tools](https://distri.dev/docs/guides/agent/in-product-tools/) |
+| In your app | [Packages](https://distri.dev/docs/packages/overview/) · [React provider](https://distri.dev/docs/guides/client/guide-distri-provider/) · [Client API](https://distri.dev/docs/guides/client/client-api-reference/) |
+| Run it | [CLI reference](https://distri.dev/docs/reference/cli-reference/) · [Run Distri locally](https://distri.dev/docs/self-hosted/local-server/) |
 
 ## Where the agent runs
 
@@ -39,9 +90,39 @@ Distri is an open-source (MIT) agent server written in Rust. An agent is a markd
   </tr>
 </table>
 
-Live: [distri.dev/samples](https://distri.dev/samples/). Blueprints that set up an agent, its workflows and its channel from one sentence: [`samples/`](samples) (`distri apply samples/sre-agent`).
+Live demos: [distri.dev/samples](https://distri.dev/samples/).
 
-## Quickstart (self-hosted, no API key)
+## Embed it in a React app
+
+```tsx
+import { DistriProvider, Chat } from '@distri/react';
+import type { DistriFnTool } from '@distri/core';
+
+const addToCart: DistriFnTool = {
+  name: 'add_to_cart',
+  description: 'Add a product to the cart',
+  type: 'function',
+  parameters: { type: 'object', properties: { sku: { type: 'string' } }, required: ['sku'] },
+  autoExecute: true,
+  handler: async ({ sku }) => {
+    await cart.add(sku); // your code, in the user's browser
+    return { ok: true, items: cart.count };
+  },
+};
+
+export const App = ({ threadId }: { threadId: string }) => ( // one id per conversation
+  <DistriProvider config={{ baseUrl: 'https://api.distri.dev/v1', clientId: 'dpc_…', workspaceId: '…' }}>
+    <Chat agentId="shop_agent" threadId={threadId} externalTools={[addToCart]} />
+  </DistriProvider>
+);
+```
+
+The agent lists `add_to_cart` under `[tools] external`; when it calls it, the handler runs in the page and the cart changes the way it does for a click. The snippet typechecks against `@distri/react` 0.4.6 from npm. Guide: [in-product tools](https://distri.dev/docs/guides/agent/in-product-tools/).
+
+## Self-host from source
+
+<details>
+<summary>Build the server and run an agent on a local model with Ollama (no API key)</summary>
 
 Needs Rust and [Ollama](https://ollama.com); the model runs locally, so no key is needed.
 
@@ -114,32 +195,7 @@ On a 16-core CPU with no GPU, qwen3:4b took 10 minutes to send that reply; use a
 
 More: [streaming, tasks and the CLI](docs/cli.md), the agent card at `/v1/agents/greeter/.well-known/agent-card.json`, and [distri's A2A extensions](docs/a2a-extensions/README.md).
 
-## Embed it in a React app
-
-```tsx
-import { DistriProvider, Chat } from '@distri/react';
-import type { DistriFnTool } from '@distri/core';
-
-const addToCart: DistriFnTool = {
-  name: 'add_to_cart',
-  description: 'Add a product to the cart',
-  type: 'function',
-  parameters: { type: 'object', properties: { sku: { type: 'string' } }, required: ['sku'] },
-  autoExecute: true,
-  handler: async ({ sku }) => {
-    await cart.add(sku); // your code, in the user's browser
-    return { ok: true, items: cart.count };
-  },
-};
-
-export const App = ({ threadId }: { threadId: string }) => ( // one id per conversation
-  <DistriProvider config={{ baseUrl: 'https://api.distri.dev/v1', clientId: 'dpc_…', workspaceId: '…' }}>
-    <Chat agentId="shop_agent" threadId={threadId} externalTools={[addToCart]} />
-  </DistriProvider>
-);
-```
-
-The agent lists `add_to_cart` under `[tools] external`; when it calls it, the handler runs in the page and the cart changes the way it does for a click. The snippet typechecks against `@distri/react` 0.4.6 from npm. Guide: [in-product tools](https://distri.dev/docs/guides/agent/in-product-tools/).
+</details>
 
 ## Compared with
 
@@ -157,13 +213,6 @@ OpenAI's Agent Builder shuts down on 2026-11-30 ([deprecations](https://develope
 ## Models
 
 Set the model per agent in `[model_settings]`. Provider `name` values: `openai`, `anthropic`, `gemini`, `azure_openai`, `azure_ai_foundry`, `aws_bedrock`, `google_vertex`, `alibaba_cloud` (Qwen), `zai` (GLM), `fal_ai` (images) and `openai_compat` (Ollama, vLLM, OpenRouter, Together, Groq, any OpenAI-compatible URL). The model catalog is [`distri-types/src/default_models.json`](distri-types/src/default_models.json).
-
-## Install the CLI
-
-```bash
-curl -fsSL https://distri.dev/install.sh | sh    # macOS and Linux, from GitHub releases
-distri login                                      # Distri Cloud
-```
 
 <details>
 <summary><b>Repository layout</b></summary>

@@ -1,0 +1,23 @@
+{
+  "agent_type": "workflow_agent",
+  "name": "say_hello",
+  "description": "Asks the hello agent to greet {{params.name}}.",
+  "version": "0.1.0",
+  "definition": {
+    "id": "say_hello",
+    "steps": [
+      {
+        "id": "greet",
+        "label": "Ask the agent for a greeting",
+        "kind": {
+          "type": "agent_run",
+          "agent_id": "hello",
+          "prompt": "Say hello to {{params.name}}."
+        }
+      }
+    ],
+    "entry_points": [
+      { "id": "main", "label": "Say hello", "starts_at": "greet", "triggers": [{ "type": "manual" }] }
+    ]
+  }
+}
